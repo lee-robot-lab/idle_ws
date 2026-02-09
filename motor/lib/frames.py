@@ -27,12 +27,24 @@ TYPE06 = TYPE06_SET_ZERO
 TYPE18 = TYPE18_PARAM_WRITE
 TYPE24 = TYPE24_ACTIVE_REPORT
 
-# MIT(Operation control) ranges (매뉴얼 표 기준)
-P_MIN, P_MAX = -4.0 * math.pi,  4.0 * math.pi
-V_MIN, V_MAX = -44.0, 44.0
-T_MIN, T_MAX = -17.0, 17.0
-KP_MIN, KP_MAX = 0.0, 500.0
-KD_MIN, KD_MAX = 0.0, 5.0
+RS02 = dict(
+    P_MIN=-4.0*math.pi, P_MAX= 4.0*math.pi,
+    V_MIN=-44.0, V_MAX=44.0,
+    T_MIN=-17.0, T_MAX=17.0,
+    KP_MIN=0.0, KP_MAX=500.0,
+    KD_MIN=0.0, KD_MAX=5.0,
+)
+
+# RS03 spec
+RS03 = dict(
+    P_MIN=-4.0*math.pi, P_MAX= 4.0*math.pi,
+    V_MIN=-20.0, V_MAX=20.0,
+    T_MIN=-60.0, T_MAX=60.0,
+    KP_MIN=0.0, KP_MAX=5000.0,
+    KD_MIN=0.0, KD_MAX=100.0,
+)
+
+RS03_ID = 2
 
 def frame_type03_enable(host_id: int, motor_id: int) -> tuple[int, bytes]:
     arb_id = pack_ext_id(TYPE03, data2=host_id, data1=motor_id)
@@ -63,6 +75,16 @@ def frame_type22_save(host_id: int, motor_id: int) -> tuple[int, bytes]:
     return arb_id, data
 
 
+def frame_type17_read(host_id: int, motor_id: int, index: int) -> tuple[int, bytes]:
+    arb_id = pack_ext_id(TYPE17_PARAM_READ, data2=host_id, data1=motor_id)
+    data = bytearray(8)
+    data[0:2] = int(index).to_bytes(2, "little", signed=False)  # index: low byte first
+    data[2:4] = (0).to_bytes(2, "little", signed=False)         # reserved 0
+    # data[4:8] = 0
+    return arb_id, bytes(data)
+
+
+
 def frame_type18_write_u32(host_id: int, motor_id: int, index: int, value_u32: int) -> tuple[int, bytes]:
     arb_id = pack_ext_id(TYPE18, data2=host_id, data1=motor_id)
     data = bytearray(8)
@@ -71,19 +93,20 @@ def frame_type18_write_u32(host_id: int, motor_id: int, index: int, value_u32: i
     data[4:8] = int(value_u32).to_bytes(4, "little", signed=False)
     return arb_id, bytes(data)
 
+def _spec_for(motor_id: int):
+    return RS03 if motor_id == RS03_ID else RS02
+
+
 def frame_type01_mit(motor_id: int, p: float, v: float, kp: float, kd: float, t: float) -> tuple[int, bytes]:
-    """
-    Type1:
-      - ID.data2(16bit) = torque u16 mapped (-17~17)
-      - data[0:2]=pos, [2:4]=vel, [4:6]=kp, [6:8]=kd (big-endian)
-    """
-    tq_u16 = float_to_u16(t, T_MIN, T_MAX)
+    spec = _spec_for(motor_id)
+
+    tq_u16 = float_to_u16(t, spec["T_MIN"], spec["T_MAX"])
     arb_id = pack_ext_id(TYPE01, data2=tq_u16, data1=motor_id)
 
-    p_u16  = float_to_u16(p,  P_MIN, P_MAX)
-    v_u16  = float_to_u16(v,  V_MIN, V_MAX)
-    kp_u16 = float_to_u16(kp, KP_MIN, KP_MAX)
-    kd_u16 = float_to_u16(kd, KD_MIN, KD_MAX)
+    p_u16  = float_to_u16(p,  spec["P_MIN"], spec["P_MAX"])
+    v_u16  = float_to_u16(v,  spec["V_MIN"], spec["V_MAX"])
+    kp_u16 = float_to_u16(kp, spec["KP_MIN"], spec["KP_MAX"])
+    kd_u16 = float_to_u16(kd, spec["KD_MIN"], spec["KD_MAX"])
 
     data = (
         p_u16.to_bytes(2, "big") +
