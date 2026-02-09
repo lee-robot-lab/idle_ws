@@ -1,0 +1,327 @@
+<?xml version="1.0"?>
+<robot name="my_robot">
+
+  <link name="base">
+    <inertial>
+      <origin xyz="0 0 0.041183" rpy="0 0 0"/>
+      <mass value="0.40598"/>
+      <inertia ixx="0.001" ixy="-3.979E-08" ixz="0"
+               iyy="0.001" iyz="0"
+               izz="0.002"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/base.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/base.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="rs02_1">
+    <inertial>
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <mass value="0.405"/>
+      <inertia ixx="2.12716E-04" ixy="0" ixz="0"
+               iyy="2.12716E-04" iyz="0"
+               izz="3.11964E-04"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="rs02_2">
+    <inertial>
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <mass value="0.405"/>
+      <inertia ixx="2.12716E-04" ixy="0" ixz="0"
+               iyy="2.12716E-04" iyz="0"
+               izz="3.11964E-04"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="rs02_3">
+    <inertial>
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <mass value="0.405"/>
+      <inertia ixx="2.12716E-04" ixy="0" ixz="0"
+               iyy="2.12716E-04" iyz="0"
+               izz="3.11964E-04"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="rs03">
+    <inertial>
+      <origin xyz="0 0 0.035" rpy="0 0 0"/>
+      <mass value="0.88"/>
+      <inertia ixx="8.31820E-04" ixy="0" ixz="0"
+               iyy="8.31820E-04" iyz="0"
+               izz="1.23596E-03"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/RS03(0.0.0).stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/RS03(0.0.0).stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="joint1">
+    <inertial>
+      <origin xyz="0.00000001 -0.014267 0.057937" rpy="0 0 0"/>
+      <mass value="0.28684"/>
+      <inertia ixx="0.001" ixy="8.109E-08" ixz="-2.906E-08"
+               iyy="0.001" iyz="0"
+               izz="0.001"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/joint1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/joint1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link1_1">
+    <inertial>
+      <origin xyz="0 0.012111 0.043099" rpy="0 0 0"/>
+      <mass value="0.25495"/>
+      <inertia ixx="4.249E-04" ixy="-1.063E-17" ixz="2.341E-18"
+               iyy="3.814E-04" iyz="-6.842E-05"
+               izz="4.661E-04"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link1_1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link1_1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link1_2">
+    <inertial>
+      <origin xyz="0 0 0.15" rpy="0 0 0"/>
+      <mass value="0.504"/>
+      <inertia ixx="3.773e-03" ixy="0" ixz="0" 
+               iyy="3.773e-03" iyz="0"
+               izz="1.360e-04"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link1_2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link1_2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link1_3">
+    <inertial>
+      <origin xyz="0.002965 0.015222 0.033887" rpy="0 0 0"/>
+      <mass value="0.21978"/>
+      <inertia ixx="4.692E-04" ixy="-6.560556E-06" ixz="-4.344733E-06"
+               iyy="5.262E-04" iyz="-7.4987614E-05"
+               izz="4.199E-04"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link1_3.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link1_3.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="joint2">
+    <inertial>
+      <origin xyz="0.000003 -0.010016 0.043868" rpy="0 0 0"/>
+      <mass value="0.16391"/>
+      <inertia ixx="2.811E-04" ixy="8.447E-09" ixz="-3.1463E-08"
+               iyy="3.644E-04" iyz="4.3846331E-05"
+               izz="2.927E-04"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/joint2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/joint2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link2_1">
+    <inertial>
+      <origin xyz="0.0000354 -0.0000354 0.02911" rpy="0 0 0"/>
+      <mass value="0.112"/>
+      <inertia ixx="0.002" ixy="-9.78E-10" ixz="1.852E-07" 
+               iyy="0.002" iyz="-1.833E-07"
+               izz="0.001"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link2_1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link2_1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link2_2">
+    <inertial>
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <mass value="0.111"/> 
+      <inertia ixx="0.002" ixy="-9.78E-10" ixz="1.852E-07" 
+               iyy="0.002" iyz="-1.833E-07"
+               izz="0.001"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link2_2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/link2_2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+  
+  
+
+
+  <joint name="m1" type="fixed">
+    <parent link="base"/>
+    <child  link="rs02_1"/>
+    <origin xyz="0 0 0.1015" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="j1" type="revolute">
+    <parent link="rs02_1"/>
+    <child  link="joint1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
+  </joint>
+
+  <joint name="m2" type="fixed">
+    <parent link="joint1"/>
+    <child  link="rs03"/>
+    <origin xyz="0 -0.0637 0.068" rpy="1.5708 0 0"/>
+  </joint>
+
+  <joint name="j2" type="revolute">
+    <parent link="rs03"/>
+    <child  link="link1_1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.5" upper="2.5" effort="50" velocity="100"/>
+  </joint>
+
+  <joint name="j2_2" type="fixed">
+    <parent link="link1_1"/>
+    <child  link="link1_2"/>
+    <origin xyz="0 0.05 0.05715" rpy="-1.5708 0 0"/>
+  </joint>
+
+  <joint name="j2_3" type="fixed">
+    <parent link="link1_2"/>
+    <child  link="link1_3"/>
+    <origin xyz="0 0 0.3" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="m3" type="fixed">
+    <parent link="link1_3"/>
+    <child  link="rs02_2"/>
+    <origin xyz="0 0.06585 0.050" rpy="-1.5708 0 0"/>
+  </joint>
+
+  <joint name="j3" type="revolute">
+    <parent link="rs02_2"/>
+    <child  link="joint2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
+  </joint>
+
+  <joint name="m4" type="fixed">
+    <parent link="joint2"/>
+    <child  link="rs02_3"/>
+    <origin xyz="0 -0.0502 0.055" rpy="1.5708 0 0"/>
+  </joint>
+
+  <joint name="j4" type="revolute">
+    <parent link="rs02_3"/>
+    <child  link="link2_1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
+  </joint>
+  <joint name="j4_2" type="fixed">
+    <parent link="link2_1"/>
+    <child  link="link2_2"/>
+    <origin xyz="0 0 0.035" rpy="0 0 0"/>
+  </joint>
+  <link name="ee_link"/>
+
+  <joint name="ee_fixed" type="fixed">
+    <parent link="link2_2"/>
+    <child  link="ee_link"/>
+    <origin xyz="0 0 0.23" rpy="0 0 0"/>
+  </joint>
+
+</robot>

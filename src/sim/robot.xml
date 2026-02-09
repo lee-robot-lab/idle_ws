@@ -1,0 +1,158 @@
+<mujoco model="my_robot">
+  <compiler angle="radian" meshdir="../arm_description/meshes"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
+  <size njmax="2000" nconmax="2000"/>
+
+  <option timestep="0.005" gravity="0 0 -9.81"/>
+  
+  <default>
+    <joint limited="true" damping="0.5" armature="0.01"/>
+    <geom contype="1" conaffinity="1" friction="1 0.1 0.1" solref="0.01 1" solimp="0.9 0.95 0.001"/>
+  </default>
+
+  <asset>
+    <!-- all meshes are mm in STL -> scale 0.001 to meters -->
+    <mesh name="base_mesh"     file="base.stl"           scale="0.001 0.001 0.001"/>
+    <mesh name="rs02_mesh"     file="RS02(0.0.0).stl"    scale="0.001 0.001 0.001"/>
+    <mesh name="rs03_mesh"     file="RS03(0.0.0).stl"    scale="0.001 0.001 0.001"/>
+    <mesh name="joint1_mesh"   file="joint1.stl"         scale="0.001 0.001 0.001"/>
+    <mesh name="link1_1_mesh"  file="link1_1.stl"        scale="0.001 0.001 0.001"/>
+    <mesh name="link1_2_mesh"  file="link1_2.stl"        scale="0.001 0.001 0.001"/>
+    <mesh name="link1_3_mesh"  file="link1_3.stl"        scale="0.001 0.001 0.001"/>
+    <mesh name="joint2_mesh"   file="joint2.stl"         scale="0.001 0.001 0.001"/>
+    <mesh name="link2_1_mesh"    file="link2_1.stl"          scale="0.001 0.001 0.001"/>
+    <mesh name="link2_2_mesh"    file="link2_2.stl"          scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <!-- base -->
+    <body name="base" pos="0 0 0">
+      <inertial pos="0 0 0.041183"
+                mass="0.40598"
+                fullinertia="0.001 0.001 0.002 -3.979e-08 0 0"/>
+      <geom type="mesh" mesh="base_mesh"/>
+
+      <!-- m1: fixed base -> rs02_1 at xyz="0 0 0.1015" -->
+      <body name="rs02_1" pos="0 0 0.1015">
+        <inertial pos="0 0 0.027"
+                  mass="0.405"
+                  fullinertia="2.12716e-04 2.12716e-04 3.11964e-04 0 0 0"/>
+        <geom type="mesh" mesh="rs02_mesh"/>
+
+        <!-- j1: revolute about z, range [-pi, pi] -->
+        <body name="joint1" pos="0 0 0">
+          <joint name="j1" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+          <inertial pos="0.00000001 -0.014267 0.057937"
+                    mass="0.28684"
+                    fullinertia="0.001 0.001 0.001 8.109e-08 -2.906e-08 0"/>
+          <geom type="mesh" mesh="joint1_mesh"/>
+
+          <!-- m2: fixed joint1 -> rs03 at xyz="0 -0.0637 0.068" rpy="1.5708 0 0"
+               rpy(roll=+90deg) => quat(w,x,y,z) = (0.7071, 0.7071, 0, 0)
+          -->
+          <body name="rs03" pos="0 -0.0637 0.068" quat="0.70710678 0.70710678 0 0">
+            <inertial pos="0 0 0.035"
+                      mass="0.88"
+                      fullinertia="8.31820e-04 8.31820e-04 1.23596e-03 0 0 0"/>
+            <geom type="mesh" mesh="rs03_mesh"/>
+
+            <!-- j2: revolute about z, range [-2.5, 2.5] -->
+            <body name="link1_1" pos="0 0 0">
+              <joint name="j2" type="hinge" axis="0 0 1" range="-2.5 2.5"/>
+              <inertial pos="0 0.012111 0.043099"
+                        mass="0.25495"
+                        fullinertia="4.249e-04 3.814e-04 4.661e-04 -1.063e-17 2.341e-18 -6.842e-05"/>
+              <geom type="mesh" mesh="link1_1_mesh"/>
+
+              <!-- j2_2: fixed link1_1 -> link1_2 at xyz="0 0.05 0.05715" rpy="-1.5708 0 0"
+                   roll=-90deg => quat=(0.7071, -0.7071, 0, 0)
+              -->
+              <body name="link1_2" pos="0 0.05 0.05715" quat="0.70710678 -0.70710678 0 0">
+                <inertial pos="0 0 0.15"
+                          mass="0.504"
+                          fullinertia="3.773e-03 3.773e-03 1.360e-04 0 0 0"/>
+                <geom type="mesh" mesh="link1_2_mesh"/>
+
+                <!-- j2_3: fixed link1_2 -> link1_3 at xyz="0 0 0.3" -->
+                <body name="link1_3" pos="0 0 0.3">
+                  <inertial pos="0.002965 0.015222 0.033887"
+                            mass="0.21978"
+                            fullinertia="4.692e-04 5.262e-04 4.199e-04 -6.560556e-06 -4.344733e-06 -7.4987614e-05"/>
+                  <geom type="mesh" mesh="link1_3_mesh"/>
+
+                  <!-- m3: fixed link1_3 -> rs02_2 at xyz="0 0.06585 0.050" rpy="-1.5708 0 0" -->
+                  <body name="rs02_2" pos="0 0.06585 0.050" quat="0.70710678 -0.70710678 0 0">
+                    <inertial pos="0 0 0.027"
+                              mass="0.405"
+                              fullinertia="2.12716e-04 2.12716e-04 3.11964e-04 0 0 0"/>
+                    <geom type="mesh" mesh="rs02_mesh"/>
+
+                    <!-- j3 -->
+                    <body name="joint2" pos="0 0 0">
+                      <joint name="j3" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+                      <inertial pos="0.000003 -0.010016 0.043868"
+                                mass="0.16391"
+                                fullinertia="2.811e-04 3.644e-04 2.927e-04 8.447e-09 -3.1463e-08 4.3846331e-05"/>
+                      <geom type="mesh" mesh="joint2_mesh"/>
+
+                      <!-- m4: fixed joint2 -> rs02_3 at xyz="0 -0.0502 0.055" rpy="1.5708 0 0" -->
+                      <body name="rs02_3" pos="0 -0.0502 0.055" quat="0.70710678 0.70710678 0 0">
+                        <inertial pos="0 0 0.027"
+                                  mass="0.405"
+                                  fullinertia="2.12716e-04 2.12716e-04 3.11964e-04 0 0 0"/>
+                        <geom type="mesh" mesh="rs02_mesh"/>
+
+                        <!-- j4 -->
+                        <body name="link2_1" pos="0 0 0">
+                          <joint name="j4" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+                          <inertial pos="0.000018 -0.000018 0.088036"
+                                    mass="0.30867"
+                                    fullinertia="0.002 0.002 0.001 -9.78e-10 1.852e-07 -1.833e-07"/>
+                          <geom type="mesh" mesh="link2_1_mesh"/>
+
+
+                          <body name="link2_2" pos="0 0 0.035">                    
+                            <inertial pos="0.000018 -0.000018 0.088036"
+                                    mass="0.30867"
+                                    fullinertia="0.002 0.002 0.001 -9.78e-10 1.852e-07 -1.833e-07"/>
+                            <geom type="mesh" mesh="link2_2_mesh"/>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- RS02 joints: rated 6 Nm, peak 17 Nm -->
+    <motor name="a_j1" joint="j1"
+            gear="1"
+            ctrllimited="true" ctrlrange="-6 6"
+            forcelimited="true" forcerange="-17 17"/>
+
+    <!-- RS03 joint: rated 20 Nm, peak(limit) 60 Nm -->
+    <motor name="a_j2" joint="j2"
+            gear="1"
+            ctrllimited="true" ctrlrange="-20 20"
+            forcelimited="true" forcerange="-60 60"/>
+
+    <!-- RS02 joints -->
+    <motor name="a_j3" joint="j3"
+            gear="1"
+            ctrllimited="true" ctrlrange="-6 6"
+            forcelimited="true" forcerange="-17 17"/>
+
+    <motor name="a_j4" joint="j4"
+            gear="1"
+            ctrllimited="true" ctrlrange="-6 6"
+            forcelimited="true" forcerange="-17 17"/>
+  </actuator>
+
+</mujoco>
