@@ -33,3 +33,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# 실행 예시 (기본 채널: can0)
+# python3 enable.py --can_id 1 --enable 1
+# python3 enable.py --can_id 1 --enable 0 --clear_fault 1

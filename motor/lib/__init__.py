@@ -1,3 +1,5 @@
+"""lib 패키지 공개 API (Bus/run/power helpers)."""
+
 from .bus import Bus
 from .power import send_enable, send_power, send_stop
 from .runtime import run_with_bus

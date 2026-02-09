@@ -1,3 +1,5 @@
+"""CAN 프레임 보조 유틸(패킹/언패킹, 스케일 변환, 파라미터 응답 대기)."""
+
 # lib/common.py
 import math
 import struct

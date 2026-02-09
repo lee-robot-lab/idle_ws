@@ -29,3 +29,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# 실행 예시 (기본 채널: can0)
+# python3 set_epscan.py --can_id 1 --period_ms 15
+# python3 set_epscan.py --can_id 1 --epscan 2

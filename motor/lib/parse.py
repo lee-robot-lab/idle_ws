@@ -1,3 +1,5 @@
+"""피드백(타입2/활성 보고) 프레임 파서."""
+
 # lib/parse.py (핵심만)
 
 from dataclasses import dataclass

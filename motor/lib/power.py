@@ -1,3 +1,5 @@
+"""Enable/Stop 전원 제어 프레임 전송 헬퍼."""
+
 from .bus import Bus
 from .frames import frame_type03_enable, frame_type04_stop
 
