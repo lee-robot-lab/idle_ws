@@ -1,3 +1,5 @@
+"""모터 파라미터 정의/조회 테이블."""
+
 # lib/params.py
 from dataclasses import dataclass
 

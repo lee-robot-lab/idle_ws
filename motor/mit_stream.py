@@ -48,3 +48,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# 실행 예시 (기본 채널: can0)
+# python3 mit_stream.py --can_id 1 --hz 200 --p 0 --v 0 --kp 0 --kd 0 --t 0

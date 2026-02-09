@@ -42,3 +42,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# 실행 예시 (기본 채널: can0)
+# python3 param_read.py --can_id 1 --param q_vel
+# python3 param_read.py --can_id 1 --list
