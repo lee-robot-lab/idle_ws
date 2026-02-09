@@ -1,3 +1,5 @@
+"""socketcan 기반 CAN 버스 래퍼 (send/recv/close 제공)."""
+
 import can
 
 class Bus:

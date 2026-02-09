@@ -1,3 +1,5 @@
+"""각종 CAN 명령/응답 프레임 생성 함수 모음."""
+
 # lib/frames.py
 import math
 import struct

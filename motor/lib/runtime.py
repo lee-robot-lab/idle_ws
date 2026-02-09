@@ -1,3 +1,5 @@
+"""Bus 생성/종료를 감싸는 실행 헬퍼."""
+
 from typing import Callable, TypeVar
 
 from .bus import Bus

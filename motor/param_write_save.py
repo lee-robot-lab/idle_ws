@@ -79,3 +79,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# 실행 예시 (기본 채널: can0)
+# python3 param_write_save.py --can_id 1 --param loc_kp --value 10 --verify
+# python3 param_write_save.py --can_id 1 --param EPScan_time --ms 15

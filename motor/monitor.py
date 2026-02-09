@@ -39,4 +39,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-#python3 monitor.py --can_id 1
+# 실행 예시 (기본 채널: can0)
+# python3 monitor.py --can_id 1
