@@ -1,0 +1,42 @@
+import argparse
+from lib.parse import parse_feedback_like_type2
+from lib.common import unpack_ext_id
+from lib.runtime import run_with_bus
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ch", default="can0")
+    ap.add_argument("--can_id", type=lambda x:int(x,0), default=None)
+    ap.add_argument("--every", type=int, default=1)
+    args = ap.parse_args()
+
+    def _run(bus):
+        cnt = 0
+        while True:
+            msg = bus.recv(timeout=1.0)
+            if msg is None:
+                continue
+
+            fb = parse_feedback_like_type2(msg.arbitration_id, msg.data)
+            if fb is None:
+                continue
+            if args.can_id is not None and fb.motor_id != args.can_id:
+                continue
+
+            cnt += 1
+            if cnt % args.every != 0:
+                continue
+
+            comm_type, _, _ = unpack_ext_id(msg.arbitration_id)
+            print(f"[type=0x{comm_type:02X} id={fb.motor_id}] "
+                  f"pos={fb.pos:+.4f} vel={fb.vel:+.4f} tor={fb.tor:+.4f} "
+                  f"temp={fb.temp_c:.1f}C mode={fb.mode_status} fault=0x{fb.fault_bits:02X}")
+    try:
+        run_with_bus(args.ch, _run)
+    except KeyboardInterrupt:
+        print("\ninterrupt: monitor stopped")
+
+if __name__ == "__main__":
+    main()
+
+#python3 monitor.py --can_id 1

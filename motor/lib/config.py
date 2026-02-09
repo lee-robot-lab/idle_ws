@@ -1,0 +1,2 @@
+HOST_ID = 0xFD      # PC 단독 제어면 나중에 제어하는 곳 여러게 생기면 분리 (ex. 라즈베리파이)
+DEFAULT_CH = "can0"
