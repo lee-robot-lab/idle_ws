@@ -4,7 +4,7 @@
 
 from dataclasses import dataclass
 from .common import unpack_ext_id, u16_to_float
-from .frames import RS02, RS03, RS03_ID
+from .frames import MIT_RS02, MIT_RS03, RS03_ID
 
 @dataclass
 class Feedback:
@@ -24,7 +24,7 @@ def parse_feedback_like_type2(arb_id: int, data: bytes) -> Feedback | None:
         return None
 
     motor_id = data2 & 0xFF
-    spec = RS03 if motor_id == RS03_ID else RS02
+    spec = MIT_RS03 if motor_id == RS03_ID else MIT_RS02
 
     flags = (data2 >> 8) & 0xFF
     mode_status = (flags >> 6) & 0x03
@@ -35,9 +35,9 @@ def parse_feedback_like_type2(arb_id: int, data: bytes) -> Feedback | None:
     t_u16 = int.from_bytes(data[4:6], "big")
     temp_u16 = int.from_bytes(data[6:8], "big")
 
-    pos = u16_to_float(p_u16, spec["P_MIN"], spec["P_MAX"])
-    vel = u16_to_float(v_u16, spec["V_MIN"], spec["V_MAX"])
-    tor = u16_to_float(t_u16, spec["T_MIN"], spec["T_MAX"])
+    pos = u16_to_float(p_u16, spec.P_MIN, spec.P_MAX)
+    vel = u16_to_float(v_u16, spec.V_MIN, spec.V_MAX)
+    tor = u16_to_float(t_u16, spec.T_MIN, spec.T_MAX)
     temp_c = temp_u16 / 10.0
 
     return Feedback(motor_id, data1, mode_status, fault_bits, pos, vel, tor, temp_c)
