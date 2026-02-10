@@ -56,9 +56,15 @@ def main():
                 continue
 
             if comm_type == TYPE24:
-                motor_id = data1 & 0xFF
-                if can_filter is not None and motor_id not in can_filter:
+                motor_id_d2 = data2 & 0xFF
+                motor_id_d1 = data1 & 0xFF
+
+                if can_filter is not None and (motor_id_d2 not in can_filter and motor_id_d1 not in can_filter):
                     continue
+
+                motor_id = motor_id_d2
+                if can_filter is not None and motor_id_d2 not in can_filter and motor_id_d1 in can_filter:
+                    motor_id = motor_id_d1
 
                 cnt += 1
                 if cnt % args.every != 0:
@@ -67,7 +73,7 @@ def main():
                 enable = msg.data[6] if len(msg.data) >= 7 else None
                 enable_text = str(enable) if enable in (0, 1) else "?"
                 print(
-                    f"[type=0x{comm_type:02X} id={motor_id} host={data2}] "
+                    f"[type=0x{comm_type:02X} id={motor_id} id_d2={motor_id_d2} id_d1={motor_id_d1}] "
                     f"active_report_enable={enable_text} data={msg.data.hex()}"
                 )
 
