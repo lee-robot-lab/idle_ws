@@ -7,7 +7,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -40,7 +39,6 @@ constexpr uint8_t TYPE00_GET_DEVICE_ID = 0x00;
 constexpr uint8_t TYPE01_OPERATION_CONTROL = 0x01;
 constexpr uint8_t TYPE02_FEEDBACK = 0x02;
 constexpr uint8_t TYPE03_ENABLE = 0x03;
-constexpr uint8_t TYPE04_STOP = 0x04;
 constexpr uint8_t TYPE_MASK = 0x1F;
 
 struct MitRanges
@@ -153,11 +151,7 @@ public:
     default_tx_hz_ = declare_parameter<double>("default_tx_hz", 500.0);
     gate_reload_ms_ = declare_parameter<int>("gate_reload_ms", 50);
     enable_retry_ms_ = declare_parameter<int>("enable_retry_ms", 100);
-    stop_on_shutdown_ = declare_parameter<bool>("stop_on_shutdown", true);
-    home_on_shutdown_ = declare_parameter<bool>("home_on_shutdown", true);
-    stop_clear_fault_ = declare_parameter<bool>("stop_clear_fault", false);
-    shutdown_home_duration_ms_ = declare_parameter<int>("shutdown_home_duration_ms", 400);
-    shutdown_home_hz_ = declare_parameter<double>("shutdown_home_hz", 200.0);
+    cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 100);
     home_q_des_ = declare_parameter<double>("home_q_des", 0.0);
     home_qd_des_ = declare_parameter<double>("home_qd_des", 0.0);
     home_kp_ = declare_parameter<double>("home_kp", 8.0);
@@ -175,11 +169,8 @@ public:
     if (enable_retry_ms_ <= 0) {
       enable_retry_ms_ = 100;
     }
-    if (shutdown_home_duration_ms_ < 0) {
-      shutdown_home_duration_ms_ = 0;
-    }
-    if (shutdown_home_hz_ <= 0.0) {
-      shutdown_home_hz_ = 200.0;
+    if (cmd_timeout_ms_ < 0) {
+      cmd_timeout_ms_ = 0;
     }
 
     if (!open_socketcan(channel_)) {
@@ -209,7 +200,6 @@ public:
 
   ~CanBridgeNode() override
   {
-    safe_shutdown_sequence();
     if (sock_fd_ >= 0) {
       close(sock_fd_);
       sock_fd_ = -1;
@@ -298,7 +288,10 @@ private:
     msgs::msg::MotorCMD cmd {};
     bool valid {false};
     bool has_sent {false};
+    bool has_received_cmd {false};
+    bool timeout_home_active {false};
     std::chrono::steady_clock::time_point last_sent {};
+    std::chrono::steady_clock::time_point last_received_cmd {};
   };
 
   struct GateConfig
@@ -422,14 +415,6 @@ private:
     return send_ext_frame(arb, data);
   }
 
-  bool send_stop_frame(const uint8_t motor_id, const bool clear_fault)
-  {
-    std::array<uint8_t, 8> data {};
-    data[0] = clear_fault ? 1U : 0U;
-    const uint32_t arb = pack_ext_id(TYPE04_STOP, host_id_, motor_id);
-    return send_ext_frame(arb, data);
-  }
-
   struct MotorRuntime
   {
     bool enable_sent {false};
@@ -470,76 +455,16 @@ private:
     return false;
   }
 
-  std::vector<uint8_t> shutdown_target_motors() const
+  msgs::msg::MotorCMD make_home_command(const uint8_t motor_id) const
   {
-    std::set<uint8_t> ids;
-    for (const auto & kv : latest_cmd_by_motor_) {
-      if (kv.second.valid) {
-        ids.insert(kv.first);
-      }
-    }
-    for (const auto & kv : runtime_by_motor_) {
-      ids.insert(kv.first);
-    }
-    for (const uint8_t id : discovered_motor_ids_) {
-      ids.insert(id);
-    }
-    return std::vector<uint8_t>(ids.begin(), ids.end());
-  }
-
-  void safe_shutdown_sequence()
-  {
-    if (shutdown_done_) {
-      return;
-    }
-    shutdown_done_ = true;
-    if (sock_fd_ < 0 || !stop_on_shutdown_) {
-      return;
-    }
-
-    const std::vector<uint8_t> ids = shutdown_target_motors();
-    if (ids.empty()) {
-      return;
-    }
-
-    if (home_on_shutdown_ && shutdown_home_duration_ms_ > 0 && shutdown_home_hz_ > 0.0) {
-      const double duration_s = static_cast<double>(shutdown_home_duration_ms_) / 1000.0;
-      const int cycles = std::max(1, static_cast<int>(std::ceil(duration_s * shutdown_home_hz_)));
-      const auto period = std::chrono::duration<double>(1.0 / shutdown_home_hz_);
-      auto next_tp = std::chrono::steady_clock::now();
-      msgs::msg::MotorCMD home {};
-      home.q_des = static_cast<float>(home_q_des_);
-      home.qd_des = static_cast<float>(home_qd_des_);
-      home.kp = static_cast<float>(home_kp_);
-      home.kd = static_cast<float>(home_kd_);
-      home.tau_ff = static_cast<float>(home_tau_ff_);
-
-      RCLCPP_INFO(
-        get_logger(),
-        "shutdown: moving to home for %d ms @ %.1f Hz before TYPE04 stop",
-        shutdown_home_duration_ms_,
-        shutdown_home_hz_);
-
-      for (int cycle = 0; cycle < cycles; ++cycle) {
-        for (const uint8_t id : ids) {
-          (void)send_enable_frame(id);
-          home.stamp = to_builtin_time(now());
-          home.motor_id = id;
-          if (!send_mit_command(home)) {
-            RCLCPP_WARN(get_logger(), "shutdown home TYPE01 send failed for motor_id=%u", id);
-          }
-        }
-        next_tp += std::chrono::duration_cast<std::chrono::steady_clock::duration>(period);
-        std::this_thread::sleep_until(next_tp);
-      }
-    }
-
-    for (const uint8_t id : ids) {
-      if (!send_stop_frame(id, stop_clear_fault_)) {
-        RCLCPP_WARN(get_logger(), "TYPE04 stop send failed for motor_id=%u", id);
-      }
-    }
-    RCLCPP_INFO(get_logger(), "shutdown: TYPE04 stop sent to %zu motor(s)", ids.size());
+    msgs::msg::MotorCMD home {};
+    home.motor_id = motor_id;
+    home.q_des = static_cast<float>(home_q_des_);
+    home.qd_des = static_cast<float>(home_qd_des_);
+    home.kp = static_cast<float>(home_kp_);
+    home.kd = static_cast<float>(home_kd_);
+    home.tau_ff = static_cast<float>(home_tau_ff_);
+    return home;
   }
 
   void on_cmd(const msgs::msg::MotorCMD::SharedPtr msg)
@@ -554,6 +479,9 @@ private:
     CachedCommand & cached = latest_cmd_by_motor_[msg->motor_id];
     cached.cmd = *msg;
     cached.valid = true;
+    cached.has_received_cmd = true;
+    cached.last_received_cmd = std::chrono::steady_clock::now();
+    cached.timeout_home_active = false;
   }
 
   void dispatch_cached_commands()
@@ -587,7 +515,31 @@ private:
         }
       }
 
-      if (!send_mit_command(cached.cmd)) {
+      bool cmd_timed_out = false;
+      if (cmd_timeout_ms_ > 0 && cached.has_received_cmd) {
+        const auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          now_tp - cached.last_received_cmd).count();
+        cmd_timed_out = age_ms >= cmd_timeout_ms_;
+      }
+
+      msgs::msg::MotorCMD outgoing = cached.cmd;
+      if (cmd_timed_out) {
+        outgoing = make_home_command(motor_id);
+        outgoing.stamp = to_builtin_time(now());
+        if (!cached.timeout_home_active) {
+          cached.timeout_home_active = true;
+          RCLCPP_WARN(
+            get_logger(),
+            "motor_id=%u cmd timeout (%d ms): switching to home command",
+            motor_id,
+            cmd_timeout_ms_);
+        }
+      } else if (cached.timeout_home_active) {
+        cached.timeout_home_active = false;
+        RCLCPP_INFO(get_logger(), "motor_id=%u cmd restored: leaving home timeout mode", motor_id);
+      }
+
+      if (!send_mit_command(outgoing)) {
         RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "failed to send TYPE01 command frame");
       }
       cached.has_sent = true;
@@ -747,17 +699,12 @@ private:
   double default_tx_hz_{500.0};
   int gate_reload_ms_{50};
   int enable_retry_ms_{100};
-  bool stop_on_shutdown_{true};
-  bool home_on_shutdown_{true};
-  bool stop_clear_fault_{false};
-  int shutdown_home_duration_ms_{400};
-  double shutdown_home_hz_{200.0};
+  int cmd_timeout_ms_{100};
   double home_q_des_{0.0};
   double home_qd_des_{0.0};
   double home_kp_{8.0};
   double home_kd_{0.6};
   double home_tau_ff_{0.0};
-  bool shutdown_done_{false};
 
   std::unordered_map<uint8_t, uint8_t> last_fault_bits_;
   std::unordered_map<uint8_t, CachedCommand> latest_cmd_by_motor_;
