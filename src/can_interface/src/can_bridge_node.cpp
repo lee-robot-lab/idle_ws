@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "builtin_interfaces/msg/time.hpp"
 #include "msgs/msg/motor_cmd.hpp"
 #include "msgs/msg/motor_error.hpp"
 #include "msgs/msg/motor_state.hpp"
@@ -116,6 +117,23 @@ inline float u16_to_float(uint16_t u, float xmin, float xmax)
 inline uint16_t be_u16(const uint8_t hi, const uint8_t lo)
 {
   return static_cast<uint16_t>((static_cast<uint16_t>(hi) << 8) | static_cast<uint16_t>(lo));
+}
+
+inline builtin_interfaces::msg::Time to_builtin_time(const rclcpp::Time & t)
+{
+  constexpr int64_t kNsecPerSec = 1000000000LL;
+  const int64_t ns = t.nanoseconds();
+  int64_t sec = ns / kNsecPerSec;
+  int64_t nsec = ns % kNsecPerSec;
+  if (nsec < 0) {
+    --sec;
+    nsec += kNsecPerSec;
+  }
+
+  builtin_interfaces::msg::Time out {};
+  out.sec = static_cast<int32_t>(sec);
+  out.nanosec = static_cast<uint32_t>(nsec);
+  return out;
 }
 }  // namespace
 
@@ -505,7 +523,7 @@ private:
       for (int cycle = 0; cycle < cycles; ++cycle) {
         for (const uint8_t id : ids) {
           (void)send_enable_frame(id);
-          home.stamp = now().to_msg();
+          home.stamp = to_builtin_time(now());
           home.motor_id = id;
           if (!send_mit_command(home)) {
             RCLCPP_WARN(get_logger(), "shutdown home TYPE01 send failed for motor_id=%u", id);
@@ -640,11 +658,13 @@ private:
 
   void poll_can_frames()
   {
-    for (int i = 0; i < rx_max_frames_per_tick_; ++i) {
+    int processed = 0;
+    while (processed < rx_max_frames_per_tick_) {
       auto frame_opt = recv_frame();
       if (!frame_opt.has_value()) {
         break;
       }
+      ++processed;
       const auto & frame = frame_opt.value();
 
       if ((frame.can_id & CAN_EFF_FLAG) == 0) {
@@ -669,15 +689,16 @@ private:
       const uint16_t tau_raw = be_u16(frame.data[4], frame.data[5]);
       const uint16_t temp_raw = be_u16(frame.data[6], frame.data[7]);
       const MitRanges & r = ranges_for(motor_id);
+      const auto stamp = to_builtin_time(now());
 
       msgs::msg::MotorState st {};
-      st.stamp = now().to_msg();
+      st.stamp = stamp;
       st.motor_id = motor_id;
       st.q = u16_to_float(q_raw, r.p_min, r.p_max);
       st.qd = u16_to_float(qd_raw, r.v_min, r.v_max);
       st.tau = u16_to_float(tau_raw, r.t_min, r.t_max);
       st.temp_c = static_cast<float>(temp_raw) / 10.0F;
-      state_pub_->publish(st);
+      state_pub_->publish(st);  // apply/publish immediately
 
       MotorRuntime & rt = runtime_by_motor_[motor_id];
       rt.has_state = true;
@@ -695,7 +716,7 @@ private:
       }
 
       msgs::msg::MotorError err {};
-      err.stamp = st.stamp;
+      err.stamp = stamp;
       err.motor_id = motor_id;
       err.mode_status = mode_status;
       err.prev_fault_bits = prev_fault;
