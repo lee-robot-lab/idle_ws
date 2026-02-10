@@ -1,4 +1,4 @@
-"""피드백(타입2/활성 보고) 프레임 파서."""
+"""Type02 피드백 프레임 파서."""
 
 # lib/parse.py (핵심만)
 
@@ -20,7 +20,7 @@ class Feedback:
 def parse_feedback_like_type2(arb_id: int, data: bytes) -> Feedback | None:
     comm_type, data2, data1 = unpack_ext_id(arb_id)
 
-    if comm_type not in (0x02, 0x18) or len(data) != 8:
+    if comm_type != 0x02 or len(data) != 8:
         return None
 
     motor_id = data2 & 0xFF

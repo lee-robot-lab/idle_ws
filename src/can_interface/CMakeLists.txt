@@ -7,9 +7,17 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+find_package(msgs REQUIRED)
+find_package(rclcpp REQUIRED)
+
+add_executable(can_bridge_node src/can_bridge_node.cpp)
+target_compile_features(can_bridge_node PUBLIC cxx_std_17)
+ament_target_dependencies(can_bridge_node rclcpp msgs)
+
+install(TARGETS
+  can_bridge_node
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

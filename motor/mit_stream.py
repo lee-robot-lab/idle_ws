@@ -1,6 +1,7 @@
 import argparse
 import time
 
+from lib.control_tuning import assert_control_ready_for_command, control_session
 from lib.config import DEFAULT_CH, HOST_ID
 from lib.frames import frame_type01_mit
 from lib.power import send_stop
@@ -32,40 +33,42 @@ def main():
         raise SystemExit("--hz must be > 0")
 
     def _run(bus):
-        period = 1.0 / args.hz
-        next_t = time.perf_counter()
-        hb_due = next_t
-        can_id_text = ",".join(str(x) for x in can_ids)
-        print(f"MIT stream start: can_id=[{can_id_text}] hz={args.hz}")
-        publish_mit_stream(can_ids, hz=args.hz, channel=args.ch, host_id=args.host_id)
+        assert_control_ready_for_command()
+        with control_session():
+            period = 1.0 / args.hz
+            next_t = time.perf_counter()
+            hb_due = next_t
+            can_id_text = ",".join(str(x) for x in can_ids)
+            print(f"MIT stream start: can_id=[{can_id_text}] hz={args.hz}")
+            publish_mit_stream(can_ids, hz=args.hz, channel=args.ch, host_id=args.host_id)
 
-        try:
-            while True:
-                for can_id in can_ids:
-                    arb_id, data = frame_type01_mit(can_id, args.p, args.v, args.kp, args.kd, args.t)
-                    bus.send_ext(arb_id, data)
-
-                now = time.perf_counter()
-                if now >= hb_due:
-                    publish_mit_stream(can_ids, hz=args.hz, channel=args.ch, host_id=args.host_id)
-                    hb_due = now + 1.0
-
-                next_t += period
-                dt = next_t - time.perf_counter()
-                if dt > 0:
-                    time.sleep(dt)
-                else:
-                    next_t = time.perf_counter()
-        except KeyboardInterrupt:
             try:
-                for can_id in can_ids:
-                    arb_id, data = send_stop(bus, host_id=args.host_id, can_id=can_id, clear_fault=False)
-                    print(f"\ninterrupt: sent STOP can_id={can_id} arb_id=0x{arb_id:08X} data={data.hex()}")
-            except Exception as exc:
-                print(f"\ninterrupt: failed to send STOP: {exc}")
-            raise SystemExit(130)
-        finally:
-            clear_mit_stream(can_ids)
+                while True:
+                    for can_id in can_ids:
+                        arb_id, data = frame_type01_mit(can_id, args.p, args.v, args.kp, args.kd, args.t)
+                        bus.send_ext(arb_id, data)
+
+                    now = time.perf_counter()
+                    if now >= hb_due:
+                        publish_mit_stream(can_ids, hz=args.hz, channel=args.ch, host_id=args.host_id)
+                        hb_due = now + 1.0
+
+                    next_t += period
+                    dt = next_t - time.perf_counter()
+                    if dt > 0:
+                        time.sleep(dt)
+                    else:
+                        next_t = time.perf_counter()
+            except KeyboardInterrupt:
+                try:
+                    for can_id in can_ids:
+                        arb_id, data = send_stop(bus, host_id=args.host_id, can_id=can_id, clear_fault=False)
+                        print(f"\ninterrupt: sent STOP can_id={can_id} arb_id=0x{arb_id:08X} data={data.hex()}")
+                except Exception as exc:
+                    print(f"\ninterrupt: failed to send STOP: {exc}")
+                raise SystemExit(130)
+            finally:
+                clear_mit_stream(can_ids)
 
     run_with_bus(args.ch, _run)
 

@@ -1,5 +1,6 @@
 import argparse
 from lib.config import HOST_ID, DEFAULT_CH
+from lib.control_tuning import assert_control_inactive
 from lib.frames import frame_type18_write_u32
 from lib.common import epscan_from_ms
 from lib.runtime import run_with_bus
@@ -19,6 +20,7 @@ def main():
     ap.add_argument("--ch", default=DEFAULT_CH)
     ap.add_argument("--host_id", type=lambda x:int(x,0), default=HOST_ID)
     args = ap.parse_args()
+    assert_control_inactive()
     can_ids = _dedupe(args.can_id)
 
     if (args.epscan is None) == (args.period_ms is None):

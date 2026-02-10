@@ -1,0 +1,2 @@
+Invoking command in '/home/su/idle_ws/build/msgs': /usr/bin/cmake /home/su/idle_ws/src/msgs -DCMAKE_INSTALL_PREFIX=/home/su/idle_ws/install/msgs
+Invoked command in '/home/su/idle_ws/build/msgs' returned '1': /usr/bin/cmake /home/su/idle_ws/src/msgs -DCMAKE_INSTALL_PREFIX=/home/su/idle_ws/install/msgs

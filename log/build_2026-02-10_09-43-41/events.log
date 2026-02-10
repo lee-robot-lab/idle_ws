@@ -1,0 +1,48 @@
+[0.000000] (-) TimerEvent: {}
+[0.000206] (-) JobUnselected: {'identifier': 'idle_common'}
+[0.000279] (-) JobUnselected: {'identifier': 'idle_launch'}
+[0.000293] (-) JobUnselected: {'identifier': 'phy'}
+[0.000304] (-) JobUnselected: {'identifier': 'sim'}
+[0.000320] (msgs) JobQueued: {'identifier': 'msgs', 'dependencies': OrderedDict()}
+[0.000335] (can_interface) JobQueued: {'identifier': 'can_interface', 'dependencies': OrderedDict([('msgs', '/home/su/idle_ws/install/msgs')])}
+[0.000350] (msgs) JobStarted: {'identifier': 'msgs'}
+[0.005328] (msgs) JobProgress: {'identifier': 'msgs', 'progress': 'cmake'}
+[0.006705] (msgs) Command: {'cmd': ['/usr/bin/cmake', '/home/su/idle_ws/src/msgs', '-DCMAKE_INSTALL_PREFIX=/home/su/idle_ws/install/msgs'], 'cwd': '/home/su/idle_ws/build/msgs', 'env': OrderedDict([('GJS_DEBUG_TOPICS', 'JS ERROR;JS LOG'), ('LESSOPEN', '| /usr/bin/lesspipe %s'), ('VSCODE_CWD', '/home/su'), ('VSCODE_ESM_ENTRYPOINT', 'vs/workbench/api/node/extensionHostProcess'), ('CODEX_CI', '1'), ('LANGUAGE', 'ko:en'), ('USER', 'su'), ('LC_TIME', 'ko_KR.UTF-8'), ('CODEX_INTERNAL_ORIGINATOR_OVERRIDE', 'codex_vscode'), ('VSCODE_NLS_CONFIG', '{"userLocale":"ko","osLocale":"ko","resolvedLanguage":"en","defaultMessagesFile":"/usr/share/code/resources/app/out/nls.messages.json","locale":"ko","availableLanguages":{}}'), ('VSCODE_HANDLES_UNCAUGHT_ERRORS', 'true'), ('XDG_SESSION_TYPE', 'wayland'), ('SHLVL', '0'), ('LD_LIBRARY_PATH', '/usr/local/cuda-12.9/lib64'), ('HOME', '/home/su'), ('CHROME_DESKTOP', 'code.desktop'), ('CONDA_SHLVL', '0'), ('OLDPWD', '/home/su/idle_ws'), ('DESKTOP_SESSION', 'ubuntu'), ('VSCODE_IPC_HOOK', '/run/user/1000/vscode-407f18e8-1.10-main.sock'), ('GIO_LAUNCHED_DESKTOP_FILE', '/usr/share/applications/code.desktop'), ('GNOME_SHELL_SESSION_MODE', 'ubuntu'), ('GTK_MODULES', 'gail:atk-bridge'), ('PAGER', 'cat'), ('LC_MONETARY', 'ko_KR.UTF-8'), ('MANAGERPID', '1545'), ('LC_CTYPE', 'C.UTF-8'), ('SYSTEMD_EXEC_PID', '1724'), ('IM_CONFIG_CHECK_ENV', '1'), ('NO_COLOR', '1'), ('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/run/user/1000/bus'), ('COLORTERM', ''), ('GIO_LAUNCHED_DESKTOP_FILE_PID', '84339'), ('VSCODE_CRASH_REPORTER_PROCESS_TYPE', 'extensionHost'), ('IM_CONFIG_PHASE', '1'), ('WAYLAND_DISPLAY', 'wayland-0'), ('APPLICATION_INSIGHTS_NO_STATSBEAT', 'true'), ('LOGNAME', 'su'), ('SUMO_HOME', '/usr/share/sumo'), ('JOURNAL_STREAM', '8:7126'), ('_', '/usr/bin/colcon'), ('XDG_SESSION_CLASS', 'user'), ('RUST_LOG', 'warn'), ('USERNAME', 'su'), ('TERM', 'dumb'), ('GNOME_DESKTOP_SESSION_ID', 'this-is-deprecated'), ('FC_FONTATIONS', '1'), ('PATH', '/home/su/.local/bin:/home/su/.codex/tmp/arg0/codex-arg00nfwP6:/home/su/.local/bin:/usr/local/cuda-12.9/bin:/home/su/anaconda3/condabin:/home/su/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin:/home/su/.vscode/extensions/openai.chatgpt-0.4.71-linux-x64/bin/linux-x86_64'), ('SESSION_MANAGER', 'local/mee:@/tmp/.ICE-unix/1693,unix/mee:/tmp/.ICE-unix/1693'), ('INVOCATION_ID', 'a189face324644e9868f0ae145424fc5'), ('PAPERSIZE', 'a4'), ('XDG_MENU_PREFIX', 'gnome-'), ('LC_ADDRESS', 'ko_KR.UTF-8'), ('GNOME_SETUP_DISPLAY', ':1'), ('XDG_RUNTIME_DIR', '/run/user/1000'), ('GDK_BACKEND', 'wayland'), ('DISPLAY', ':0'), ('LANG', 'C.UTF-8'), ('XDG_CURRENT_DESKTOP', 'ubuntu:GNOME'), ('LC_TELEPHONE', 'ko_KR.UTF-8'), ('XMODIFIERS', '@im=ibus'), ('GH_PAGER', 'cat'), ('XDG_SESSION_DESKTOP', 'ubuntu'), ('XAUTHORITY', '/run/user/1000/.mutter-Xwaylandauth.D2GOK3'), ('SSH_AGENT_LAUNCHER', 'gnome-keyring'), ('SSH_AUTH_SOCK', '/run/user/1000/keyring/ssh'), ('CONDA_PYTHON_EXE', '/home/su/anaconda3/bin/python'), ('SHELL', '/bin/bash'), ('LC_NAME', 'ko_KR.UTF-8'), ('QT_ACCESSIBILITY', '1'), ('ELECTRON_RUN_AS_NODE', '1'), ('GDMSESSION', 'ubuntu'), ('LESSCLOSE', '/usr/bin/lesspipe %s %s'), ('CODEX_THREAD_ID', '019c412f-d09d-70a3-bd77-e37ac3b64620'), ('LC_MEASUREMENT', 'ko_KR.UTF-8'), ('GJS_DEBUG_OUTPUT', 'stderr'), ('LC_IDENTIFICATION', 'ko_KR.UTF-8'), ('GIT_PAGER', 'cat'), ('QT_IM_MODULE', 'ibus'), ('PWD', '/home/su/idle_ws/build/msgs'), ('LC_ALL', 'C.UTF-8'), ('CUDA_HOME', '/usr/local/cuda-12.9'), ('XDG_CONFIG_DIRS', '/etc/xdg/xdg-ubuntu:/etc/xdg'), ('CONDA_EXE', '/home/su/anaconda3/bin/conda'), ('VSCODE_CODE_CACHE_PATH', '/home/su/.config/Code/CachedData/bdd88df003631aaa0bcbe057cb0a940b80a476fa'), ('XDG_DATA_DIRS', '/usr/share/ubuntu:/home/su/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/:/var/lib/snapd/desktop'), ('LC_NUMERIC', 'ko_KR.UTF-8'), ('LC_PAPER', 'ko_KR.UTF-8'), ('COLCON', '1'), ('VSCODE_PID', '84339')]), 'shell': False}
+[0.058653] (msgs) StdoutLine: {'line': b'-- The C compiler identification is GNU 11.4.0\n'}
+[0.099238] (-) TimerEvent: {}
+[0.107964] (msgs) StdoutLine: {'line': b'-- The CXX compiler identification is GNU 11.4.0\n'}
+[0.114413] (msgs) StdoutLine: {'line': b'-- Detecting C compiler ABI info\n'}
+[0.181203] (msgs) StdoutLine: {'line': b'-- Detecting C compiler ABI info - done\n'}
+[0.186939] (msgs) StdoutLine: {'line': b'-- Check for working C compiler: /usr/bin/cc - skipped\n'}
+[0.187255] (msgs) StdoutLine: {'line': b'-- Detecting C compile features\n'}
+[0.187392] (msgs) StdoutLine: {'line': b'-- Detecting C compile features - done\n'}
+[0.189669] (msgs) StdoutLine: {'line': b'-- Detecting CXX compiler ABI info\n'}
+[0.199345] (-) TimerEvent: {}
+[0.268259] (msgs) StdoutLine: {'line': b'-- Detecting CXX compiler ABI info - done\n'}
+[0.274547] (msgs) StdoutLine: {'line': b'-- Check for working CXX compiler: /usr/bin/c++ - skipped\n'}
+[0.274766] (msgs) StdoutLine: {'line': b'-- Detecting CXX compile features\n'}
+[0.275131] (msgs) StdoutLine: {'line': b'-- Detecting CXX compile features - done\n'}
+[0.286442] (msgs) StderrLine: {'line': b'CMake Error at CMakeLists.txt:9 (find_package):\n'}
+[0.286617] (msgs) StderrLine: {'line': b'  By not providing "Findament_cmake.cmake" in CMAKE_MODULE_PATH this project\n'}
+[0.286684] (msgs) StderrLine: {'line': b'  has asked CMake to find a package configuration file provided by\n'}
+[0.286744] (msgs) StderrLine: {'line': b'  "ament_cmake", but CMake did not find one.\n'}
+[0.286796] (msgs) StderrLine: {'line': b'\n'}
+[0.286846] (msgs) StderrLine: {'line': b'  Could not find a package configuration file provided by "ament_cmake" with\n'}
+[0.286895] (msgs) StderrLine: {'line': b'  any of the following names:\n'}
+[0.286942] (msgs) StderrLine: {'line': b'\n'}
+[0.286989] (msgs) StderrLine: {'line': b'    ament_cmakeConfig.cmake\n'}
+[0.287036] (msgs) StderrLine: {'line': b'    ament_cmake-config.cmake\n'}
+[0.287097] (msgs) StderrLine: {'line': b'\n'}
+[0.287161] (msgs) StderrLine: {'line': b'  Add the installation prefix of "ament_cmake" to CMAKE_PREFIX_PATH or set\n'}
+[0.287207] (msgs) StderrLine: {'line': b'  "ament_cmake_DIR" to a directory containing one of the above files.  If\n'}
+[0.287252] (msgs) StderrLine: {'line': b'  "ament_cmake" provides a separate development package or SDK, be sure it\n'}
+[0.287297] (msgs) StderrLine: {'line': b'  has been installed.\n'}
+[0.287342] (msgs) StderrLine: {'line': b'\n'}
+[0.287387] (msgs) StderrLine: {'line': b'\n'}
+[0.287424] (msgs) StdoutLine: {'line': b'-- Configuring incomplete, errors occurred!\n'}
+[0.287463] (msgs) StdoutLine: {'line': b'See also "/home/su/idle_ws/build/msgs/CMakeFiles/CMakeOutput.log".\n'}
+[0.289846] (msgs) CommandEnded: {'returncode': 1}
+[0.299620] (-) TimerEvent: {}
+[0.310192] (msgs) JobEnded: {'identifier': 'msgs', 'rc': 1}
+[0.320572] (can_interface) JobSkipped: {'identifier': 'can_interface'}
+[0.320633] (-) EventReactorShutdown: {}
