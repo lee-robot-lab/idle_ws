@@ -67,3 +67,129 @@
 
 - `Type00 scan found no motor in id range [...]`
 - `home Type01 pre-stream disabled: no discovered id from Type00 scan`
+
+## 실행 예시
+
+### 1) CAN 인터페이스 준비
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+ip -details link show can0
+```
+
+### 2) 빌드 및 노드 실행
+
+```bash
+cd /home/su/idle_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select msgs can_interface
+source install/setup.bash
+ros2 run can_interface can_bridge_node
+```
+
+파라미터를 함께 줄 때:
+
+```bash
+ros2 run can_interface can_bridge_node --ros-args \
+  -p scan_min_id:=1 \
+  -p scan_max_id:=10 \
+  -p scan_wait_ms:=500 \
+  -p cmd_timeout_ms:=300
+```
+
+### 3) 상태 토픽 확인
+
+```bash
+ros2 topic echo /motor_state --qos-reliability best_effort
+```
+
+### 4) `/motor_cmd` 발행 (CLI)
+
+```bash
+ros2 topic pub /motor_cmd msgs/msg/MotorCMD \
+  "{stamp: {sec: 0, nanosec: 0}, motor_id: 1, q_des: 0.0, qd_des: 0.0, kp: 8.0, kd: 0.6, tau_ff: 0.0}" \
+  -r 200
+```
+
+### 5) `/motor_cmd` 발행 (Python `rclpy`)
+
+```python
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from msgs.msg import MotorCMD
+
+
+class CmdPub(Node):
+    def __init__(self):
+        super().__init__("motor_cmd_example_pub")
+        self.pub = self.create_publisher(MotorCMD, "/motor_cmd", 10)
+        self.timer = self.create_timer(0.005, self.tick)  # 200 Hz
+
+    def tick(self):
+        msg = MotorCMD()
+        msg.motor_id = 1
+        msg.q_des = 0.0
+        msg.qd_des = 0.0
+        msg.kp = 8.0
+        msg.kd = 0.6
+        msg.tau_ff = 0.0
+        msg.stamp = self.get_clock().now().to_msg()
+        self.pub.publish(msg)
+
+
+def main():
+    rclpy.init()
+    node = CmdPub()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## 터미널별 실행 순서
+
+### 터미널 1: 빌드 + 환경 설정
+
+```bash
+cd /home/su/idle_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select msgs can_interface
+source install/setup.bash
+```
+
+### 터미널 2: 노드 실행
+
+```bash
+cd /home/su/idle_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 run can_interface can_bridge_node
+```
+
+### 터미널 3: 상태 확인
+
+```bash
+cd /home/su/idle_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 topic echo /motor_state --qos-reliability best_effort
+```
+
+### 터미널 4: 명령 송신
+
+```bash
+cd /home/su/idle_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 topic pub /motor_cmd msgs/msg/MotorCMD \
+  "{stamp: {sec: 0, nanosec: 0}, motor_id: 1, q_des: 0.0, qd_des: 0.0, kp: 8.0, kd: 0.6, tau_ff: 0.0}" \
+  -r 200
+```
