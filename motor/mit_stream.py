@@ -1,3 +1,5 @@
+"""고정 MIT(Type01) 명령 스트림을 보내는 테스트용 실행 스크립트."""
+
 import argparse
 import time
 

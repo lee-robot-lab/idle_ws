@@ -1,3 +1,5 @@
+"""Type02 전용 파싱 정책 검증 테스트."""
+
 from pathlib import Path
 import sys
 import unittest

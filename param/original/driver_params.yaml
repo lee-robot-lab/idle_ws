@@ -1,3 +1,4 @@
+# Low-frequency Type18 driver parameters (manual edit, explicit apply only).
 version: 1
 description: Type18 driver parameters. Edit manually, then run apply_driver_params.py.
 motors:

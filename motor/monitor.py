@@ -1,3 +1,5 @@
+"""Type02 피드백을 콘솔에 실시간 출력하는 경량 모니터."""
+
 import argparse
 
 from lib.common import unpack_ext_id

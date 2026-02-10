@@ -1,3 +1,5 @@
+"""fault transition 추적 로직 검증 테스트."""
+
 from pathlib import Path
 import sys
 import unittest

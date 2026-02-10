@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""단일 파라미터 Type18 write(+옵션 Type22 save) 유지보수 스크립트."""
+
 import argparse
 
 from lib.config import HOST_ID, DEFAULT_CH

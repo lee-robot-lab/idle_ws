@@ -1,3 +1,5 @@
+"""호환용 stop 스크립트(enable.py --enable 0 대체)."""
+
 import argparse
 from lib.config import HOST_ID, DEFAULT_CH
 from lib.power import send_stop

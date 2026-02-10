@@ -1,3 +1,5 @@
+"""Type06 zero 설정 프레임 전송 유틸."""
+
 import argparse
 from lib.config import HOST_ID, DEFAULT_CH
 from lib.frames import frame_type06_zero

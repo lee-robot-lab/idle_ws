@@ -1,3 +1,4 @@
+// CAN <-> ROS bridge node for MIT protocol (Type02 state/error, Type01 command relay).
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/can.h>

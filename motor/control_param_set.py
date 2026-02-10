@@ -1,3 +1,5 @@
+"""모터별 제어 튜닝값을 갱신하고 dirty 상태로 표시."""
+
 import argparse
 
 from lib.control_tuning import set_control_tuning

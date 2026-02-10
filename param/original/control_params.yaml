@@ -1,3 +1,4 @@
+# Baseline control tuning defaults and per-motor overrides.
 version: 1
 scan:
   min_id: 1

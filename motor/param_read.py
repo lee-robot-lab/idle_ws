@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Type17로 드라이버 파라미터를 읽어오는 조회 스크립트."""
+
 import argparse
 
 from lib.config import HOST_ID, DEFAULT_CH

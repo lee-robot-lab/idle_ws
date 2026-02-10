@@ -1,3 +1,5 @@
+"""Type02 수신 품질/지연/누락을 진단하는 모니터."""
+
 import argparse
 import math
 import time

@@ -1,3 +1,5 @@
+"""Type24 active report 설정 프레임을 보내는 유틸."""
+
 import argparse
 from lib.config import HOST_ID, DEFAULT_CH
 from lib.frames import frame_type24_active_report

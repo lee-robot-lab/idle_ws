@@ -1,3 +1,5 @@
+"""EPScan_time 파라미터를 간편하게 설정하는 유틸."""
+
 import argparse
 from lib.config import HOST_ID, DEFAULT_CH
 from lib.control_tuning import assert_control_inactive

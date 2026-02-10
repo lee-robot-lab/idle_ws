@@ -1,3 +1,5 @@
+"""현재 유효 제어 튜닝값과 dirty 상태를 출력."""
+
 import argparse
 import json
 

@@ -1,3 +1,4 @@
+# Fault change event derived from Type02 feedback transitions.
 builtin_interfaces/Time stamp
 uint8 EVENT_RAISED=1
 uint8 EVENT_CLEARED=2

@@ -1,3 +1,5 @@
+"""driver_params.yaml(Type18) 내용을 모터에 적용하는 유지보수 스크립트."""
+
 import argparse
 import time
 
