@@ -267,8 +267,8 @@ def main():
     )
     ap.add_argument("--no_stream_hz", action="store_true", help="mit_stream 상태 파일 자동 참조 비활성화")
     ap.add_argument("--quiet", action="store_true", help="프레임별 출력 비활성화")
-    ap.add_argument("--report_prefix", default="diag_report", help="엑셀 파일명 prefix")
     ap.add_argument("--report_dir", default=None, help="엑셀 저장 경로(기본: 이 파일과 같은 폴더)")
+    ap.add_argument("--report_prefix", default="diag_report", help="엑셀 파일명 prefix")
     ap.add_argument("--no_report", action="store_true", help="종료 시 엑셀 저장 비활성화")
     args = ap.parse_args()
 

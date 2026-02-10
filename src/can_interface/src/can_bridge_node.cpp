@@ -190,6 +190,8 @@ public:
       std::bind(&CanBridgeNode::on_cmd, this, std::placeholders::_1));
 
     scan_motor_ids();
+    send_enable_once_from_scan();
+    prime_home_stream_from_scan();
     reload_gate_config(true);
     RCLCPP_INFO(
       get_logger(),
@@ -417,6 +419,59 @@ private:
     return send_ext_frame(arb, data);
   }
 
+  void send_enable_once_from_scan()
+  {
+    if (discovered_motor_ids_.empty()) {
+      RCLCPP_WARN(get_logger(), "startup Type03 skipped: no discovered id from Type00 scan");
+      return;
+    }
+
+    int ok = 0;
+    int fail = 0;
+    for (const uint8_t motor_id : discovered_motor_ids_) {
+      MotorRuntime & rt = runtime_by_motor_[motor_id];
+      if (send_enable_frame(motor_id)) {
+        rt.enable_sent = true;
+        rt.last_enable_sent = std::chrono::steady_clock::now();
+        ++ok;
+      } else {
+        ++fail;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    RCLCPP_INFO(
+      get_logger(),
+      "startup Type03 sent once: targets=%zu ok=%d fail=%d",
+      discovered_motor_ids_.size(),
+      ok,
+      fail);
+  }
+
+  void prime_home_stream_from_scan()
+  {
+    if (discovered_motor_ids_.empty()) {
+      RCLCPP_WARN(get_logger(), "home Type01 pre-stream disabled: no discovered id from Type00 scan");
+      return;
+    }
+
+    const auto stamp = to_builtin_time(now());
+    std::string ids;
+    for (const uint8_t motor_id : discovered_motor_ids_) {
+      CachedCommand & cached = latest_cmd_by_motor_[motor_id];
+      cached.cmd = make_home_command(motor_id);
+      cached.cmd.stamp = stamp;
+      cached.valid = true;
+      cached.has_sent = false;
+      cached.has_received_cmd = false;
+      cached.timeout_home_active = false;
+      if (!ids.empty()) {
+        ids += ",";
+      }
+      ids += std::to_string(static_cast<int>(motor_id));
+    }
+    RCLCPP_INFO(get_logger(), "home Type01 pre-stream targets from Type00 scan: [%s]", ids.c_str());
+  }
+
   struct MotorRuntime
   {
     bool enable_sent {false};
@@ -433,27 +488,9 @@ private:
       return true;
     }
 
-    const auto now_tp = std::chrono::steady_clock::now();
-    bool due = !rt.enable_sent;
-    if (!due) {
-      const auto elapsed_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - rt.last_enable_sent).count();
-      due = elapsed_ms >= enable_retry_ms_;
-    }
-    if (due) {
-      if (!send_enable_frame(motor_id)) {
-        RCLCPP_ERROR_THROTTLE(
-          get_logger(), *get_clock(), 2000,
-          "failed to send TYPE03 enable for motor_id=%u", motor_id);
-      } else {
-        rt.enable_sent = true;
-        rt.last_enable_sent = now_tp;
-      }
-    }
-
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 2000,
-      "waiting TYPE02 after TYPE03 before TYPE01 for motor_id=%u", motor_id);
+      "waiting TYPE02 before applying /motor_cmd for motor_id=%u", motor_id);
     return false;
   }
 
@@ -500,8 +537,10 @@ private:
       if (!cached.valid) {
         continue;
       }
-      if (!ensure_motor_ready_for_control(motor_id)) {
-        continue;  // Enforce TYPE03 -> TYPE02 -> TYPE01 order.
+
+      const bool is_pre_home_stream = !cached.has_received_cmd;
+      if (!is_pre_home_stream && !ensure_motor_ready_for_control(motor_id)) {
+        continue;  // Hold external /motor_cmd until Type02 is observed.
       }
 
       const double tx_hz = tx_hz_for_motor(motor_id);
@@ -525,6 +564,9 @@ private:
       }
 
       msgs::msg::MotorCMD outgoing = cached.cmd;
+      if (!cached.has_received_cmd) {
+        outgoing.stamp = to_builtin_time(now());
+      }
       if (cmd_timed_out) {
         outgoing = make_home_command(motor_id);
         outgoing.stamp = to_builtin_time(now());
@@ -580,7 +622,18 @@ private:
       }
       int motor_id = -1;
       if (type == TYPE00_GET_DEVICE_ID) {
-        motor_id = static_cast<int>(data1_from_arb(arb));
+        const uint8_t id1 = data1_from_arb(arb);
+        const uint8_t id2 = static_cast<uint8_t>(data2_from_arb(arb) & 0xFF);
+        // Manual form: Type00 reply uses bit7~0 = 0xFE and bit15~8 = motor id.
+        if (id1 == 0xFE) {
+          motor_id = static_cast<int>(id2);
+        } else if (id2 == 0xFE) {
+          // Be tolerant to swapped encodings.
+          motor_id = static_cast<int>(id1);
+        } else {
+          // Fallback for legacy format.
+          motor_id = static_cast<int>(id1);
+        }
       } else if (type == TYPE02_FEEDBACK) {
         motor_id = static_cast<int>(data2_from_arb(arb) & 0xFF);
       }
@@ -657,9 +710,9 @@ private:
       MotorRuntime & rt = runtime_by_motor_[motor_id];
       rt.has_state = true;
       rt.last_state = st;
-      if (rt.enable_sent && !rt.ready_for_control) {
+      if (!rt.ready_for_control) {
         rt.ready_for_control = true;
-        RCLCPP_INFO(get_logger(), "motor_id=%u ready: TYPE03 -> TYPE02 observed", motor_id);
+        RCLCPP_INFO(get_logger(), "motor_id=%u ready: TYPE02 observed", motor_id);
       }
 
       const uint8_t prev_fault = last_fault_bits_[motor_id];
