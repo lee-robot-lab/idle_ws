@@ -178,14 +178,15 @@ public:
       throw std::runtime_error("failed to open socketcan channel: " + channel_);
     }
 
-    const auto qos_best_effort = rclcpp::QoS(rclcpp::KeepLast(20)).best_effort();
+    const auto qos_cmd = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
+    const auto qos_state = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort();
     const auto qos_reliable = rclcpp::QoS(rclcpp::KeepLast(20)).reliable();
 
-    state_pub_ = create_publisher<msgs::msg::MotorState>("/motor_state", qos_best_effort);
+    state_pub_ = create_publisher<msgs::msg::MotorState>("/motor_state", qos_state);
     error_pub_ = create_publisher<msgs::msg::MotorError>("/motor_error", qos_reliable);
     cmd_sub_ = create_subscription<msgs::msg::MotorCMD>(
       "/motor_cmd",
-      qos_best_effort,
+      qos_cmd,
       std::bind(&CanBridgeNode::on_cmd, this, std::placeholders::_1));
 
     scan_motor_ids();
