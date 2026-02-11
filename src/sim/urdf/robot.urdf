@@ -11,12 +11,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/base.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/base.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/base.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/base.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -31,12 +31,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -51,12 +51,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -71,12 +71,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -91,12 +91,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/RS03(0.0.0).stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/RS03(0.0.0).stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/RS03(0.0.0).stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/RS03(0.0.0).stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -111,12 +111,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/joint1.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/joint1.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/joint1.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/joint1.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -131,12 +131,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link1_1.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link1_1.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link1_1.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link1_1.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -151,12 +151,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link1_2.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link1_2.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link1_2.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link1_2.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -171,12 +171,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link1_3.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link1_3.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link1_3.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link1_3.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -191,12 +191,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/joint2.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/joint2.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/joint2.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/joint2.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -211,12 +211,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link2_1.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link2_1.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link2_1.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link2_1.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -231,12 +231,12 @@
     </inertial>
     <visual>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link2_2.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link2_2.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://arm_description/meshes/link2_2.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://sim/meshes/link2_2.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>

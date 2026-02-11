@@ -1,5 +1,5 @@
 <mujoco model="my_robot">
-  <compiler angle="radian" meshdir="../arm_description/meshes"/>
+  <compiler angle="radian" meshdir="meshes"/>
   <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
   <size njmax="2000" nconmax="2000"/>
 
