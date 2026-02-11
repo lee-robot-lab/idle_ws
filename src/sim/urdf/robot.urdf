@@ -254,7 +254,7 @@
     <parent link="rs02_1"/>
     <child  link="joint1"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
+    <axis xyz="0 0 -1"/>
     <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
 
@@ -268,7 +268,7 @@
     <parent link="rs03"/>
     <child  link="link1_1"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
+    <axis xyz="0 0 -1"/>
     <limit lower="-2.5" upper="2.5" effort="50" velocity="100"/>
   </joint>
 
@@ -294,7 +294,7 @@
     <parent link="rs02_2"/>
     <child  link="joint2"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
+    <axis xyz="0 0 -1"/>
     <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
 
@@ -308,7 +308,7 @@
     <parent link="rs02_3"/>
     <child  link="link2_1"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
+    <axis xyz="0 0 -1"/>
     <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
   <joint name="j4_2" type="fixed">
