@@ -4,7 +4,7 @@
   <size njmax="2000" nconmax="2000"/>
 
   <option timestep="0.005" gravity="0 0 -9.81"/>
-  
+
   <default>
     <joint limited="true" damping="0.5" armature="0.01"/>
     <geom contype="1" conaffinity="1" friction="1 0.1 0.1" solref="0.01 1" solimp="0.9 0.95 0.001"/>
@@ -20,16 +20,17 @@
     <mesh name="link1_2_mesh"  file="link1_2.stl"        scale="0.001 0.001 0.001"/>
     <mesh name="link1_3_mesh"  file="link1_3.stl"        scale="0.001 0.001 0.001"/>
     <mesh name="joint2_mesh"   file="joint2.stl"         scale="0.001 0.001 0.001"/>
-    <mesh name="link2_1_mesh"    file="link2_1.stl"          scale="0.001 0.001 0.001"/>
-    <mesh name="link2_2_mesh"    file="link2_2.stl"          scale="0.001 0.001 0.001"/>
+    <mesh name="link2_1_mesh"  file="link2_1.stl"        scale="0.001 0.001 0.001"/>
+    <mesh name="link2_2_mesh"  file="link2_2.stl"        scale="0.001 0.001 0.001"/>
   </asset>
 
   <worldbody>
     <!-- base -->
     <body name="base" pos="0 0 0">
-      <inertial pos="0 0 0.041183"
-                mass="0.40598"
-                fullinertia="0.001 0.001 0.002 -3.979e-08 0 0"/>
+      <!-- Fusion COM: (0.0, 0.0, 42.4281) mm -->
+      <inertial pos="0 0 0.0424281"
+                mass="0.398399734"
+                fullinertia="0.001218907079 0.001185493046 0.001557694961 3.8269e-08 -5e-12 -1e-12"/>
       <geom type="mesh" mesh="base_mesh"/>
 
       <!-- m1: fixed base -> rs02_1 at xyz="0 0 0.1015" -->
@@ -42,9 +43,10 @@
         <!-- j1: revolute about z, range [-pi, pi] -->
         <body name="joint1" pos="0 0 0">
           <joint name="j1" type="hinge" axis="0 0 -1" range="-3.14159 3.14159"/>
-          <inertial pos="0.00000001 -0.014267 0.057937"
-                    mass="0.28684"
-                    fullinertia="0.001 0.001 0.001 8.109e-08 -2.906e-08 0"/>
+          <!-- Fusion COM: (0.0095, -15.6598, 56.1135) mm -->
+          <inertial pos="0.0000095 -0.0156598 0.0561135"
+                    mass="0.293398076"
+                    fullinertia="0.000896395761 0.001110242191 0.000865240118 -8.1531e-08 5.2379e-08 -0.000147190496"/>
           <geom type="mesh" mesh="joint1_mesh"/>
 
           <!-- m2: fixed joint1 -> rs03 at xyz="0 -0.0637 0.068" rpy="1.5708 0 0"
@@ -59,25 +61,28 @@
             <!-- j2: revolute about z, range [-2.5, 2.5] -->
             <body name="link1_1" pos="0 0 0">
               <joint name="j2" type="hinge" axis="0 0 -1" range="-2.5 2.5"/>
-              <inertial pos="0 0.012111 0.043099"
-                        mass="0.25495"
-                        fullinertia="4.249e-04 3.814e-04 4.661e-04 -1.063e-17 2.341e-18 -6.842e-05"/>
+              <!-- Fusion COM: (0.0, 23.1488, 44.0015) mm -->
+              <inertial pos="0 0.0231488 0.0440015"
+                        mass="0.319496008"
+                        fullinertia="0.000638154136 0.000425282889 0.000647113353 -3.1e-11 1.09e-10 0.000120587347"/>
               <geom type="mesh" mesh="link1_1_mesh"/>
 
               <!-- j2_2: fixed link1_1 -> link1_2 at xyz="0 0.05 0.05715" rpy="-1.5708 0 0"
                    roll=-90deg => quat=(0.7071, -0.7071, 0, 0)
               -->
               <body name="link1_2" pos="0 0.05 0.05715" quat="0.70710678 -0.70710678 0 0">
+                <!-- Fusion COM: (0.0, 0.0, 150.0) mm -->
                 <inertial pos="0 0 0.15"
-                          mass="0.504"
-                          fullinertia="3.773e-03 3.773e-03 1.360e-04 0 0 0"/>
+                          mass="0.508299975"
+                          fullinertia="0.003890759307 0.003890759307 0.000157018996 0 0 0"/>
                 <geom type="mesh" mesh="link1_2_mesh"/>
 
                 <!-- j2_3: fixed link1_2 -> link1_3 at xyz="0 0 0.3" -->
                 <body name="link1_3" pos="0 0 0.3">
-                  <inertial pos="0.002965 0.015222 0.033887"
-                            mass="0.21978"
-                            fullinertia="4.692e-04 5.262e-04 4.199e-04 -6.560556e-06 -4.344733e-06 -7.4987614e-05"/>
+                  <!-- Fusion COM: (0.0002, 15.5124, 33.9681) mm -->
+                  <inertial pos="0.0000002 0.0155124 0.0339681"
+                            mass="0.279149934"
+                            fullinertia="0.000661231823 0.000687897169 0.000472960204 -1.55e-09 1.529e-09 0.000125413257"/>
                   <geom type="mesh" mesh="link1_3_mesh"/>
 
                   <!-- m3: fixed link1_3 -> rs02_2 at xyz="0 0.06585 0.050" rpy="-1.5708 0 0" -->
@@ -90,9 +95,10 @@
                     <!-- j3 -->
                     <body name="joint2" pos="0 0 0">
                       <joint name="j3" type="hinge" axis="0 0 -1" range="-3.14159 3.14159"/>
-                      <inertial pos="0.000003 -0.010016 0.043868"
-                                mass="0.16391"
-                                fullinertia="2.811e-04 3.644e-04 2.927e-04 8.447e-09 -3.1463e-08 4.3846331e-05"/>
+                      <!-- Fusion COM: (0.0027, -11.3791, 42.1733) mm -->
+                      <inertial pos="0.0000027 -0.0113791 0.0421733"
+                                mass="0.169648237"
+                                fullinertia="0.000296367505 0.000366233598 0.000291288551 -7.634e-09 3.6434e-08 -0.000048442986"/>
                       <geom type="mesh" mesh="joint2_mesh"/>
 
                       <!-- m4: fixed joint2 -> rs02_3 at xyz="0 -0.0502 0.055" rpy="1.5708 0 0" -->
@@ -105,16 +111,17 @@
                         <!-- j4 -->
                         <body name="link2_1" pos="0 0 0">
                           <joint name="j4" type="hinge" axis="0 0 -1" range="-3.14159 3.14159"/>
-                          <inertial pos="0.000018 -0.000018 0.088036"
-                                    mass="0.30867"
-                                    fullinertia="0.002 0.002 0.001 -9.78e-10 1.852e-07 -1.833e-07"/>
+                          <!-- Fusion COM: (-0.4642, -0.5063, 38.0142) mm -->
+                          <inertial pos="-0.0004642 -0.0005063 0.0380142"
+                                    mass="0.188800061"
+                                    fullinertia="0.000146197470 0.000146205177 0.000161370291 -4.3751e-08 -0.000001488595 -0.000000892060"/>
                           <geom type="mesh" mesh="link2_1_mesh"/>
 
-
-                          <body name="link2_2" pos="0 0 0.035">                    
-                            <inertial pos="0.000018 -0.000018 0.088036"
-                                    mass="0.30867"
-                                    fullinertia="0.002 0.002 0.001 -9.78e-10 1.852e-07 -1.833e-07"/>
+                          <body name="link2_2" pos="0 0 0.035">
+                            <!-- Fusion COM: (0.0, 0.0, 115.0) mm -->
+                            <inertial pos="0 0 0.115"
+                                      mass="0.170500037"
+                                      fullinertia="0.000759754048 0.000759754048 0.000052564816 0 0 0"/>
                             <geom type="mesh" mesh="link2_2_mesh"/>
                           </body>
                         </body>
@@ -133,26 +140,26 @@
   <actuator>
     <!-- RS02 joints: rated 6 Nm, peak 17 Nm -->
     <motor name="a_j1" joint="j1"
-            gear="1"
-            ctrllimited="true" ctrlrange="-6 6"
-            forcelimited="true" forcerange="-17 17"/>
+           gear="1"
+           ctrllimited="true" ctrlrange="-6 6"
+           forcelimited="true" forcerange="-17 17"/>
 
     <!-- RS03 joint: rated 20 Nm, peak(limit) 60 Nm -->
     <motor name="a_j2" joint="j2"
-            gear="1"
-            ctrllimited="true" ctrlrange="-20 20"
-            forcelimited="true" forcerange="-60 60"/>
+           gear="1"
+           ctrllimited="true" ctrlrange="-20 20"
+           forcelimited="true" forcerange="-60 60"/>
 
     <!-- RS02 joints -->
     <motor name="a_j3" joint="j3"
-            gear="1"
-            ctrllimited="true" ctrlrange="-6 6"
-            forcelimited="true" forcerange="-17 17"/>
+           gear="1"
+           ctrllimited="true" ctrlrange="-6 6"
+           forcelimited="true" forcerange="-17 17"/>
 
     <motor name="a_j4" joint="j4"
-            gear="1"
-            ctrllimited="true" ctrlrange="-6 6"
-            forcelimited="true" forcerange="-17 17"/>
+           gear="1"
+           ctrllimited="true" ctrlrange="-6 6"
+           forcelimited="true" forcerange="-17 17"/>
   </actuator>
 
 </mujoco>
