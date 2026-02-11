@@ -8,23 +8,23 @@
 
 1. `Type00` 스캔 (`scan_motor_ids()`)
    - `[scan_min_id, scan_max_id]` 범위로 `Type00` 요청을 보냅니다.
-   - `Type00` 응답과 `Type02` 피드백에서 모터 ID를 수집합니다.
+   - `Type00` 응답에서 모터 ID를 수집합니다.
 2. `Type03` enable 1회 전송 (`send_enable_once_from_scan()`)
    - 스캔으로 찾은 모터 ID마다 `Type03`를 정확히 1회 전송합니다.
    - 시작 시 `Type03` 주기 재전송 루프는 없습니다.
-3. `Type01` home 사전 스트림 (`prime_home_stream_from_scan()`)
-   - 찾은 모터마다 home 명령을 캐시에 채웁니다.
-   - `dispatch_cached_commands()`를 통해 `Type01` 주기 송신을 시작합니다.
-4. `Type02` 피드백 수신
+3. `Type02` 피드백 수신
    - `Type02`를 디코딩해서 `/motor_state`로 publish 합니다.
-   - 해당 모터의 첫 `Type02`가 관측되면 `ready` 상태로 전환합니다.
+   - `Type03` 전송된 모터에서 `mode_status=run(2)` `Type02`가 관측되면 `ready` 상태로 전환합니다.
+4. `Type01` home 스트림 시작
+   - 모터가 `ready`가 된 시점에, 해당 모터의 home 명령 캐시를 활성화합니다.
+   - 아직 외부 `/motor_cmd`가 없으면 `dispatch_cached_commands()`를 통해 home `Type01` 주기 송신을 시작합니다.
 5. `/motor_cmd` 적용
    - 외부 `/motor_cmd`는 해당 모터가 `ready`가 될 때까지 hold 됩니다.
    - `ready` 이후에는 외부 명령을 적용합니다.
 
 요청된 순서:
 
-`Type00 -> Type03(1회) -> Type01(home) -> Type02 -> /motor_cmd 적용`
+`Type00 -> Type03(1회) -> Type02(ready) -> Type01(home) -> /motor_cmd 적용`
 
 ## 토픽
 
@@ -37,7 +37,8 @@
 ## 명령 동작
 
 - `/motor_cmd` 이전
-  - 스캔된 모터 ID 대상으로 home `Type01` 스트림을 보냅니다.
+  - `ready`가 된 모터에 한해서 home `Type01` 스트림을 보냅니다.
+  - `ready` 전에는 home/외부 명령 모두 송신하지 않습니다.
 - `/motor_cmd` 이후
   - 같은 모터 ID에 대해서 home 명령을 외부 명령으로 대체합니다.
 - 명령 타임아웃(`cmd_timeout_ms`) 발생 시
@@ -49,7 +50,6 @@
 - `host_id` (기본값: `0xFD`)
 - `scan_min_id`, `scan_max_id`, `scan_wait_ms`
 - `default_tx_hz`
-- `enable_retry_ms` (ready 게이트 타이밍 관련)
 - `cmd_timeout_ms`
 - `home_q_des`, `home_qd_des`, `home_kp`, `home_kd`, `home_tau_ff`
 - `control_gate_state_file`
@@ -60,13 +60,12 @@
 
 - `Type00 scan discovered motor ids: [...]`
 - `startup Type03 sent once: targets=... ok=... fail=...`
-- `home Type01 pre-stream targets from Type00 scan: [...]`
-- `motor_id=X ready: TYPE02 observed`
+- `motor_id=X ready: TYPE02 run-mode observed after TYPE03`
+- `motor_id=X home Type01 stream armed after ready`
 
 스캔 실패 시:
 
 - `Type00 scan found no motor in id range [...]`
-- `home Type01 pre-stream disabled: no discovered id from Type00 scan`
 
 ## 실행 예시
 

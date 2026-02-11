@@ -148,10 +148,9 @@ public:
     scan_min_id_ = declare_parameter<int>("scan_min_id", 1);
     scan_max_id_ = declare_parameter<int>("scan_max_id", 10);
     scan_wait_ms_ = declare_parameter<int>("scan_wait_ms", 200);
-    rx_max_frames_per_tick_ = declare_parameter<int>("rx_max_frames_per_tick", 128);
+    rx_max_frames_per_tick_ = declare_parameter<int>("rx_max_frames_per_tick", 100);
     default_tx_hz_ = declare_parameter<double>("default_tx_hz", 500.0);
-    gate_reload_ms_ = declare_parameter<int>("gate_reload_ms", 50);
-    enable_retry_ms_ = declare_parameter<int>("enable_retry_ms", 100);
+    gate_reload_ms_ = declare_parameter<int>("gate_reload_ms", 100);
     cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 100);
     home_q_des_ = declare_parameter<double>("home_q_des", 0.0);
     home_qd_des_ = declare_parameter<double>("home_qd_des", 0.0);
@@ -165,10 +164,7 @@ public:
       default_tx_hz_ = 500.0;
     }
     if (gate_reload_ms_ <= 0) {
-      gate_reload_ms_ = 50;
-    }
-    if (enable_retry_ms_ <= 0) {
-      enable_retry_ms_ = 100;
+      gate_reload_ms_ = 100;
     }
     if (cmd_timeout_ms_ < 0) {
       cmd_timeout_ms_ = 0;
@@ -191,7 +187,6 @@ public:
 
     scan_motor_ids();
     send_enable_once_from_scan();
-    prime_home_stream_from_scan();
     reload_gate_config(true);
     RCLCPP_INFO(
       get_logger(),
@@ -447,31 +442,6 @@ private:
       fail);
   }
 
-  void prime_home_stream_from_scan()
-  {
-    if (discovered_motor_ids_.empty()) {
-      RCLCPP_WARN(get_logger(), "home Type01 pre-stream disabled: no discovered id from Type00 scan");
-      return;
-    }
-
-    const auto stamp = to_builtin_time(now());
-    std::string ids;
-    for (const uint8_t motor_id : discovered_motor_ids_) {
-      CachedCommand & cached = latest_cmd_by_motor_[motor_id];
-      cached.cmd = make_home_command(motor_id);
-      cached.cmd.stamp = stamp;
-      cached.valid = true;
-      cached.has_sent = false;
-      cached.has_received_cmd = false;
-      cached.timeout_home_active = false;
-      if (!ids.empty()) {
-        ids += ",";
-      }
-      ids += std::to_string(static_cast<int>(motor_id));
-    }
-    RCLCPP_INFO(get_logger(), "home Type01 pre-stream targets from Type00 scan: [%s]", ids.c_str());
-  }
-
   struct MotorRuntime
   {
     bool enable_sent {false};
@@ -504,6 +474,21 @@ private:
     home.kd = static_cast<float>(home_kd_);
     home.tau_ff = static_cast<float>(home_tau_ff_);
     return home;
+  }
+
+  void start_home_stream_for_ready_motor(const uint8_t motor_id)
+  {
+    CachedCommand & cached = latest_cmd_by_motor_[motor_id];
+    if (cached.has_received_cmd) {
+      return;
+    }
+
+    cached.cmd = make_home_command(motor_id);
+    cached.cmd.stamp = to_builtin_time(now());
+    cached.valid = true;
+    cached.has_sent = false;
+    cached.timeout_home_active = false;
+    RCLCPP_INFO(get_logger(), "motor_id=%u home Type01 stream armed after ready", motor_id);
   }
 
   void on_cmd(const msgs::msg::MotorCMD::SharedPtr msg)
@@ -617,25 +602,21 @@ private:
       }
       const uint32_t arb = frame.can_id & CAN_EFF_MASK;
       const uint8_t type = comm_type_from_arb(arb);
-      if (type != TYPE00_GET_DEVICE_ID && type != TYPE02_FEEDBACK) {
+      if (type != TYPE00_GET_DEVICE_ID) {
         continue;
       }
       int motor_id = -1;
-      if (type == TYPE00_GET_DEVICE_ID) {
-        const uint8_t id1 = data1_from_arb(arb);
-        const uint8_t id2 = static_cast<uint8_t>(data2_from_arb(arb) & 0xFF);
-        // Manual form: Type00 reply uses bit7~0 = 0xFE and bit15~8 = motor id.
-        if (id1 == 0xFE) {
-          motor_id = static_cast<int>(id2);
-        } else if (id2 == 0xFE) {
-          // Be tolerant to swapped encodings.
-          motor_id = static_cast<int>(id1);
-        } else {
-          // Fallback for legacy format.
-          motor_id = static_cast<int>(id1);
-        }
-      } else if (type == TYPE02_FEEDBACK) {
-        motor_id = static_cast<int>(data2_from_arb(arb) & 0xFF);
+      const uint8_t id1 = data1_from_arb(arb);
+      const uint8_t id2 = static_cast<uint8_t>(data2_from_arb(arb) & 0xFF);
+      // Manual form: Type00 reply uses bit7~0 = 0xFE and bit15~8 = motor id.
+      if (id1 == 0xFE) {
+        motor_id = static_cast<int>(id2);
+      } else if (id2 == 0xFE) {
+        // Be tolerant to swapped encodings.
+        motor_id = static_cast<int>(id1);
+      } else {
+        // Fallback for legacy format.
+        motor_id = static_cast<int>(id1);
       }
       if (motor_id >= scan_min_id_ && motor_id <= scan_max_id_) {
         found.insert(motor_id);
@@ -710,9 +691,20 @@ private:
       MotorRuntime & rt = runtime_by_motor_[motor_id];
       rt.has_state = true;
       rt.last_state = st;
-      if (!rt.ready_for_control) {
-        rt.ready_for_control = true;
-        RCLCPP_INFO(get_logger(), "motor_id=%u ready: TYPE02 observed", motor_id);
+      if (!rt.ready_for_control && rt.enable_sent) {
+        if (mode_status == 2U) {
+          rt.ready_for_control = true;
+          RCLCPP_INFO(get_logger(), "motor_id=%u ready: TYPE02 run-mode observed after TYPE03", motor_id);
+          start_home_stream_for_ready_motor(motor_id);
+        } else {
+          RCLCPP_INFO_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            2000,
+            "motor_id=%u waiting run mode TYPE02 after TYPE03 (mode_status=%u)",
+            motor_id,
+            mode_status);
+        }
       }
 
       const uint8_t prev_fault = last_fault_bits_[motor_id];
@@ -750,10 +742,9 @@ private:
   int scan_min_id_{1};
   int scan_max_id_{10};
   int scan_wait_ms_{200};
-  int rx_max_frames_per_tick_{128};
+  int rx_max_frames_per_tick_{100};
   double default_tx_hz_{500.0};
-  int gate_reload_ms_{50};
-  int enable_retry_ms_{100};
+  int gate_reload_ms_{100};
   int cmd_timeout_ms_{100};
   double home_q_des_{0.0};
   double home_qd_des_{0.0};
