@@ -99,6 +99,26 @@ inline float clamp(float x, float lo, float hi)
   return (x < lo) ? lo : ((x > hi) ? hi : x);
 }
 
+inline float nearest_periodic_target(
+  const float target_base,
+  const float current,
+  const float period,
+  const float lo,
+  const float hi)
+{
+  if (period <= 0.0F) {
+    return clamp(target_base, lo, hi);
+  }
+  float target = target_base + std::round((current - target_base) / period) * period;
+  while (target < lo) {
+    target += period;
+  }
+  while (target > hi) {
+    target -= period;
+  }
+  return clamp(target, lo, hi);
+}
+
 inline uint16_t float_to_u16(float x, float xmin, float xmax)
 {
   const float clamped = clamp(x, xmin, xmax);
@@ -154,7 +174,7 @@ public:
     cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 100);
     home_q_des_ = declare_parameter<double>("home_q_des", 0.0);
     home_qd_des_ = declare_parameter<double>("home_qd_des", 0.0);
-    home_kp_ = declare_parameter<double>("home_kp", 8.0);
+    home_kp_ = declare_parameter<double>("home_kp", 2.0);
     home_kd_ = declare_parameter<double>("home_kd", 0.6);
     home_tau_ff_ = declare_parameter<double>("home_tau_ff", 0.0);
     control_gate_state_file_ = declare_parameter<std::string>(
@@ -476,7 +496,19 @@ private:
     return home;
   }
 
-  void start_home_stream_for_ready_motor(const uint8_t motor_id)
+  float aligned_home_q_des(const uint8_t motor_id, const float current_q) const
+  {
+    const MitRanges & r = ranges_for(motor_id);
+    const float q_base = static_cast<float>(home_q_des_);
+    return nearest_periodic_target(
+      q_base,
+      current_q,
+      2.0F * static_cast<float>(M_PI),
+      r.p_min,
+      r.p_max);
+  }
+
+  void start_home_stream_for_ready_motor(const uint8_t motor_id, const float current_q)
   {
     CachedCommand & cached = latest_cmd_by_motor_[motor_id];
     if (cached.has_received_cmd) {
@@ -484,11 +516,20 @@ private:
     }
 
     cached.cmd = make_home_command(motor_id);
+    const float q_base = static_cast<float>(home_q_des_);
+    const float q_aligned = aligned_home_q_des(motor_id, current_q);
+    cached.cmd.q_des = q_aligned;
     cached.cmd.stamp = to_builtin_time(now());
     cached.valid = true;
     cached.has_sent = false;
     cached.timeout_home_active = false;
-    RCLCPP_INFO(get_logger(), "motor_id=%u home Type01 stream armed after ready", motor_id);
+    RCLCPP_INFO(
+      get_logger(),
+      "motor_id=%u home Type01 stream armed after ready (q_base=%.3f current_q=%.3f q_des=%.3f)",
+      motor_id,
+      static_cast<double>(q_base),
+      static_cast<double>(current_q),
+      static_cast<double>(q_aligned));
   }
 
   void on_cmd(const msgs::msg::MotorCMD::SharedPtr msg)
@@ -554,6 +595,10 @@ private:
       }
       if (cmd_timed_out) {
         outgoing = make_home_command(motor_id);
+        const MotorRuntime & rt = runtime_by_motor_[motor_id];
+        if (rt.has_state) {
+          outgoing.q_des = aligned_home_q_des(motor_id, rt.last_state.q);
+        }
         outgoing.stamp = to_builtin_time(now());
         if (!cached.timeout_home_active) {
           cached.timeout_home_active = true;
@@ -695,7 +740,7 @@ private:
         if (mode_status == 2U) {
           rt.ready_for_control = true;
           RCLCPP_INFO(get_logger(), "motor_id=%u ready: TYPE02 run-mode observed after TYPE03", motor_id);
-          start_home_stream_for_ready_motor(motor_id);
+          start_home_stream_for_ready_motor(motor_id, st.q);
         } else {
           RCLCPP_INFO_THROTTLE(
             get_logger(),
