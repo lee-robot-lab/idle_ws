@@ -49,10 +49,14 @@
 - `channel` (기본값: `can0`)
 - `host_id` (기본값: `0xFD`)
 - `scan_min_id`, `scan_max_id`, `scan_wait_ms`
-- `default_tx_hz`
+- `default_tx_hz` (레거시 alias, `tx_hz_default`와 동일하게 취급)
+- `tx_hz_default` (모터별 override가 없을 때 기본 송신 주기 Hz)
+- `tx_hz_by_motor_json` (예: `{"1":300,"7":450}`)
 - `cmd_timeout_ms`
 - `home_q_des`, `home_qd_des`, `home_kp`, `home_kd`, `home_tau_ff`
-- `control_gate_state_file`
+
+`can_bridge_node`는 더 이상 런타임 정책을 파일에서 폴링하지 않습니다. 제어 노드에서
+`SetParameters`(예: `ros2 param set`)로 `tx_hz_*`를 push 하면 즉시 반영됩니다.
 
 ## 시작 로그 예시
 
@@ -104,7 +108,14 @@ ros2 run can_interface can_bridge_node --ros-args \
 ros2 topic echo /motor_state --qos-reliability best_effort
 ```
 
-### 4) `/motor_cmd` 발행 (CLI)
+### 4) 런타임 Tx 정책 push (`SetParameters`)
+
+```bash
+ros2 param set /can_bridge_node tx_hz_default 250.0
+ros2 param set /can_bridge_node tx_hz_by_motor_json '{"1":300,"7":450}'
+```
+
+### 5) `/motor_cmd` 발행 (CLI)
 
 ```bash
 ros2 topic pub /motor_cmd msgs/msg/MotorCMD \
@@ -112,7 +123,7 @@ ros2 topic pub /motor_cmd msgs/msg/MotorCMD \
   -r 200
 ```
 
-### 5) `/motor_cmd` 발행 (Python `rclpy`)
+### 6) `/motor_cmd` 발행 (Python `rclpy`)
 
 ```python
 #!/usr/bin/env python3

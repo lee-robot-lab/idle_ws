@@ -8,15 +8,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <functional>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <regex>
@@ -32,6 +32,7 @@
 #include "msgs/msg/motor_cmd.hpp"
 #include "msgs/msg/motor_error.hpp"
 #include "msgs/msg/motor_state.hpp"
+#include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 namespace
@@ -170,25 +171,35 @@ public:
     scan_wait_ms_ = declare_parameter<int>("scan_wait_ms", 200);
     rx_max_frames_per_tick_ = declare_parameter<int>("rx_max_frames_per_tick", 100);
     default_tx_hz_ = declare_parameter<double>("default_tx_hz", 500.0);
-    gate_reload_ms_ = declare_parameter<int>("gate_reload_ms", 100);
+    tx_hz_default_ = declare_parameter<double>("tx_hz_default", default_tx_hz_);
+    tx_hz_by_motor_json_ = declare_parameter<std::string>("tx_hz_by_motor_json", "{}");
     cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 100);
     home_q_des_ = declare_parameter<double>("home_q_des", 0.0);
     home_qd_des_ = declare_parameter<double>("home_qd_des", 0.0);
     home_kp_ = declare_parameter<double>("home_kp", 2.0);
     home_kd_ = declare_parameter<double>("home_kd", 0.6);
     home_tau_ff_ = declare_parameter<double>("home_tau_ff", 0.0);
-    control_gate_state_file_ = declare_parameter<std::string>(
-      "control_gate_state_file",
-      default_gate_state_path());
     if (default_tx_hz_ <= 0.0) {
       default_tx_hz_ = 500.0;
     }
-    if (gate_reload_ms_ <= 0) {
-      gate_reload_ms_ = 100;
+    if (tx_hz_default_ <= 0.0) {
+      tx_hz_default_ = default_tx_hz_;
     }
     if (cmd_timeout_ms_ < 0) {
       cmd_timeout_ms_ = 0;
     }
+
+    std::unordered_map<int, double> tx_by_motor;
+    std::string parse_error;
+    if (!parse_tx_hz_by_motor_json(tx_hz_by_motor_json_, tx_by_motor, parse_error)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "invalid initial tx_hz_by_motor_json (%s): falling back to {}",
+        parse_error.c_str());
+      tx_hz_by_motor_json_ = "{}";
+      tx_by_motor.clear();
+    }
+    apply_tx_policy(tx_hz_default_, tx_by_motor, false);
 
     if (!open_socketcan(channel_)) {
       throw std::runtime_error("failed to open socketcan channel: " + channel_);
@@ -205,12 +216,19 @@ public:
       qos_cmd,
       std::bind(&CanBridgeNode::on_cmd, this, std::placeholders::_1));
 
+    param_cb_handle_ = add_on_set_parameters_callback(
+      std::bind(&CanBridgeNode::on_parameters_set, this, std::placeholders::_1));
+
     scan_motor_ids();
     send_enable_once_from_scan();
-    reload_gate_config(true);
     RCLCPP_INFO(
       get_logger(),
       "driver parameter write(Type18/Type22) is disabled in can_bridge_node; use maintenance tools only");
+    RCLCPP_INFO(
+      get_logger(),
+      "tx policy initialized: tx_hz_default=%.3f per_motor=%zu",
+      tx_policy_.tx_hz_default,
+      tx_policy_.tx_hz_by_motor.size());
 
     io_timer_ = create_wall_timer(
       std::chrono::milliseconds(1),
@@ -226,14 +244,6 @@ public:
   }
 
 private:
-  static std::string default_gate_state_path()
-  {
-    const char * env = std::getenv("IDLE_CONTROL_GATE_STATE");
-    if (env != nullptr && env[0] != '\0') {
-      return std::string(env);
-    }
-    return "/tmp/idle_control_gate_state.json";
-  }
 
   const MitRanges & ranges_for(const uint8_t motor_id) const
   {
@@ -313,94 +323,179 @@ private:
     std::chrono::steady_clock::time_point last_received_cmd {};
   };
 
-  struct GateConfig
+  struct TxPolicy
   {
-    bool dirty {false};
-    bool initialized {false};
     double tx_hz_default {500.0};
     std::unordered_map<int, double> tx_hz_by_motor {};
-    std::chrono::steady_clock::time_point loaded_at {};
   };
 
-  void reload_gate_config(const bool force = false)
+  bool parse_tx_hz_by_motor_json(
+    const std::string & text,
+    std::unordered_map<int, double> & out,
+    std::string & error) const
   {
-    const auto now_tp = std::chrono::steady_clock::now();
-    if (!force && gate_.initialized) {
-      const auto age_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now_tp - gate_.loaded_at).count();
-      if (age_ms < gate_reload_ms_) {
-        return;
+    error.clear();
+    out.clear();
+
+    const auto first = std::find_if_not(
+      text.begin(), text.end(),
+      [](char c) {return std::isspace(static_cast<unsigned char>(c)) != 0;});
+    if (first == text.end()) {
+      return true;
+    }
+    const auto last = std::find_if_not(
+      text.rbegin(), text.rend(),
+      [](char c) {return std::isspace(static_cast<unsigned char>(c)) != 0;}).base();
+    const std::string trimmed(first, last);
+    if (trimmed == "{}") {
+      return true;
+    }
+    if (trimmed.size() < 2 || trimmed.front() != '{' || trimmed.back() != '}') {
+      error = "expected object string like {\"1\":300,\"7\":450}";
+      return false;
+    }
+
+    const std::string inner = trimmed.substr(1, trimmed.size() - 2);
+    static const std::regex entry_re(
+      "\"([0-9]+)\"\\s*:\\s*([-+]?(?:[0-9]*\\.?[0-9]+)(?:[eE][-+]?[0-9]+)?)");
+
+    std::string leftover;
+    std::size_t cursor = 0;
+    auto it = std::sregex_iterator(inner.begin(), inner.end(), entry_re);
+    const auto end = std::sregex_iterator();
+    for (; it != end; ++it) {
+      const auto & match = *it;
+      const auto start = static_cast<std::size_t>(match.position());
+      const auto len = static_cast<std::size_t>(match.length());
+      if (start > cursor) {
+        leftover.append(inner, cursor, start - cursor);
       }
-    }
-    gate_.initialized = true;
-    gate_.loaded_at = now_tp;
+      cursor = start + len;
 
-    std::ifstream in(control_gate_state_file_);
-    if (!in.good()) {
-      gate_.dirty = false;
-      gate_.tx_hz_default = default_tx_hz_;
-      gate_.tx_hz_by_motor.clear();
-      return;
-    }
-
-    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-
-    static const std::regex dirty_re("\"control_param_dirty\"\\s*:\\s*(true|false)");
-    static const std::regex tx_default_re("\"tx_hz_default\"\\s*:\\s*([-+]?[0-9]*\\.?[0-9]+)");
-    static const std::regex tx_map_block_re("\"tx_hz_by_motor\"\\s*:\\s*\\{([^}]*)\\}");
-    static const std::regex tx_map_entry_re("\"([0-9]+)\"\\s*:\\s*([-+]?[0-9]*\\.?[0-9]+)");
-
-    gate_.dirty = false;
-    gate_.tx_hz_default = default_tx_hz_;
-    gate_.tx_hz_by_motor.clear();
-
-    std::smatch m;
-    if (std::regex_search(text, m, dirty_re) && m.size() >= 2) {
-      gate_.dirty = (m[1] == "true");
-    }
-    if (std::regex_search(text, m, tx_default_re) && m.size() >= 2) {
       try {
-        const double hz = std::stod(m[1].str());
-        if (hz > 0.0) {
-          gate_.tx_hz_default = hz;
+        const int motor_id = std::stoi(match[1].str());
+        const double hz = std::stod(match[2].str());
+        if (motor_id < 0 || hz <= 0.0) {
+          error = "motor_id must be >= 0 and hz must be > 0";
+          return false;
         }
+        out[motor_id] = hz;
       } catch (...) {
+        error = "failed to parse tx_hz_by_motor_json";
+        return false;
       }
     }
-    if (std::regex_search(text, m, tx_map_block_re) && m.size() >= 2) {
-      const std::string body = m[1].str();
-      auto it = std::sregex_iterator(body.begin(), body.end(), tx_map_entry_re);
-      const auto end = std::sregex_iterator();
-      for (; it != end; ++it) {
-        const std::smatch em = *it;
-        if (em.size() < 3) {
-          continue;
-        }
-        try {
-          const int motor_id = std::stoi(em[1].str());
-          const double hz = std::stod(em[2].str());
-          if (motor_id >= 0 && hz > 0.0) {
-            gate_.tx_hz_by_motor[motor_id] = hz;
-          }
-        } catch (...) {
-        }
-      }
+    if (cursor < inner.size()) {
+      leftover.append(inner, cursor, inner.size() - cursor);
+    }
+
+    leftover.erase(
+      std::remove_if(
+        leftover.begin(), leftover.end(),
+        [](char c) {
+          return std::isspace(static_cast<unsigned char>(c)) != 0 || c == ',';
+        }),
+      leftover.end());
+    if (!leftover.empty()) {
+      error = "invalid object content in tx_hz_by_motor_json";
+      return false;
+    }
+    return true;
+  }
+
+  void apply_tx_policy(
+    const double tx_hz_default,
+    const std::unordered_map<int, double> & tx_hz_by_motor,
+    const bool emit_log)
+  {
+    tx_policy_.tx_hz_default = tx_hz_default;
+    tx_policy_.tx_hz_by_motor = tx_hz_by_motor;
+    if (emit_log) {
+      RCLCPP_INFO(
+        get_logger(),
+        "tx policy updated: tx_hz_default=%.3f per_motor=%zu",
+        tx_policy_.tx_hz_default,
+        tx_policy_.tx_hz_by_motor.size());
     }
   }
 
-  bool control_param_dirty()
+  rcl_interfaces::msg::SetParametersResult on_parameters_set(
+    const std::vector<rclcpp::Parameter> & params)
   {
-    reload_gate_config();
-    return gate_.dirty;
+    rcl_interfaces::msg::SetParametersResult result {};
+    result.successful = true;
+
+    double next_tx_hz_default = tx_policy_.tx_hz_default;
+    std::string next_tx_hz_by_motor_json = tx_hz_by_motor_json_;
+    bool default_changed = false;
+    bool json_changed = false;
+
+    for (const auto & param : params) {
+      const std::string & name = param.get_name();
+      if (name == "tx_hz_default" || name == "default_tx_hz") {
+        double hz = 0.0;
+        if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+          hz = param.as_double();
+        } else if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
+          hz = static_cast<double>(param.as_int());
+        } else {
+          result.successful = false;
+          result.reason = name + " must be numeric";
+          return result;
+        }
+        if (hz <= 0.0) {
+          result.successful = false;
+          result.reason = name + " must be > 0";
+          return result;
+        }
+        next_tx_hz_default = hz;
+        default_changed = true;
+        continue;
+      }
+
+      if (name == "tx_hz_by_motor_json") {
+        if (param.get_type() != rclcpp::ParameterType::PARAMETER_STRING) {
+          result.successful = false;
+          result.reason = "tx_hz_by_motor_json must be string";
+          return result;
+        }
+        next_tx_hz_by_motor_json = param.as_string();
+        json_changed = true;
+      }
+    }
+
+    if (!default_changed && !json_changed) {
+      return result;
+    }
+
+    std::unordered_map<int, double> parsed_by_motor = tx_policy_.tx_hz_by_motor;
+    if (json_changed) {
+      std::string parse_error;
+      if (!parse_tx_hz_by_motor_json(next_tx_hz_by_motor_json, parsed_by_motor, parse_error)) {
+        result.successful = false;
+        result.reason = "tx_hz_by_motor_json parse failed: " + parse_error;
+        return result;
+      }
+    }
+
+    apply_tx_policy(next_tx_hz_default, parsed_by_motor, true);
+    if (default_changed) {
+      tx_hz_default_ = next_tx_hz_default;
+      default_tx_hz_ = next_tx_hz_default;  // Keep legacy alias in sync.
+    }
+    if (json_changed) {
+      tx_hz_by_motor_json_ = next_tx_hz_by_motor_json;
+    }
+    return result;
   }
 
   double tx_hz_for_motor(const uint8_t motor_id) const
   {
-    const auto it = gate_.tx_hz_by_motor.find(static_cast<int>(motor_id));
-    if (it != gate_.tx_hz_by_motor.end() && it->second > 0.0) {
+    const auto it = tx_policy_.tx_hz_by_motor.find(static_cast<int>(motor_id));
+    if (it != tx_policy_.tx_hz_by_motor.end() && it->second > 0.0) {
       return it->second;
     }
-    return (gate_.tx_hz_default > 0.0) ? gate_.tx_hz_default : default_tx_hz_;
+    return (tx_policy_.tx_hz_default > 0.0) ? tx_policy_.tx_hz_default : default_tx_hz_;
   }
 
   bool send_mit_command(const msgs::msg::MotorCMD & cmd)
@@ -534,13 +629,6 @@ private:
 
   void on_cmd(const msgs::msg::MotorCMD::SharedPtr msg)
   {
-    if (control_param_dirty()) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
-        "control params are dirty: command blocked until saved");
-      return;
-    }
-
     CachedCommand & cached = latest_cmd_by_motor_[msg->motor_id];
     cached.cmd = *msg;
     cached.valid = true;
@@ -551,11 +639,6 @@ private:
 
   void dispatch_cached_commands()
   {
-    reload_gate_config();
-    if (gate_.dirty) {
-      return;
-    }
-
     const auto now_tp = std::chrono::steady_clock::now();
     for (auto & kv : latest_cmd_by_motor_) {
       const uint8_t motor_id = kv.first;
@@ -781,7 +864,6 @@ private:
 
   int sock_fd_{-1};
   std::string channel_;
-  std::string control_gate_state_file_;
   uint8_t host_id_{0xFD};
   uint8_t rs03_id_{2};
   int scan_min_id_{1};
@@ -789,7 +871,8 @@ private:
   int scan_wait_ms_{200};
   int rx_max_frames_per_tick_{100};
   double default_tx_hz_{500.0};
-  int gate_reload_ms_{100};
+  double tx_hz_default_{500.0};
+  std::string tx_hz_by_motor_json_{"{}"};
   int cmd_timeout_ms_{100};
   double home_q_des_{0.0};
   double home_qd_des_{0.0};
@@ -801,7 +884,8 @@ private:
   std::unordered_map<uint8_t, CachedCommand> latest_cmd_by_motor_;
   std::unordered_map<uint8_t, MotorRuntime> runtime_by_motor_;
   std::set<uint8_t> discovered_motor_ids_;
-  GateConfig gate_;
+  TxPolicy tx_policy_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
   rclcpp::Publisher<msgs::msg::MotorState>::SharedPtr state_pub_;
   rclcpp::Publisher<msgs::msg::MotorError>::SharedPtr error_pub_;
   rclcpp::Subscription<msgs::msg::MotorCMD>::SharedPtr cmd_sub_;

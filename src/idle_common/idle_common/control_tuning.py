@@ -179,6 +179,19 @@ def _effective_tx_policy() -> tuple[float, dict[str, float]]:
     return tx_default, by_motor
 
 
+def runtime_tx_policy_for_bridge() -> tuple[float, dict[str, float]]:
+    """Return current effective Tx policy for can_bridge parameter push."""
+
+    return _effective_tx_policy()
+
+
+def runtime_tx_policy_json_for_bridge() -> tuple[float, str]:
+    """Return (tx_hz_default, tx_hz_by_motor_json) for can_bridge parameters."""
+
+    tx_default, by_motor = _effective_tx_policy()
+    return tx_default, json.dumps(by_motor, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+
 def sync_runtime_tx_policy():
     tx_default, by_motor = _effective_tx_policy()
     state = _read_state()
