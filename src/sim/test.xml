@@ -1,0 +1,111 @@
+<mujoco model="my_robot">
+  <compiler angle="radian" meshdir="meshes"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
+
+  <default>
+    <joint damping="0.2" limited="true"/>
+    <!-- density=0 : 관성은 inertial로만 사용(geom 질량 0) -->
+    <geom type="mesh" density="0" contype="1" conaffinity="1" friction="1 0.1 0.1"/>
+  </default>
+
+  <asset>
+    <!-- URDF scale="0.001 0.001 0.001" 그대로 -->
+    <mesh name="base_mesh"    file="base.stl"          scale="0.001 0.001 0.001"/>
+    <mesh name="rs02_mesh"    file="RS02(0.0.0).stl"   scale="0.001 0.001 0.001"/>
+    <mesh name="rs03_mesh"    file="RS03(0.0.0).stl"   scale="0.001 0.001 0.001"/>
+    <mesh name="joint1_mesh"  file="joint1_v1.stl"     scale="0.001 0.001 0.001"/>
+    <mesh name="link1_1_mesh" file="link1_1_v1.stl"    scale="0.001 0.001 0.001"/>
+    <mesh name="link1_2_mesh" file="link1_2.stl"       scale="0.001 0.001 0.001"/>
+    <mesh name="link1_3_mesh" file="link1_3.stl"       scale="0.001 0.001 0.001"/>
+    <mesh name="joint2_mesh"  file="joint2_v1.stl"     scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <!-- base (world에 고정) -->
+    <body name="base">
+      <inertial pos="0 0 0.0424281" quat="1 0 0 0"
+                mass="0.398399734"
+                fullinertia="0.001218907079 0.001185493046 0.001557694961 0.000000038269 -0.000000000005 -0.000000000001"/>
+      <geom mesh="base_mesh"/>
+
+      <!-- m1: fixed, base -> rs02_1 -->
+      <body name="rs02_1" pos="0 0 0.1015" quat="1 0 0 0">
+        <inertial pos="0 0 -0.0183" quat="1 0 0 0"
+                  mass="0.4116"
+                  fullinertia="2.7445939353e-04 2.7390454989e-04 2.8680150761e-04 -2.6756294195e-08 -1.3613583610e-08 -1.9869231612e-07"/>
+        <geom mesh="rs02_mesh"/>
+
+        <!-- j1: revolute, rs02_1 -> joint1, origin rpy="0 pi 0" -->
+        <body name="joint1" pos="0 0 0" quat="0 0 1 0">
+          <joint name="j1" type="hinge" pos="0 0 0" axis="0 0 1"
+                 range="-3.14159 3.14159"/>
+          <inertial pos="0.0000095 -0.0156598 0.0561135" quat="1 0 0 0"
+                    mass="0.293398076"
+                    fullinertia="0.000896395761 0.001110242191 0.000865240118 -0.000000081531 0.000000052379 -0.000147190496"/>
+          <geom mesh="joint1_mesh"/>
+
+          <!-- m2: fixed, joint1 -> rs03, origin xyz="0 -0.0637 -0.068" rpy="pi/2 0 0" -->
+        <body name="rs03" pos="0 -0.0637 -0.068" quat="0.70710678 0.70710678 0 0">
+          <inertial pos="0 0 -0.0215" quat="1 0 0 0"
+                    mass="0.9244"
+                    fullinertia="8.7181026538e-04 9.1644943246e-04 1.1953222120e-03 -6.3224012508e-07 -7.1639989689e-06 -1.1771250450e-06"/>
+          <geom mesh="rs03_mesh"/>
+
+
+            <!-- j2: revolute, rs03 -> link1_1, origin rpy="pi 0 0" -->
+            <body name="link1_1" pos="0 0 0" quat="0 1 0 0">
+              <joint name="j2" type="hinge" pos="0 0 0" axis="0 0 1"
+                     range="-2.5 2.5"/>
+              <inertial pos="0 0.0231488 0.0440015" quat="1 0 0 0"
+                        mass="0.319496008"
+                        fullinertia="0.000638154136 0.000425282889 0.000647113353 -0.000000000031 0.000000000109 0.000120587347"/>
+              <geom mesh="link1_1_mesh"/>
+
+              <!-- j2_2: fixed, link1_1 -> link1_2, rpy="-pi/2 0 0" -->
+              <body name="link1_2" pos="0 0.05 -0.05715" quat="0.70710678 -0.70710678 0 0">
+                <inertial pos="0 0 0.15" quat="1 0 0 0"
+                          mass="0.508299975"
+                          fullinertia="0.003890759307 0.003890759307 0.000157018996 0 0 0"/>
+                <geom mesh="link1_2_mesh"/>
+
+                <!-- j2_3: fixed, link1_2 -> link1_3, rpy="0 0 pi" -->
+                <body name="link1_3" pos="0 0 0.3" quat="0 0 0 1">
+                  <inertial pos="0.0000002 0.0155124 0.0339681" quat="1 0 0 0"
+                            mass="0.279149934"
+                            fullinertia="0.000661231823 0.000687897169 0.000472960204 -0.000000001550 0.000000001529 0.000125413257"/>
+                  <geom mesh="link1_3_mesh"/>
+
+                  <!-- m3: fixed, link1_3 -> rs02_2, rpy="-pi/2 0 0" -->
+                  <body name="rs02_2" pos="0 0.06585 0.050" quat="0.70710678 -0.70710678 0 0">
+                    <inertial pos="0 0 -0.0183" quat="1 0 0 0"
+                              mass="0.4116"
+                              fullinertia="2.7445939353e-04 2.7390454989e-04 2.8680150761e-04 -2.6756294195e-08 -1.3613583610e-08 -1.9869231612e-07"/>
+                    <geom mesh="rs02_mesh"/>
+
+                    <!-- j3: revolute, rs02_2 -> joint2, rpy="0 pi 0" -->
+                    <body name="joint2" pos="0 0 0" quat="0 0 1 0">
+                      <joint name="j3" type="hinge" pos="0 0 0" axis="0 0 1"
+                             range="-3.14159 3.14159"/>
+                      <inertial pos="0.0000027 -0.0113791 0.0421733" quat="1 0 0 0"
+                                mass="0.169648237"
+                                fullinertia="0.000296367505 0.000366233598 0.000291288551 -0.000000007634 0.000000036434 -0.000048442986"/>
+                      <geom mesh="joint2_mesh"/>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- (선택) 아주 기본적인 구동기: 토크 모터 -->
+  <actuator>
+    <motor name="tau_j1" joint="j1" gear="1" ctrllimited="true" ctrlrange="-6 6"/>
+    <motor name="tau_j2" joint="j2" gear="1" ctrllimited="true" ctrlrange="-20 20"/>
+    <motor name="tau_j3" joint="j3" gear="1" ctrllimited="true" ctrlrange="-6 6"/>
+  </actuator>
+
+</mujoco>
