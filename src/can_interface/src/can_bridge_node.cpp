@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <regex>
@@ -30,8 +31,11 @@
 
 #include "builtin_interfaces/msg/time.hpp"
 #include "msgs/msg/motor_cmd.hpp"
+#include "msgs/msg/motor_cmd_array.hpp"
 #include "msgs/msg/motor_error.hpp"
+#include "msgs/msg/motor_error_array.hpp"
 #include "msgs/msg/motor_state.hpp"
+#include "msgs/msg/motor_state_array.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 
@@ -43,7 +47,7 @@ constexpr uint8_t TYPE02_FEEDBACK = 0x02;
 constexpr uint8_t TYPE03_ENABLE = 0x03;
 constexpr uint8_t TYPE04_STOP = 0x04;
 constexpr uint8_t TYPE_MASK = 0x1F;
-constexpr float kHomeReturnDurationSec = 2.0F;
+constexpr float kHomeReturnDurationSec = 5.0F;
 constexpr float kHomeEpsilon = 1e-4F;
 
 struct MitRanges
@@ -191,6 +195,12 @@ public:
     if (cmd_timeout_ms_ < 0) {
       cmd_timeout_ms_ = 0;
     }
+    if (home_kp_ < 0.0) {
+      home_kp_ = 0.0;
+    }
+    if (home_kd_ < 0.0) {
+      home_kd_ = 0.0;
+    }
 
     std::unordered_map<int, double> tx_by_motor;
     std::string parse_error;
@@ -212,12 +222,12 @@ public:
     const auto qos_state = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort();
     const auto qos_reliable = rclcpp::QoS(rclcpp::KeepLast(20)).reliable();
 
-    state_pub_ = create_publisher<msgs::msg::MotorState>("/motor_state", qos_state);
-    error_pub_ = create_publisher<msgs::msg::MotorError>("/motor_error", qos_reliable);
-    cmd_sub_ = create_subscription<msgs::msg::MotorCMD>(
-      "/motor_cmd",
+    state_array_pub_ = create_publisher<msgs::msg::MotorStateArray>("/motor_state_array", qos_state);
+    error_array_pub_ = create_publisher<msgs::msg::MotorErrorArray>("/motor_error_array", qos_reliable);
+    cmd_array_sub_ = create_subscription<msgs::msg::MotorCMDArray>(
+      "/motor_cmd_array",
       qos_cmd,
-      std::bind(&CanBridgeNode::on_cmd, this, std::placeholders::_1));
+      std::bind(&CanBridgeNode::on_cmd_array, this, std::placeholders::_1));
 
     param_cb_handle_ = add_on_set_parameters_callback(
       std::bind(&CanBridgeNode::on_parameters_set, this, std::placeholders::_1));
@@ -232,6 +242,11 @@ public:
       "tx policy initialized: tx_hz_default=%.3f per_motor=%zu",
       tx_policy_.tx_hz_default,
       tx_policy_.tx_hz_by_motor.size());
+    RCLCPP_INFO(
+      get_logger(),
+      "home gain policy initialized: default(kp=%.3f kd=%.3f), per-motor gains are code-managed",
+      home_kp_,
+      home_kd_);
 
     io_timer_ = create_wall_timer(
       std::chrono::milliseconds(1),
@@ -436,8 +451,12 @@ private:
 
     double next_tx_hz_default = tx_policy_.tx_hz_default;
     std::string next_tx_hz_by_motor_json = tx_hz_by_motor_json_;
-    bool default_changed = false;
-    bool json_changed = false;
+    bool tx_default_changed = false;
+    bool tx_json_changed = false;
+    double next_home_kp = home_kp_;
+    double next_home_kd = home_kd_;
+    bool home_kp_changed = false;
+    bool home_kd_changed = false;
 
     for (const auto & param : params) {
       const std::string & name = param.get_name();
@@ -458,7 +477,7 @@ private:
           return result;
         }
         next_tx_hz_default = hz;
-        default_changed = true;
+        tx_default_changed = true;
         continue;
       }
 
@@ -469,16 +488,45 @@ private:
           return result;
         }
         next_tx_hz_by_motor_json = param.as_string();
-        json_changed = true;
+        tx_json_changed = true;
+        continue;
+      }
+
+      if (name == "home_kp" || name == "home_kd") {
+        double value = 0.0;
+        if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+          value = param.as_double();
+        } else if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
+          value = static_cast<double>(param.as_int());
+        } else {
+          result.successful = false;
+          result.reason = name + " must be numeric";
+          return result;
+        }
+        if (value < 0.0) {
+          result.successful = false;
+          result.reason = name + " must be >= 0";
+          return result;
+        }
+        if (name == "home_kp") {
+          next_home_kp = value;
+          home_kp_changed = true;
+        } else {
+          next_home_kd = value;
+          home_kd_changed = true;
+        }
+        continue;
       }
     }
 
-    if (!default_changed && !json_changed) {
+    const bool tx_changed = tx_default_changed || tx_json_changed;
+    const bool home_changed = home_kp_changed || home_kd_changed;
+    if (!tx_changed && !home_changed) {
       return result;
     }
 
     std::unordered_map<int, double> parsed_by_motor = tx_policy_.tx_hz_by_motor;
-    if (json_changed) {
+    if (tx_json_changed) {
       std::string parse_error;
       if (!parse_tx_hz_by_motor_json(next_tx_hz_by_motor_json, parsed_by_motor, parse_error)) {
         result.successful = false;
@@ -487,13 +535,25 @@ private:
       }
     }
 
-    apply_tx_policy(next_tx_hz_default, parsed_by_motor, true);
-    if (default_changed) {
-      tx_hz_default_ = next_tx_hz_default;
-      default_tx_hz_ = next_tx_hz_default;  // Keep legacy alias in sync.
+    if (tx_changed) {
+      apply_tx_policy(next_tx_hz_default, parsed_by_motor, true);
+      if (tx_default_changed) {
+        tx_hz_default_ = next_tx_hz_default;
+        default_tx_hz_ = next_tx_hz_default;  // Keep legacy alias in sync.
+      }
+      if (tx_json_changed) {
+        tx_hz_by_motor_json_ = next_tx_hz_by_motor_json;
+      }
     }
-    if (json_changed) {
-      tx_hz_by_motor_json_ = next_tx_hz_by_motor_json;
+
+    if (home_changed) {
+      home_kp_ = next_home_kp;
+      home_kd_ = next_home_kd;
+      RCLCPP_INFO(
+        get_logger(),
+        "home gain policy updated: default(kp=%.3f kd=%.3f), per-motor gains are code-managed",
+        home_kp_,
+        home_kd_);
     }
     return result;
   }
@@ -627,9 +687,9 @@ private:
       return true;
     }
 
-    RCLCPP_INFO_THROTTLE(
+      RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 2000,
-      "waiting TYPE02 before applying /motor_cmd for motor_id=%u", motor_id);
+      "waiting TYPE02 before applying /motor_cmd_array for motor_id=%u", motor_id);
     return false;
   }
 
@@ -639,10 +699,34 @@ private:
     home.motor_id = motor_id;
     home.q_des = static_cast<float>(home_q_des_);
     home.qd_des = static_cast<float>(home_qd_des_);
-    home.kp = static_cast<float>(home_kp_);
-    home.kd = static_cast<float>(home_kd_);
+    home.kp = home_kp_for_motor(motor_id);
+    home.kd = home_kd_for_motor(motor_id);
     home.tau_ff = static_cast<float>(home_tau_ff_);
     return home;
+  }
+
+  float home_kp_for_motor(const uint8_t motor_id) const
+  {
+    // Manual per-motor home Kp tuning point.
+    // Add/update motor_id cases directly in code.
+    switch (motor_id) {
+      case 1: return 5.0F;
+      case 2: return 37.0F;
+      default:
+        return static_cast<float>(home_kp_);
+    }
+  }
+
+  float home_kd_for_motor(const uint8_t motor_id) const
+  {
+    // Manual per-motor home Kd tuning point.
+    // Add/update motor_id cases directly in code.
+    switch (motor_id) {
+      case 1: return 0.5F;
+      case 2: return 6.0F;
+      default:
+        return static_cast<float>(home_kd_);
+    }
   }
 
   float aligned_home_q_des(const uint8_t motor_id, const float current_q) const
@@ -741,15 +825,21 @@ private:
       static_cast<double>(cached.home_traj_duration_sec));
   }
 
-  void on_cmd(const msgs::msg::MotorCMD::SharedPtr msg)
+  void on_cmd_array(const msgs::msg::MotorCMDArray::SharedPtr msg)
   {
-    CachedCommand & cached = latest_cmd_by_motor_[msg->motor_id];
-    cached.cmd = *msg;
-    cached.valid = true;
-    cached.has_received_cmd = true;
-    cached.last_received_cmd = std::chrono::steady_clock::now();
-    cached.timeout_home_active = false;
-    cached.home_traj_active = false;
+    if (msg->commands.empty()) {
+      return;
+    }
+    const auto now_tp = std::chrono::steady_clock::now();
+    for (const auto & cmd : msg->commands) {
+      CachedCommand & cached = latest_cmd_by_motor_[cmd.motor_id];
+      cached.cmd = cmd;
+      cached.valid = true;
+      cached.has_received_cmd = true;
+      cached.last_received_cmd = now_tp;
+      cached.timeout_home_active = false;
+      cached.home_traj_active = false;
+    }
   }
 
   void dispatch_cached_commands()
@@ -764,7 +854,7 @@ private:
 
       const bool is_pre_home_stream = !cached.has_received_cmd;
       if (!is_pre_home_stream && !ensure_motor_ready_for_control(motor_id)) {
-        continue;  // Hold external /motor_cmd until Type02 is observed.
+        continue;  // Hold external /motor_cmd_array until Type02 is observed.
       }
 
       const double tx_hz = tx_hz_for_motor(motor_id);
@@ -808,7 +898,7 @@ private:
           }
           RCLCPP_WARN(
             get_logger(),
-            "motor_id=%u cmd timeout (%d ms): switching to 2.0s home trajectory "
+            "motor_id=%u cmd timeout (%d ms): switching to home trajectory "
             "(q_start=%.3f q_goal=%.3f duration=%.3f s)",
             motor_id,
             cmd_timeout_ms_,
@@ -907,6 +997,10 @@ private:
 
   void poll_can_frames()
   {
+    // Per tick, keep only the last sample/event per motor_id.
+    std::map<uint8_t, msgs::msg::MotorState> state_batch_by_motor;
+    std::map<uint8_t, msgs::msg::MotorError> error_batch_by_motor;
+
     int processed = 0;
     while (processed < rx_max_frames_per_tick_) {
       auto frame_opt = recv_frame();
@@ -947,7 +1041,7 @@ private:
       st.qd = u16_to_float(qd_raw, r.v_min, r.v_max);
       st.tau = u16_to_float(tau_raw, r.t_min, r.t_max);
       st.temp_c = static_cast<float>(temp_raw) / 10.0F;
-      state_pub_->publish(st);  // apply/publish immediately
+      state_batch_by_motor[motor_id] = st;
 
       MotorRuntime & rt = runtime_by_motor_[motor_id];
       rt.has_state = true;
@@ -988,7 +1082,27 @@ private:
       } else {
         err.event = msgs::msg::MotorError::EVENT_CHANGED;
       }
-      error_pub_->publish(err);
+      error_batch_by_motor[motor_id] = err;
+    }
+
+    if (!state_batch_by_motor.empty()) {
+      msgs::msg::MotorStateArray batch {};
+      batch.stamp = to_builtin_time(now());
+      batch.states.reserve(state_batch_by_motor.size());
+      for (const auto & kv : state_batch_by_motor) {
+        batch.states.push_back(kv.second);
+      }
+      state_array_pub_->publish(batch);
+    }
+
+    if (!error_batch_by_motor.empty()) {
+      msgs::msg::MotorErrorArray batch {};
+      batch.stamp = to_builtin_time(now());
+      batch.errors.reserve(error_batch_by_motor.size());
+      for (const auto & kv : error_batch_by_motor) {
+        batch.errors.push_back(kv.second);
+      }
+      error_array_pub_->publish(batch);
     }
 
     // Rx is event-driven; Tx is rate-controlled per motor using latest cached command.
@@ -1009,8 +1123,8 @@ private:
   int cmd_timeout_ms_{100};
   double home_q_des_{0.0};
   double home_qd_des_{0.0};
-  double home_kp_{8.0};
-  double home_kd_{0.6};
+  double home_kp_{30.0};
+  double home_kd_{5.0};
   double home_tau_ff_{0.0};
 
   std::unordered_map<uint8_t, uint8_t> last_fault_bits_;
@@ -1019,9 +1133,9 @@ private:
   std::set<uint8_t> discovered_motor_ids_;
   TxPolicy tx_policy_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
-  rclcpp::Publisher<msgs::msg::MotorState>::SharedPtr state_pub_;
-  rclcpp::Publisher<msgs::msg::MotorError>::SharedPtr error_pub_;
-  rclcpp::Subscription<msgs::msg::MotorCMD>::SharedPtr cmd_sub_;
+  rclcpp::Publisher<msgs::msg::MotorStateArray>::SharedPtr state_array_pub_;
+  rclcpp::Publisher<msgs::msg::MotorErrorArray>::SharedPtr error_array_pub_;
+  rclcpp::Subscription<msgs::msg::MotorCMDArray>::SharedPtr cmd_array_sub_;
   rclcpp::TimerBase::SharedPtr io_timer_;
 };
 
