@@ -41,7 +41,10 @@ constexpr uint8_t TYPE00_GET_DEVICE_ID = 0x00;
 constexpr uint8_t TYPE01_OPERATION_CONTROL = 0x01;
 constexpr uint8_t TYPE02_FEEDBACK = 0x02;
 constexpr uint8_t TYPE03_ENABLE = 0x03;
+constexpr uint8_t TYPE04_STOP = 0x04;
 constexpr uint8_t TYPE_MASK = 0x1F;
+constexpr float kHomeReturnDurationSec = 2.0F;
+constexpr float kHomeEpsilon = 1e-4F;
 
 struct MitRanges
 {
@@ -176,8 +179,8 @@ public:
     cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 100);
     home_q_des_ = declare_parameter<double>("home_q_des", 0.0);
     home_qd_des_ = declare_parameter<double>("home_qd_des", 0.0);
-    home_kp_ = declare_parameter<double>("home_kp", 2.0);
-    home_kd_ = declare_parameter<double>("home_kd", 0.6);
+    home_kp_ = declare_parameter<double>("home_kp", 30.0);
+    home_kd_ = declare_parameter<double>("home_kd", 5.0);
     home_tau_ff_ = declare_parameter<double>("home_tau_ff", 0.0);
     if (default_tx_hz_ <= 0.0) {
       default_tx_hz_ = 500.0;
@@ -237,6 +240,7 @@ public:
 
   ~CanBridgeNode() override
   {
+    send_stop_once_on_shutdown();
     if (sock_fd_ >= 0) {
       close(sock_fd_);
       sock_fd_ = -1;
@@ -319,6 +323,11 @@ private:
     bool has_sent {false};
     bool has_received_cmd {false};
     bool timeout_home_active {false};
+    bool home_traj_active {false};
+    float home_traj_start_q {0.0F};
+    float home_traj_goal_q {0.0F};
+    float home_traj_duration_sec {kHomeReturnDurationSec};
+    std::chrono::steady_clock::time_point home_traj_start_tp {};
     std::chrono::steady_clock::time_point last_sent {};
     std::chrono::steady_clock::time_point last_received_cmd {};
   };
@@ -529,6 +538,51 @@ private:
     return send_ext_frame(arb, data);
   }
 
+  bool send_stop_frame(const uint8_t motor_id, const bool clear_fault = false)
+  {
+    std::array<uint8_t, 8> data {};
+    data[0] = clear_fault ? 1U : 0U;
+    const uint32_t arb = pack_ext_id(TYPE04_STOP, host_id_, motor_id);
+    return send_ext_frame(arb, data);
+  }
+
+  void send_stop_once_on_shutdown()
+  {
+    if (sock_fd_ < 0) {
+      return;
+    }
+
+    std::set<uint8_t> target_motor_ids = discovered_motor_ids_;
+    for (const auto & kv : latest_cmd_by_motor_) {
+      target_motor_ids.insert(kv.first);
+    }
+    for (const auto & kv : runtime_by_motor_) {
+      target_motor_ids.insert(kv.first);
+    }
+
+    if (target_motor_ids.empty()) {
+      RCLCPP_WARN(get_logger(), "shutdown Type04 skipped: no known motor id");
+      return;
+    }
+
+    int ok = 0;
+    int fail = 0;
+    for (const uint8_t motor_id : target_motor_ids) {
+      if (send_stop_frame(motor_id, false)) {
+        ++ok;
+      } else {
+        ++fail;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    RCLCPP_INFO(
+      get_logger(),
+      "shutdown Type04 sent once: targets=%zu ok=%d fail=%d",
+      target_motor_ids.size(),
+      ok,
+      fail);
+  }
+
   void send_enable_once_from_scan()
   {
     if (discovered_motor_ids_.empty()) {
@@ -603,6 +657,66 @@ private:
       r.p_max);
   }
 
+  void start_home_trajectory(
+    const uint8_t motor_id,
+    const float current_q,
+    const std::chrono::steady_clock::time_point & now_tp,
+    const char * reason)
+  {
+    CachedCommand & cached = latest_cmd_by_motor_[motor_id];
+    const float q_base = static_cast<float>(home_q_des_);
+    const float q_goal = aligned_home_q_des(motor_id, current_q);
+    const float abs_dq = std::fabs(q_goal - current_q);
+
+    cached.home_traj_start_q = current_q;
+    cached.home_traj_goal_q = q_goal;
+    cached.home_traj_duration_sec = kHomeReturnDurationSec;
+    cached.home_traj_start_tp = now_tp;
+    cached.home_traj_active = abs_dq > kHomeEpsilon;
+
+    if (cached.home_traj_active) {
+      RCLCPP_INFO(
+        get_logger(),
+        "motor_id=%u home trajectory started (%s, q_base=%.3f q_start=%.3f q_goal=%.3f duration=%.3f s)",
+        motor_id,
+        reason,
+        static_cast<double>(q_base),
+        static_cast<double>(current_q),
+        static_cast<double>(q_goal),
+        static_cast<double>(cached.home_traj_duration_sec));
+    } else {
+      RCLCPP_INFO(
+        get_logger(),
+        "motor_id=%u home trajectory skipped (%s, |dq|<=%.1e, q_base=%.3f q=%.3f)",
+        motor_id,
+        reason,
+        static_cast<double>(kHomeEpsilon),
+        static_cast<double>(q_base),
+        static_cast<double>(q_goal));
+    }
+  }
+
+  float sample_home_trajectory_q_des(
+    CachedCommand & cached,
+    const std::chrono::steady_clock::time_point & now_tp) const
+  {
+    if (!cached.home_traj_active || cached.home_traj_duration_sec <= 0.0F) {
+      return cached.home_traj_goal_q;
+    }
+
+    const double elapsed_sec = std::chrono::duration<double>(now_tp - cached.home_traj_start_tp).count();
+    const float alpha = clamp(
+      static_cast<float>(elapsed_sec / static_cast<double>(cached.home_traj_duration_sec)),
+      0.0F,
+      1.0F);
+    const float q_des = cached.home_traj_start_q + alpha * (cached.home_traj_goal_q - cached.home_traj_start_q);
+    if (alpha >= 1.0F) {
+      cached.home_traj_active = false;
+      return cached.home_traj_goal_q;
+    }
+    return q_des;
+  }
+
   void start_home_stream_for_ready_motor(const uint8_t motor_id, const float current_q)
   {
     CachedCommand & cached = latest_cmd_by_motor_[motor_id];
@@ -611,20 +725,20 @@ private:
     }
 
     cached.cmd = make_home_command(motor_id);
-    const float q_base = static_cast<float>(home_q_des_);
-    const float q_aligned = aligned_home_q_des(motor_id, current_q);
-    cached.cmd.q_des = q_aligned;
+    const auto now_tp = std::chrono::steady_clock::now();
+    start_home_trajectory(motor_id, current_q, now_tp, "pre-home");
+    cached.cmd.q_des = cached.home_traj_goal_q;
     cached.cmd.stamp = to_builtin_time(now());
     cached.valid = true;
     cached.has_sent = false;
     cached.timeout_home_active = false;
     RCLCPP_INFO(
       get_logger(),
-      "motor_id=%u home Type01 stream armed after ready (q_base=%.3f current_q=%.3f q_des=%.3f)",
+      "motor_id=%u home Type01 stream armed after ready (current_q=%.3f q_goal=%.3f duration=%.3f s)",
       motor_id,
-      static_cast<double>(q_base),
       static_cast<double>(current_q),
-      static_cast<double>(q_aligned));
+      static_cast<double>(cached.home_traj_goal_q),
+      static_cast<double>(cached.home_traj_duration_sec));
   }
 
   void on_cmd(const msgs::msg::MotorCMD::SharedPtr msg)
@@ -635,6 +749,7 @@ private:
     cached.has_received_cmd = true;
     cached.last_received_cmd = std::chrono::steady_clock::now();
     cached.timeout_home_active = false;
+    cached.home_traj_active = false;
   }
 
   void dispatch_cached_commands()
@@ -673,27 +788,45 @@ private:
       }
 
       msgs::msg::MotorCMD outgoing = cached.cmd;
-      if (!cached.has_received_cmd) {
+      if (is_pre_home_stream) {
+        outgoing = make_home_command(motor_id);
+        outgoing.q_des = sample_home_trajectory_q_des(cached, now_tp);
         outgoing.stamp = to_builtin_time(now());
-      }
-      if (cmd_timed_out) {
+      } else if (cmd_timed_out) {
         outgoing = make_home_command(motor_id);
         const MotorRuntime & rt = runtime_by_motor_[motor_id];
-        if (rt.has_state) {
-          outgoing.q_des = aligned_home_q_des(motor_id, rt.last_state.q);
-        }
-        outgoing.stamp = to_builtin_time(now());
         if (!cached.timeout_home_active) {
           cached.timeout_home_active = true;
+          if (rt.has_state) {
+            start_home_trajectory(motor_id, rt.last_state.q, now_tp, "timeout-home");
+          } else {
+            cached.home_traj_active = false;
+            cached.home_traj_start_q = static_cast<float>(home_q_des_);
+            cached.home_traj_goal_q = static_cast<float>(home_q_des_);
+            cached.home_traj_duration_sec = kHomeReturnDurationSec;
+            cached.home_traj_start_tp = now_tp;
+          }
           RCLCPP_WARN(
             get_logger(),
-            "motor_id=%u cmd timeout (%d ms): switching to home command",
+            "motor_id=%u cmd timeout (%d ms): switching to 2.0s home trajectory "
+            "(q_start=%.3f q_goal=%.3f duration=%.3f s)",
             motor_id,
-            cmd_timeout_ms_);
+            cmd_timeout_ms_,
+            static_cast<double>(cached.home_traj_start_q),
+            static_cast<double>(cached.home_traj_goal_q),
+            static_cast<double>(cached.home_traj_duration_sec));
         }
+        outgoing.q_des = sample_home_trajectory_q_des(cached, now_tp);
+        outgoing.stamp = to_builtin_time(now());
       } else if (cached.timeout_home_active) {
         cached.timeout_home_active = false;
-        RCLCPP_INFO(get_logger(), "motor_id=%u cmd restored: leaving home timeout mode", motor_id);
+        cached.home_traj_active = false;
+        RCLCPP_INFO(
+          get_logger(),
+          "motor_id=%u cmd restored: leaving home timeout mode (q_goal=%.3f duration=%.3f s)",
+          motor_id,
+          static_cast<double>(cached.home_traj_goal_q),
+          static_cast<double>(cached.home_traj_duration_sec));
       }
 
       if (!send_mit_command(outgoing)) {

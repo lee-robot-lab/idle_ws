@@ -17,10 +17,16 @@
    - `Type03` 전송된 모터에서 `mode_status=run(2)` `Type02`가 관측되면 `ready` 상태로 전환합니다.
 4. `Type01` home 스트림 시작
    - 모터가 `ready`가 된 시점에, 해당 모터의 home 명령 캐시를 활성화합니다.
-   - 아직 외부 `/motor_cmd`가 없으면 `dispatch_cached_commands()`를 통해 home `Type01` 주기 송신을 시작합니다.
+   - 아직 외부 `/motor_cmd`가 없으면 `dispatch_cached_commands()`를 통해
+     2초 고정 선형 보간(home trajectory)으로 home `Type01` 주기 송신을 시작합니다.
 5. `/motor_cmd` 적용
    - 외부 `/motor_cmd`는 해당 모터가 `ready`가 될 때까지 hold 됩니다.
    - `ready` 이후에는 외부 명령을 적용합니다.
+
+## 종료 시퀀스
+
+- 노드 종료 시(`can_bridge_node` 프로세스 종료/CTRL+C) 현재 노드가 알고 있는 모터 ID 집합에
+  `Type04 STOP`을 1회 전송합니다 (`clear_fault=0`).
 
 요청된 순서:
 
@@ -38,11 +44,16 @@
 
 - `/motor_cmd` 이전
   - `ready`가 된 모터에 한해서 home `Type01` 스트림을 보냅니다.
+  - home `q_des`는 현재 위치에서 home 목표까지 2초 고정 선형 보간으로 이동합니다.
   - `ready` 전에는 home/외부 명령 모두 송신하지 않습니다.
 - `/motor_cmd` 이후
   - 같은 모터 ID에 대해서 home 명령을 외부 명령으로 대체합니다.
 - 명령 타임아웃(`cmd_timeout_ms`) 발생 시
-  - home 명령으로 자동 복귀합니다.
+  - 외부 명령을 중단하고 2초 고정 선형 보간으로 home 명령에 자동 복귀합니다.
+
+주의:
+
+- home 2초 복귀는 현재 코드 상수(`kHomeReturnDurationSec=2.0`)로 고정되어 있으며 런타임 파라미터가 아닙니다.
 
 ## 주요 파라미터
 
@@ -66,6 +77,8 @@
 - `startup Type03 sent once: targets=... ok=... fail=...`
 - `motor_id=X ready: TYPE02 run-mode observed after TYPE03`
 - `motor_id=X home Type01 stream armed after ready`
+- `motor_id=X home trajectory started (... q_start=... q_goal=... duration=2.000 s)`
+- `motor_id=X cmd timeout (...): switching to 2.0s home trajectory`
 
 스캔 실패 시:
 
