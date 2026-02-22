@@ -3,12 +3,12 @@
 
   <link name="base">
     <inertial>
-      <!-- COM: (0.0, 0.0, 42.4281) mm -->
-      <origin xyz="0 0 0.0424281" rpy="0 0 0"/>
-      <mass value="0.398399734"/>
-      <inertia ixx="0.001218907079" ixy="0.000000038269" ixz="-0.000000000005"
-               iyy="0.001185493046" iyz="-0.000000000001"
-               izz="0.001557694961"/>
+      <!-- COM: (0.0, 0.0, 34.8912) mm -->
+      <origin xyz="0 0 0.0348912" rpy="0 0 0"/>
+      <mass value="0.6248"/>
+      <inertia ixx="0.0021425" ixy="0.0" ixz="0.0"
+               iyy="0.0020799" iyz="0.0"
+               izz="0.0030294"/>
     </inertial>
     <visual>
       <geometry>
@@ -24,11 +24,11 @@
 
   <link name="rs02_1">
     <inertial>
-      <origin xyz="0 0 0.027" rpy="0 0 0"/>
-      <mass value="0.405"/>
-      <inertia ixx="2.12716E-04" ixy="0" ixz="0"
-               iyy="2.12716E-04" iyz="0"
-               izz="3.11964E-04"/>
+      <origin xyz="0 0 -0.0183" rpy="0 0 0"/>
+      <mass value="0.4116"/>
+      <inertia ixx="2.7445939353e-04" ixy="-2.6756294195e-08" ixz="-1.3613583610e-08"
+               iyy="2.7390454989e-04" iyz="-1.9869231612e-07"
+               izz="2.8680150761e-04"/>
     </inertial>
     <visual>
       <geometry>
@@ -44,11 +44,11 @@
 
   <link name="rs02_2">
     <inertial>
-      <origin xyz="0 0 0.027" rpy="0 0 0"/>
-      <mass value="0.405"/>
-      <inertia ixx="2.12716E-04" ixy="0" ixz="0"
-               iyy="2.12716E-04" iyz="0"
-               izz="3.11964E-04"/>
+      <origin xyz="0 0 -0.0183" rpy="0 0 0"/>
+      <mass value="0.4116"/>
+      <inertia ixx="2.7445939353e-04" ixy="-2.6756294195e-08" ixz="-1.3613583610e-08"
+               iyy="2.7390454989e-04" iyz="-1.9869231612e-07"
+               izz="2.8680150761e-04"/>
     </inertial>
     <visual>
       <geometry>
@@ -64,11 +64,11 @@
 
   <link name="rs02_3">
     <inertial>
-      <origin xyz="0 0 0.027" rpy="0 0 0"/>
-      <mass value="0.405"/>
-      <inertia ixx="2.12716E-04" ixy="0" ixz="0"
-               iyy="2.12716E-04" iyz="0"
-               izz="3.11964E-04"/>
+      <origin xyz="0 0 -0.0183" rpy="0 0 0"/>
+      <mass value="0.4116"/>
+      <inertia ixx="2.7445939353e-04" ixy="-2.6756294195e-08" ixz="-1.3613583610e-08"
+               iyy="2.7390454989e-04" iyz="-1.9869231612e-07"
+               izz="2.8680150761e-04"/>
     </inertial>
     <visual>
       <geometry>
@@ -84,11 +84,11 @@
 
   <link name="rs03">
     <inertial>
-      <origin xyz="0 0 0.035" rpy="0 0 0"/>
-      <mass value="0.88"/>
-      <inertia ixx="8.31820E-04" ixy="0" ixz="0"
-               iyy="8.31820E-04" iyz="0"
-               izz="1.23596E-03"/>
+      <origin xyz="0 0 -0.0215" rpy="0 0 0"/>
+      <mass value="0.9244"/>
+      <inertia ixx="8.7181026538e-04" ixy="-6.3224012508e-07" ixz="-7.1639989689e-06"
+               iyy="9.1644943246e-04" iyz="-1.1771250450e-06"
+               izz="1.1953222120e-03"/>
     </inertial>
     <visual>
       <geometry>
@@ -104,12 +104,12 @@
 
   <link name="joint1">
     <inertial>
-      <!-- COM: (0.0095, -15.6598, 56.1135) mm -->
-      <origin xyz="0.0000095 -0.0156598 0.0561135" rpy="0 0 0"/>
-      <mass value="0.293398076"/>
-      <inertia ixx="0.000896395761" ixy="-0.000000081531" ixz="0.000000052379"
-               iyy="0.001110242191" iyz="-0.000147190496"
-               izz="0.000865240118"/>
+      <!-- COM: (0.0103, -14.2659, 57.9402) mm -->
+      <origin xyz="0.0000103 -0.0142659 0.0579402" rpy="0 0 0"/>
+      <mass value="0.270398"/>
+      <inertia ixx="0.00081368" ixy="0.0" ixz="0.0"
+               iyy="0.00104368" iyz="0.0"
+               izz="0.00081949"/>
     </inertial>
     <visual>
       <geometry>
@@ -125,12 +125,12 @@
 
   <link name="link1_1">
     <inertial>
-      <!-- COM: (0.0, 23.1488, 44.0015) mm -->
-      <origin xyz="0 0.0231488 0.0440015" rpy="0 0 0"/>
-      <mass value="0.319496008"/>
-      <inertia ixx="0.000638154136" ixy="-0.000000000031" ixz="0.000000000109"
-               iyy="0.000425282889" iyz="0.000120587347"
-               izz="0.000647113353"/>
+      <!-- COM: (0.0, 12.1112, 43.0994) mm -->
+      <origin xyz="0 0.0121112 0.0430994" rpy="0 0 0"/>
+      <mass value="0.236296"/>
+      <inertia ixx="0.00039409" ixy="0.0" ixz="0.0"
+               iyy="0.00035378" iyz="0.0"
+               izz="0.00043232"/>
     </inertial>
     <visual>
       <geometry>
@@ -188,12 +188,12 @@
 
   <link name="joint2">
     <inertial>
-      <!-- COM: (0.0027, -11.3791, 42.1733) mm -->
-      <origin xyz="0.0000027 -0.0113791 0.0421733" rpy="0 0 0"/>
-      <mass value="0.169648237"/>
-      <inertia ixx="0.000296367505" ixy="-0.000000007634" ixz="0.000000036434"
-               iyy="0.000366233598" iyz="-0.000048442986"
-               izz="0.000291288551"/>
+      <!-- COM: (0.0031, -10.0157, 43.8699) mm -->
+      <origin xyz="0.0000031 -0.0100157 0.0438699" rpy="0 0 0"/>
+      <mass value="0.151798"/>
+      <inertia ixx="0.00026036" ixy="0.0" ixz="0.0"
+               iyy="0.00033758" iyz="0.0"
+               izz="0.00027115"/>
     </inertial>
     <visual>
       <geometry>
@@ -209,12 +209,12 @@
 
   <link name="link2_1">
     <inertial>
-      <!-- COM: (-0.4642, -0.5063, 38.0142) mm -->
-      <origin xyz="-0.0004642 -0.0005063 0.0380142" rpy="0 0 0"/>
-      <mass value="0.188800061"/>
-      <inertia ixx="0.000146197470" ixy="-0.000000043751" ixz="-0.000001488595"
-               iyy="0.000146205177" iyz="-0.000000892060"
-               izz="0.000161370291"/>
+      <!-- COM: (0.0354, -0.0354, 29.1096) mm -->
+      <origin xyz="0.0000354 -0.0000354 0.0291096" rpy="0 0 0"/>
+      <mass value="0.112000"/>
+      <inertia ixx="0.00009821" ixy="0.0" ixz="0.0"
+               iyy="0.00009821" iyz="0.0"
+               izz="0.00011208"/>
     </inertial>
     <visual>
       <geometry>
@@ -249,6 +249,7 @@
     </collision>
   </link>
 
+  <!-- joints (그대로 유지) -->
   <joint name="m1" type="fixed">
     <parent link="base"/>
     <child  link="rs02_1"/>
@@ -258,35 +259,35 @@
   <joint name="j1" type="revolute">
     <parent link="rs02_1"/>
     <child  link="joint1"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 -1"/>
+    <origin xyz="0 0 0" rpy="0 3.1415926 0"/>
+    <axis xyz="0 0 1"/>
     <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
 
   <joint name="m2" type="fixed">
     <parent link="joint1"/>
     <child  link="rs03"/>
-    <origin xyz="0 -0.0637 0.068" rpy="1.5708 0 0"/>
+    <origin xyz="0 -0.0637 -0.068" rpy="1.5708 0 0"/>
   </joint>
 
   <joint name="j2" type="revolute">
     <parent link="rs03"/>
     <child  link="link1_1"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 -1"/>
+    <origin xyz="0 0 0" rpy="3.1415926 0 0"/>
+    <axis xyz="0 0 1"/>
     <limit lower="-2.5" upper="2.5" effort="50" velocity="100"/>
   </joint>
 
   <joint name="j2_2" type="fixed">
     <parent link="link1_1"/>
     <child  link="link1_2"/>
-    <origin xyz="0 0.05 0.05715" rpy="-1.5708 0 0"/>
+    <origin xyz="0 0.05 -0.05715" rpy="-1.5708 0 0"/>
   </joint>
 
   <joint name="j2_3" type="fixed">
     <parent link="link1_2"/>
     <child  link="link1_3"/>
-    <origin xyz="0 0 0.3" rpy="0 0 0"/>
+    <origin xyz="0 0 0.3" rpy="0 0 3.1415926"/>
   </joint>
 
   <joint name="m3" type="fixed">
@@ -298,29 +299,29 @@
   <joint name="j3" type="revolute">
     <parent link="rs02_2"/>
     <child  link="joint2"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 -1"/>
+    <origin xyz="0 0 0" rpy="3.1415926 0 3.1415926"/>
+    <axis xyz="0 0 1"/>
     <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
 
   <joint name="m4" type="fixed">
     <parent link="joint2"/>
     <child  link="rs02_3"/>
-    <origin xyz="0 -0.0502 0.055" rpy="1.5708 0 0"/>
+    <origin xyz="0 -0.0502 -0.055" rpy="1.5708 0 0"/>
   </joint>
 
   <joint name="j4" type="revolute">
     <parent link="rs02_3"/>
     <child  link="link2_1"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 -1"/>
+    <origin xyz="0 0 0" rpy="3.1415926 0 0"/>
+    <axis xyz="0 0 1"/>
     <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
 
   <joint name="j4_2" type="fixed">
     <parent link="link2_1"/>
     <child  link="link2_2"/>
-    <origin xyz="0 0 0.035" rpy="0 0 0"/>
+    <origin xyz="0 0 0.035" rpy="0 3.1415926 0"/>
   </joint>
 
   <link name="ee_link"/>
