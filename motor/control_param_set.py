@@ -21,10 +21,22 @@ def main():
     ap.add_argument("--q_des", type=float, default=None)
     ap.add_argument("--qd_des", type=float, default=None)
     ap.add_argument("--tau_ff", type=float, default=None)
+    ap.add_argument("--gravity_scale", type=float, default=None)
+    ap.add_argument("--gravity_bias", type=float, default=None)
     args = ap.parse_args()
 
     updates = {}
-    for key in ("tx_hz", "rx_hz", "kp", "kd", "q_des", "qd_des", "tau_ff"):
+    for key in (
+        "tx_hz",
+        "rx_hz",
+        "kp",
+        "kd",
+        "q_des",
+        "qd_des",
+        "tau_ff",
+        "gravity_scale",
+        "gravity_bias",
+    ):
         value = getattr(args, key)
         if value is not None:
             updates[key] = float(value)

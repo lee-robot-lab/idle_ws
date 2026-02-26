@@ -28,6 +28,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'viewer_node = sim.viewer_node:main',
         ],
     },
 )

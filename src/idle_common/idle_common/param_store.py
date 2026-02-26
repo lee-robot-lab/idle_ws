@@ -73,6 +73,8 @@ def _empty_control() -> dict[str, Any]:
             "q_des": 0.0,
             "qd_des": 0.0,
             "tau_ff": 0.0,
+            "gravity_scale": 1.0,
+            "gravity_bias": 0.0,
         },
         "motors": {str(i): {} for i in DEFAULT_MOTOR_IDS},
     }

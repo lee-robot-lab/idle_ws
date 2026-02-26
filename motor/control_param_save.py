@@ -25,14 +25,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bridge-node", default="/can_bridge_node")
     ap.add_argument(
+        "--push",
+        action="store_true",
+        help="also push tx policy to can_bridge (default: save only, no push)",
+    )
+    ap.add_argument(
         "--skip-push",
         action="store_true",
-        help="save only (do not push tx policy to can_bridge)",
+        help="deprecated no-op; save is already no-push by default",
     )
     args = ap.parse_args()
 
     path = save_control_tuning()
-    if args.skip_push:
+    if not args.push:
         print(f"saved control tuning: tuned_file={path} dirty=false push=skipped")
         return
 

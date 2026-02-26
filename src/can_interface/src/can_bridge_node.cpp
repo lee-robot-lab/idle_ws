@@ -49,6 +49,16 @@ constexpr uint8_t TYPE04_STOP = 0x04;
 constexpr uint8_t TYPE_MASK = 0x1F;
 constexpr float kHomeReturnDurationSec = 5.0F;
 constexpr float kHomeEpsilon = 1e-4F;
+constexpr char kDefaultHomeQDesByMotorJson[] =
+  "{\"1\":0.0,\"2\":0.0,\"3\":3.141592653589793,\"4\":0.0}";
+constexpr char kDefaultHomeKpByMotorJson[] =
+  "{\"1\":5.0,\"2\":37.0,\"3\":30.0,\"4\":30.0}";
+constexpr char kDefaultHomeKdByMotorJson[] =
+  "{\"1\":0.5,\"2\":6.0,\"3\":5.0,\"4\":5.0}";
+constexpr char kDefaultQLimitMinByMotorJson[] =
+  "{\"1\":-3.141592653589793,\"2\":-1.78,\"3\":-3.141592653589793,\"4\":-3.141592653589793}";
+constexpr char kDefaultQLimitMaxByMotorJson[] =
+  "{\"1\":3.141592653589793,\"2\":1.78,\"3\":3.141592653589793,\"4\":3.141592653589793}";
 
 struct MitRanges
 {
@@ -182,10 +192,20 @@ public:
     tx_hz_by_motor_json_ = declare_parameter<std::string>("tx_hz_by_motor_json", "{}");
     cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 100);
     home_q_des_ = declare_parameter<double>("home_q_des", 0.0);
+    home_q_des_by_motor_json_ = declare_parameter<std::string>(
+      "home_q_des_by_motor_json", kDefaultHomeQDesByMotorJson);
     home_qd_des_ = declare_parameter<double>("home_qd_des", 0.0);
     home_kp_ = declare_parameter<double>("home_kp", 30.0);
+    home_kp_by_motor_json_ = declare_parameter<std::string>(
+      "home_kp_by_motor_json", kDefaultHomeKpByMotorJson);
     home_kd_ = declare_parameter<double>("home_kd", 5.0);
+    home_kd_by_motor_json_ = declare_parameter<std::string>(
+      "home_kd_by_motor_json", kDefaultHomeKdByMotorJson);
     home_tau_ff_ = declare_parameter<double>("home_tau_ff", 0.0);
+    q_limit_min_by_motor_json_ = declare_parameter<std::string>(
+      "q_limit_min_by_motor_json", kDefaultQLimitMinByMotorJson);
+    q_limit_max_by_motor_json_ = declare_parameter<std::string>(
+      "q_limit_max_by_motor_json", kDefaultQLimitMaxByMotorJson);
     if (default_tx_hz_ <= 0.0) {
       default_tx_hz_ = 500.0;
     }
@@ -213,6 +233,74 @@ public:
       tx_by_motor.clear();
     }
     apply_tx_policy(tx_hz_default_, tx_by_motor, false);
+
+    std::unordered_map<int, double> home_q_des_by_motor;
+    std::unordered_map<int, double> home_kp_by_motor;
+    std::unordered_map<int, double> home_kd_by_motor;
+    std::unordered_map<int, double> q_limit_min_by_motor;
+    std::unordered_map<int, double> q_limit_max_by_motor;
+    if (!parse_numeric_by_motor_json(home_q_des_by_motor_json_, home_q_des_by_motor, parse_error)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "invalid initial home_q_des_by_motor_json (%s): falling back to defaults",
+        parse_error.c_str());
+      home_q_des_by_motor_json_ = kDefaultHomeQDesByMotorJson;
+      home_q_des_by_motor.clear();
+      std::string ignored_error;
+      (void)parse_numeric_by_motor_json(home_q_des_by_motor_json_, home_q_des_by_motor, ignored_error);
+    }
+    if (!parse_numeric_by_motor_json(home_kp_by_motor_json_, home_kp_by_motor, parse_error)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "invalid initial home_kp_by_motor_json (%s): falling back to defaults",
+        parse_error.c_str());
+      home_kp_by_motor_json_ = kDefaultHomeKpByMotorJson;
+      home_kp_by_motor.clear();
+      std::string ignored_error;
+      (void)parse_numeric_by_motor_json(home_kp_by_motor_json_, home_kp_by_motor, ignored_error);
+    }
+    if (!parse_numeric_by_motor_json(home_kd_by_motor_json_, home_kd_by_motor, parse_error)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "invalid initial home_kd_by_motor_json (%s): falling back to defaults",
+        parse_error.c_str());
+      home_kd_by_motor_json_ = kDefaultHomeKdByMotorJson;
+      home_kd_by_motor.clear();
+      std::string ignored_error;
+      (void)parse_numeric_by_motor_json(home_kd_by_motor_json_, home_kd_by_motor, ignored_error);
+    }
+    if (!parse_numeric_by_motor_json(q_limit_min_by_motor_json_, q_limit_min_by_motor, parse_error)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "invalid initial q_limit_min_by_motor_json (%s): falling back to defaults",
+        parse_error.c_str());
+      q_limit_min_by_motor_json_ = kDefaultQLimitMinByMotorJson;
+      q_limit_min_by_motor.clear();
+      std::string ignored_error;
+      (void)parse_numeric_by_motor_json(q_limit_min_by_motor_json_, q_limit_min_by_motor, ignored_error);
+    }
+    if (!parse_numeric_by_motor_json(q_limit_max_by_motor_json_, q_limit_max_by_motor, parse_error)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "invalid initial q_limit_max_by_motor_json (%s): falling back to defaults",
+        parse_error.c_str());
+      q_limit_max_by_motor_json_ = kDefaultQLimitMaxByMotorJson;
+      q_limit_max_by_motor.clear();
+      std::string ignored_error;
+      (void)parse_numeric_by_motor_json(q_limit_max_by_motor_json_, q_limit_max_by_motor, ignored_error);
+    }
+    apply_home_policy(
+      home_q_des_,
+      home_qd_des_,
+      home_kp_,
+      home_kd_,
+      home_tau_ff_,
+      home_q_des_by_motor,
+      home_kp_by_motor,
+      home_kd_by_motor,
+      q_limit_min_by_motor,
+      q_limit_max_by_motor,
+      false);
 
     if (!open_socketcan(channel_)) {
       throw std::runtime_error("failed to open socketcan channel: " + channel_);
@@ -244,9 +332,18 @@ public:
       tx_policy_.tx_hz_by_motor.size());
     RCLCPP_INFO(
       get_logger(),
-      "home gain policy initialized: default(kp=%.3f kd=%.3f), per-motor gains are code-managed",
-      home_kp_,
-      home_kd_);
+      "home policy initialized: default(q_des=%.3f qd_des=%.3f kp=%.3f kd=%.3f tau_ff=%.3f), "
+      "per_motor(q_des=%zu kp=%zu kd=%zu qmin=%zu qmax=%zu)",
+      home_policy_.q_des_default,
+      home_policy_.qd_des_default,
+      home_policy_.kp_default,
+      home_policy_.kd_default,
+      home_policy_.tau_ff_default,
+      home_policy_.q_des_by_motor.size(),
+      home_policy_.kp_by_motor.size(),
+      home_policy_.kd_by_motor.size(),
+      home_policy_.q_limit_min_by_motor.size(),
+      home_policy_.q_limit_max_by_motor.size());
 
     io_timer_ = create_wall_timer(
       std::chrono::milliseconds(1),
@@ -353,7 +450,21 @@ private:
     std::unordered_map<int, double> tx_hz_by_motor {};
   };
 
-  bool parse_tx_hz_by_motor_json(
+  struct HomePolicy
+  {
+    double q_des_default {0.0};
+    double qd_des_default {0.0};
+    double kp_default {30.0};
+    double kd_default {5.0};
+    double tau_ff_default {0.0};
+    std::unordered_map<int, double> q_des_by_motor {};
+    std::unordered_map<int, double> kp_by_motor {};
+    std::unordered_map<int, double> kd_by_motor {};
+    std::unordered_map<int, double> q_limit_min_by_motor {};
+    std::unordered_map<int, double> q_limit_max_by_motor {};
+  };
+
+  bool parse_numeric_by_motor_json(
     const std::string & text,
     std::unordered_map<int, double> & out,
     std::string & error) const
@@ -375,7 +486,7 @@ private:
       return true;
     }
     if (trimmed.size() < 2 || trimmed.front() != '{' || trimmed.back() != '}') {
-      error = "expected object string like {\"1\":300,\"7\":450}";
+      error = "expected object string like {\"1\":0.0,\"2\":1.5}";
       return false;
     }
 
@@ -398,14 +509,14 @@ private:
 
       try {
         const int motor_id = std::stoi(match[1].str());
-        const double hz = std::stod(match[2].str());
-        if (motor_id < 0 || hz <= 0.0) {
-          error = "motor_id must be >= 0 and hz must be > 0";
+        const double value = std::stod(match[2].str());
+        if (motor_id < 0) {
+          error = "motor_id must be >= 0";
           return false;
         }
-        out[motor_id] = hz;
+        out[motor_id] = value;
       } catch (...) {
-        error = "failed to parse tx_hz_by_motor_json";
+        error = "failed to parse numeric-by-motor json";
         return false;
       }
     }
@@ -421,8 +532,25 @@ private:
         }),
       leftover.end());
     if (!leftover.empty()) {
-      error = "invalid object content in tx_hz_by_motor_json";
+      error = "invalid object content";
       return false;
+    }
+    return true;
+  }
+
+  bool parse_tx_hz_by_motor_json(
+    const std::string & text,
+    std::unordered_map<int, double> & out,
+    std::string & error) const
+  {
+    if (!parse_numeric_by_motor_json(text, out, error)) {
+      return false;
+    }
+    for (const auto & kv : out) {
+      if (kv.second <= 0.0) {
+        error = "motor_id must be >= 0 and hz must be > 0";
+        return false;
+      }
     }
     return true;
   }
@@ -443,6 +571,140 @@ private:
     }
   }
 
+  void apply_home_policy(
+    const double q_des_default,
+    const double qd_des_default,
+    const double kp_default,
+    const double kd_default,
+    const double tau_ff_default,
+    const std::unordered_map<int, double> & q_des_by_motor,
+    const std::unordered_map<int, double> & kp_by_motor,
+    const std::unordered_map<int, double> & kd_by_motor,
+    const std::unordered_map<int, double> & q_limit_min_by_motor,
+    const std::unordered_map<int, double> & q_limit_max_by_motor,
+    const bool emit_log)
+  {
+    home_policy_.q_des_default = q_des_default;
+    home_policy_.qd_des_default = qd_des_default;
+    home_policy_.kp_default = std::max(0.0, kp_default);
+    home_policy_.kd_default = std::max(0.0, kd_default);
+    home_policy_.tau_ff_default = tau_ff_default;
+    home_policy_.q_des_by_motor = q_des_by_motor;
+    home_policy_.kp_by_motor = kp_by_motor;
+    home_policy_.kd_by_motor = kd_by_motor;
+    home_policy_.q_limit_min_by_motor = q_limit_min_by_motor;
+    home_policy_.q_limit_max_by_motor = q_limit_max_by_motor;
+
+    for (auto & kv : home_policy_.kp_by_motor) {
+      if (kv.second < 0.0) {
+        RCLCPP_WARN(
+          get_logger(),
+          "home_kp_by_motor_json[%d]=%.3f is negative; clamped to 0.0",
+          kv.first,
+          kv.second);
+        kv.second = 0.0;
+      }
+    }
+    for (auto & kv : home_policy_.kd_by_motor) {
+      if (kv.second < 0.0) {
+        RCLCPP_WARN(
+          get_logger(),
+          "home_kd_by_motor_json[%d]=%.3f is negative; clamped to 0.0",
+          kv.first,
+          kv.second);
+        kv.second = 0.0;
+      }
+    }
+
+    if (emit_log) {
+      RCLCPP_INFO(
+        get_logger(),
+        "home policy updated: default(q_des=%.3f qd_des=%.3f kp=%.3f kd=%.3f tau_ff=%.3f), "
+        "per_motor(q_des=%zu kp=%zu kd=%zu qmin=%zu qmax=%zu)",
+        home_policy_.q_des_default,
+        home_policy_.qd_des_default,
+        home_policy_.kp_default,
+        home_policy_.kd_default,
+        home_policy_.tau_ff_default,
+        home_policy_.q_des_by_motor.size(),
+        home_policy_.kp_by_motor.size(),
+        home_policy_.kd_by_motor.size(),
+        home_policy_.q_limit_min_by_motor.size(),
+        home_policy_.q_limit_max_by_motor.size());
+    }
+  }
+
+  double value_for_motor(
+    const std::unordered_map<int, double> & by_motor,
+    const uint8_t motor_id,
+    const double default_value) const
+  {
+    const auto it = by_motor.find(static_cast<int>(motor_id));
+    if (it == by_motor.end()) {
+      return default_value;
+    }
+    return it->second;
+  }
+
+  std::pair<float, float> position_limits_for_motor(const uint8_t motor_id) const
+  {
+    const MitRanges & r = ranges_for(motor_id);
+    const double qmin_cfg = value_for_motor(
+      home_policy_.q_limit_min_by_motor, motor_id, static_cast<double>(r.p_min));
+    const double qmax_cfg = value_for_motor(
+      home_policy_.q_limit_max_by_motor, motor_id, static_cast<double>(r.p_max));
+
+    float q_min = static_cast<float>(std::max(static_cast<double>(r.p_min), qmin_cfg));
+    float q_max = static_cast<float>(std::min(static_cast<double>(r.p_max), qmax_cfg));
+    if (q_min > q_max) {
+      RCLCPP_WARN_ONCE(
+        get_logger(),
+        "motor_id=%u invalid q-limit config (min=%.3f max=%.3f): using MIT range [%.3f, %.3f]",
+        motor_id,
+        qmin_cfg,
+        qmax_cfg,
+        static_cast<double>(r.p_min),
+        static_cast<double>(r.p_max));
+      q_min = r.p_min;
+      q_max = r.p_max;
+    }
+    return {q_min, q_max};
+  }
+
+  float wrap_or_clamp_current_q_for_home(
+    const float current_q,
+    const float q_min,
+    const float q_max) const
+  {
+    const float period = 2.0F * static_cast<float>(M_PI);
+    const float span = q_max - q_min;
+    // For 2*pi windows (e.g. [-pi, pi]), wrap only when the reported state is far out of range.
+    // If it is just slightly outside (quantization/noise near boundary), clamp to keep sign continuity.
+    if (std::fabs(span - period) <= 1e-3F) {
+      if (current_q >= q_min && current_q <= q_max) {
+        return current_q;
+      }
+
+      constexpr float kNearBoundarySnapRad = 0.2F;
+      const float below = (current_q < q_min) ? (q_min - current_q) : 0.0F;
+      const float above = (current_q > q_max) ? (current_q - q_max) : 0.0F;
+      const float out_of_range = std::max(below, above);
+      if (out_of_range <= kNearBoundarySnapRad) {
+        return clamp(current_q, q_min, q_max);
+      }
+
+      float wrapped = q_min + std::fmod(current_q - q_min, period);
+      if (wrapped < q_min) {
+        wrapped += period;
+      }
+      if (wrapped > q_max) {
+        wrapped -= period;
+      }
+      return clamp(wrapped, q_min, q_max);
+    }
+    return clamp(current_q, q_min, q_max);
+  }
+
   rcl_interfaces::msg::SetParametersResult on_parameters_set(
     const std::vector<rclcpp::Parameter> & params)
   {
@@ -453,20 +715,36 @@ private:
     std::string next_tx_hz_by_motor_json = tx_hz_by_motor_json_;
     bool tx_default_changed = false;
     bool tx_json_changed = false;
+    double next_home_q_des = home_q_des_;
+    double next_home_qd_des = home_qd_des_;
     double next_home_kp = home_kp_;
     double next_home_kd = home_kd_;
-    bool home_kp_changed = false;
-    bool home_kd_changed = false;
+    double next_home_tau_ff = home_tau_ff_;
+    std::string next_home_q_des_by_motor_json = home_q_des_by_motor_json_;
+    std::string next_home_kp_by_motor_json = home_kp_by_motor_json_;
+    std::string next_home_kd_by_motor_json = home_kd_by_motor_json_;
+    std::string next_q_limit_min_by_motor_json = q_limit_min_by_motor_json_;
+    std::string next_q_limit_max_by_motor_json = q_limit_max_by_motor_json_;
+    bool home_scalar_changed = false;
+    bool home_map_changed = false;
+
+    auto param_to_double = [](const rclcpp::Parameter & param, double & out) -> bool {
+      if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+        out = param.as_double();
+        return true;
+      }
+      if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
+        out = static_cast<double>(param.as_int());
+        return true;
+      }
+      return false;
+    };
 
     for (const auto & param : params) {
       const std::string & name = param.get_name();
       if (name == "tx_hz_default" || name == "default_tx_hz") {
         double hz = 0.0;
-        if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
-          hz = param.as_double();
-        } else if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
-          hz = static_cast<double>(param.as_int());
-        } else {
+        if (!param_to_double(param, hz)) {
           result.successful = false;
           result.reason = name + " must be numeric";
           return result;
@@ -492,35 +770,65 @@ private:
         continue;
       }
 
-      if (name == "home_kp" || name == "home_kd") {
+      if (
+        name == "home_q_des" || name == "home_qd_des" || name == "home_kp" ||
+        name == "home_kd" || name == "home_tau_ff")
+      {
         double value = 0.0;
-        if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
-          value = param.as_double();
-        } else if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
-          value = static_cast<double>(param.as_int());
-        } else {
+        if (!param_to_double(param, value)) {
           result.successful = false;
           result.reason = name + " must be numeric";
           return result;
         }
-        if (value < 0.0) {
+        if ((name == "home_kp" || name == "home_kd") && value < 0.0) {
           result.successful = false;
           result.reason = name + " must be >= 0";
           return result;
         }
-        if (name == "home_kp") {
+        if (name == "home_q_des") {
+          next_home_q_des = value;
+        } else if (name == "home_qd_des") {
+          next_home_qd_des = value;
+        } else if (name == "home_kp") {
           next_home_kp = value;
-          home_kp_changed = true;
-        } else {
+        } else if (name == "home_kd") {
           next_home_kd = value;
-          home_kd_changed = true;
+        } else {
+          next_home_tau_ff = value;
         }
+        home_scalar_changed = true;
+        continue;
+      }
+
+      if (
+        name == "home_q_des_by_motor_json" || name == "home_kp_by_motor_json" ||
+        name == "home_kd_by_motor_json" || name == "q_limit_min_by_motor_json" ||
+        name == "q_limit_max_by_motor_json")
+      {
+        if (param.get_type() != rclcpp::ParameterType::PARAMETER_STRING) {
+          result.successful = false;
+          result.reason = name + " must be string";
+          return result;
+        }
+        const std::string value = param.as_string();
+        if (name == "home_q_des_by_motor_json") {
+          next_home_q_des_by_motor_json = value;
+        } else if (name == "home_kp_by_motor_json") {
+          next_home_kp_by_motor_json = value;
+        } else if (name == "home_kd_by_motor_json") {
+          next_home_kd_by_motor_json = value;
+        } else if (name == "q_limit_min_by_motor_json") {
+          next_q_limit_min_by_motor_json = value;
+        } else {
+          next_q_limit_max_by_motor_json = value;
+        }
+        home_map_changed = true;
         continue;
       }
     }
 
     const bool tx_changed = tx_default_changed || tx_json_changed;
-    const bool home_changed = home_kp_changed || home_kd_changed;
+    const bool home_changed = home_scalar_changed || home_map_changed;
     if (!tx_changed && !home_changed) {
       return result;
     }
@@ -532,6 +840,73 @@ private:
         result.successful = false;
         result.reason = "tx_hz_by_motor_json parse failed: " + parse_error;
         return result;
+      }
+    }
+
+    std::unordered_map<int, double> parsed_home_q_des_by_motor = home_policy_.q_des_by_motor;
+    std::unordered_map<int, double> parsed_home_kp_by_motor = home_policy_.kp_by_motor;
+    std::unordered_map<int, double> parsed_home_kd_by_motor = home_policy_.kd_by_motor;
+    std::unordered_map<int, double> parsed_q_limit_min_by_motor = home_policy_.q_limit_min_by_motor;
+    std::unordered_map<int, double> parsed_q_limit_max_by_motor = home_policy_.q_limit_max_by_motor;
+    if (home_map_changed) {
+      std::string parse_error;
+      if (!parse_numeric_by_motor_json(
+          next_home_q_des_by_motor_json, parsed_home_q_des_by_motor, parse_error))
+      {
+        result.successful = false;
+        result.reason = "home_q_des_by_motor_json parse failed: " + parse_error;
+        return result;
+      }
+      if (!parse_numeric_by_motor_json(
+          next_home_kp_by_motor_json, parsed_home_kp_by_motor, parse_error))
+      {
+        result.successful = false;
+        result.reason = "home_kp_by_motor_json parse failed: " + parse_error;
+        return result;
+      }
+      if (!parse_numeric_by_motor_json(
+          next_home_kd_by_motor_json, parsed_home_kd_by_motor, parse_error))
+      {
+        result.successful = false;
+        result.reason = "home_kd_by_motor_json parse failed: " + parse_error;
+        return result;
+      }
+      if (!parse_numeric_by_motor_json(
+          next_q_limit_min_by_motor_json, parsed_q_limit_min_by_motor, parse_error))
+      {
+        result.successful = false;
+        result.reason = "q_limit_min_by_motor_json parse failed: " + parse_error;
+        return result;
+      }
+      if (!parse_numeric_by_motor_json(
+          next_q_limit_max_by_motor_json, parsed_q_limit_max_by_motor, parse_error))
+      {
+        result.successful = false;
+        result.reason = "q_limit_max_by_motor_json parse failed: " + parse_error;
+        return result;
+      }
+
+      for (const auto & kv : parsed_home_kp_by_motor) {
+        if (kv.second < 0.0) {
+          result.successful = false;
+          result.reason = "home_kp_by_motor_json must be >= 0";
+          return result;
+        }
+      }
+      for (const auto & kv : parsed_home_kd_by_motor) {
+        if (kv.second < 0.0) {
+          result.successful = false;
+          result.reason = "home_kd_by_motor_json must be >= 0";
+          return result;
+        }
+      }
+      for (const auto & kv : parsed_q_limit_min_by_motor) {
+        const auto it = parsed_q_limit_max_by_motor.find(kv.first);
+        if (it != parsed_q_limit_max_by_motor.end() && kv.second > it->second) {
+          result.successful = false;
+          result.reason = "q_limit_min_by_motor_json must be <= q_limit_max_by_motor_json";
+          return result;
+        }
       }
     }
 
@@ -547,13 +922,30 @@ private:
     }
 
     if (home_changed) {
+      apply_home_policy(
+        next_home_q_des,
+        next_home_qd_des,
+        next_home_kp,
+        next_home_kd,
+        next_home_tau_ff,
+        parsed_home_q_des_by_motor,
+        parsed_home_kp_by_motor,
+        parsed_home_kd_by_motor,
+        parsed_q_limit_min_by_motor,
+        parsed_q_limit_max_by_motor,
+        true);
+      home_q_des_ = next_home_q_des;
+      home_qd_des_ = next_home_qd_des;
       home_kp_ = next_home_kp;
       home_kd_ = next_home_kd;
-      RCLCPP_INFO(
-        get_logger(),
-        "home gain policy updated: default(kp=%.3f kd=%.3f), per-motor gains are code-managed",
-        home_kp_,
-        home_kd_);
+      home_tau_ff_ = next_home_tau_ff;
+      if (home_map_changed) {
+        home_q_des_by_motor_json_ = next_home_q_des_by_motor_json;
+        home_kp_by_motor_json_ = next_home_kp_by_motor_json;
+        home_kd_by_motor_json_ = next_home_kd_by_motor_json;
+        q_limit_min_by_motor_json_ = next_q_limit_min_by_motor_json;
+        q_limit_max_by_motor_json_ = next_q_limit_max_by_motor_json;
+      }
     }
     return result;
   }
@@ -567,12 +959,56 @@ private:
     return (tx_policy_.tx_hz_default > 0.0) ? tx_policy_.tx_hz_default : default_tx_hz_;
   }
 
-  bool send_mit_command(const msgs::msg::MotorCMD & cmd)
+  bool send_mit_command(
+    const msgs::msg::MotorCMD & cmd,
+    const bool allow_periodic_lift_for_2pi_limit = false)
   {
     const uint8_t motor_id = cmd.motor_id;
     const MitRanges & r = ranges_for(motor_id);
+    const auto limits = position_limits_for_motor(motor_id);
+    const float q_des_in_window = clamp(cmd.q_des, limits.first, limits.second);
+    if (std::fabs(q_des_in_window - cmd.q_des) > 1e-6F) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        2000,
+        "motor_id=%u q_des clamp applied: %.3f -> %.3f (limit=[%.3f, %.3f])",
+        motor_id,
+        static_cast<double>(cmd.q_des),
+        static_cast<double>(q_des_in_window),
+        static_cast<double>(limits.first),
+        static_cast<double>(limits.second));
+    }
+
+    float q_des_for_encode = q_des_in_window;
+    const float period = 2.0F * static_cast<float>(M_PI);
+    const float span = limits.second - limits.first;
+    if (allow_periodic_lift_for_2pi_limit && std::fabs(span - period) <= 1e-3F) {
+      const auto rt_it = runtime_by_motor_.find(motor_id);
+      if (rt_it != runtime_by_motor_.end() && rt_it->second.has_state) {
+        const float q_des_lifted = nearest_periodic_target(
+          q_des_in_window,
+          rt_it->second.last_state.q,
+          period,
+          r.p_min,
+          r.p_max);
+        q_des_for_encode = clamp(q_des_lifted, r.p_min, r.p_max);
+        if (std::fabs(q_des_for_encode - q_des_in_window) > 1e-4F) {
+          RCLCPP_INFO_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            2000,
+            "motor_id=%u periodic home lift applied: %.3f -> %.3f (state_q=%.3f)",
+            motor_id,
+            static_cast<double>(q_des_in_window),
+            static_cast<double>(q_des_for_encode),
+            static_cast<double>(rt_it->second.last_state.q));
+        }
+      }
+    }
+
     const uint16_t t_u16 = float_to_u16(cmd.tau_ff, r.t_min, r.t_max);
-    const uint16_t q_u16 = float_to_u16(cmd.q_des, r.p_min, r.p_max);
+    const uint16_t q_u16 = float_to_u16(q_des_for_encode, r.p_min, r.p_max);
     const uint16_t qd_u16 = float_to_u16(cmd.qd_des, r.v_min, r.v_max);
     const uint16_t kp_u16 = float_to_u16(cmd.kp, r.kp_min, r.kp_max);
     const uint16_t kd_u16 = float_to_u16(cmd.kd, r.kd_min, r.kd_max);
@@ -697,48 +1133,42 @@ private:
   {
     msgs::msg::MotorCMD home {};
     home.motor_id = motor_id;
-    home.q_des = static_cast<float>(home_q_des_);
-    home.qd_des = static_cast<float>(home_qd_des_);
+    home.q_des = home_q_des_for_motor(motor_id);
+    home.qd_des = static_cast<float>(home_policy_.qd_des_default);
     home.kp = home_kp_for_motor(motor_id);
     home.kd = home_kd_for_motor(motor_id);
-    home.tau_ff = static_cast<float>(home_tau_ff_);
+    home.tau_ff = static_cast<float>(home_policy_.tau_ff_default);
     return home;
+  }
+
+  float home_q_des_for_motor(const uint8_t motor_id) const
+  {
+    return static_cast<float>(
+      value_for_motor(home_policy_.q_des_by_motor, motor_id, home_policy_.q_des_default));
   }
 
   float home_kp_for_motor(const uint8_t motor_id) const
   {
-    // Manual per-motor home Kp tuning point.
-    // Add/update motor_id cases directly in code.
-    switch (motor_id) {
-      case 1: return 5.0F;
-      case 2: return 37.0F;
-      default:
-        return static_cast<float>(home_kp_);
-    }
+    return static_cast<float>(
+      value_for_motor(home_policy_.kp_by_motor, motor_id, home_policy_.kp_default));
   }
 
   float home_kd_for_motor(const uint8_t motor_id) const
   {
-    // Manual per-motor home Kd tuning point.
-    // Add/update motor_id cases directly in code.
-    switch (motor_id) {
-      case 1: return 0.5F;
-      case 2: return 6.0F;
-      default:
-        return static_cast<float>(home_kd_);
-    }
+    return static_cast<float>(
+      value_for_motor(home_policy_.kd_by_motor, motor_id, home_policy_.kd_default));
   }
 
   float aligned_home_q_des(const uint8_t motor_id, const float current_q) const
   {
-    const MitRanges & r = ranges_for(motor_id);
-    const float q_base = static_cast<float>(home_q_des_);
+    const auto limits = position_limits_for_motor(motor_id);
+    const float q_base = home_q_des_for_motor(motor_id);
     return nearest_periodic_target(
       q_base,
       current_q,
       2.0F * static_cast<float>(M_PI),
-      r.p_min,
-      r.p_max);
+      limits.first,
+      limits.second);
   }
 
   void start_home_trajectory(
@@ -748,11 +1178,13 @@ private:
     const char * reason)
   {
     CachedCommand & cached = latest_cmd_by_motor_[motor_id];
-    const float q_base = static_cast<float>(home_q_des_);
-    const float q_goal = aligned_home_q_des(motor_id, current_q);
-    const float abs_dq = std::fabs(q_goal - current_q);
+    const auto limits = position_limits_for_motor(motor_id);
+    const float q_base = home_q_des_for_motor(motor_id);
+    const float q_start = wrap_or_clamp_current_q_for_home(current_q, limits.first, limits.second);
+    const float q_goal = aligned_home_q_des(motor_id, q_start);
+    const float abs_dq = std::fabs(q_goal - q_start);
 
-    cached.home_traj_start_q = current_q;
+    cached.home_traj_start_q = q_start;
     cached.home_traj_goal_q = q_goal;
     cached.home_traj_duration_sec = kHomeReturnDurationSec;
     cached.home_traj_start_tp = now_tp;
@@ -765,7 +1197,7 @@ private:
         motor_id,
         reason,
         static_cast<double>(q_base),
-        static_cast<double>(current_q),
+        static_cast<double>(q_start),
         static_cast<double>(q_goal),
         static_cast<double>(cached.home_traj_duration_sec));
     } else {
@@ -818,9 +1250,10 @@ private:
     cached.timeout_home_active = false;
     RCLCPP_INFO(
       get_logger(),
-      "motor_id=%u home Type01 stream armed after ready (current_q=%.3f q_goal=%.3f duration=%.3f s)",
+      "motor_id=%u home Type01 stream armed after ready (current_q_raw=%.3f q_start=%.3f q_goal=%.3f duration=%.3f s)",
       motor_id,
       static_cast<double>(current_q),
+      static_cast<double>(cached.home_traj_start_q),
       static_cast<double>(cached.home_traj_goal_q),
       static_cast<double>(cached.home_traj_duration_sec));
   }
@@ -890,9 +1323,11 @@ private:
           if (rt.has_state) {
             start_home_trajectory(motor_id, rt.last_state.q, now_tp, "timeout-home");
           } else {
+            const auto limits = position_limits_for_motor(motor_id);
+            const float q_home = clamp(home_q_des_for_motor(motor_id), limits.first, limits.second);
             cached.home_traj_active = false;
-            cached.home_traj_start_q = static_cast<float>(home_q_des_);
-            cached.home_traj_goal_q = static_cast<float>(home_q_des_);
+            cached.home_traj_start_q = q_home;
+            cached.home_traj_goal_q = q_home;
             cached.home_traj_duration_sec = kHomeReturnDurationSec;
             cached.home_traj_start_tp = now_tp;
           }
@@ -919,7 +1354,8 @@ private:
           static_cast<double>(cached.home_traj_duration_sec));
       }
 
-      if (!send_mit_command(outgoing)) {
+      const bool allow_periodic_lift_for_2pi_limit = is_pre_home_stream || cmd_timed_out;
+      if (!send_mit_command(outgoing, allow_periodic_lift_for_2pi_limit)) {
         RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "failed to send TYPE01 command frame");
       }
       cached.has_sent = true;
@@ -1122,16 +1558,22 @@ private:
   std::string tx_hz_by_motor_json_{"{}"};
   int cmd_timeout_ms_{100};
   double home_q_des_{0.0};
+  std::string home_q_des_by_motor_json_{kDefaultHomeQDesByMotorJson};
   double home_qd_des_{0.0};
   double home_kp_{30.0};
+  std::string home_kp_by_motor_json_{kDefaultHomeKpByMotorJson};
   double home_kd_{5.0};
+  std::string home_kd_by_motor_json_{kDefaultHomeKdByMotorJson};
   double home_tau_ff_{0.0};
+  std::string q_limit_min_by_motor_json_{kDefaultQLimitMinByMotorJson};
+  std::string q_limit_max_by_motor_json_{kDefaultQLimitMaxByMotorJson};
 
   std::unordered_map<uint8_t, uint8_t> last_fault_bits_;
   std::unordered_map<uint8_t, CachedCommand> latest_cmd_by_motor_;
   std::unordered_map<uint8_t, MotorRuntime> runtime_by_motor_;
   std::set<uint8_t> discovered_motor_ids_;
   TxPolicy tx_policy_;
+  HomePolicy home_policy_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
   rclcpp::Publisher<msgs::msg::MotorStateArray>::SharedPtr state_array_pub_;
   rclcpp::Publisher<msgs::msg::MotorErrorArray>::SharedPtr error_array_pub_;

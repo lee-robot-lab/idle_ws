@@ -22,7 +22,17 @@ from .param_store import (
 STATE_FILE_ENV = "IDLE_CONTROL_GATE_STATE"
 DEFAULT_STATE_FILE = "/tmp/idle_control_gate_state.json"
 
-CONTROL_TUNING_KEYS = {"tx_hz", "rx_hz", "kp", "kd", "q_des", "qd_des", "tau_ff"}
+CONTROL_TUNING_KEYS = {
+    "tx_hz",
+    "rx_hz",
+    "kp",
+    "kd",
+    "q_des",
+    "qd_des",
+    "tau_ff",
+    "gravity_scale",
+    "gravity_bias",
+}
 
 
 def state_file_path() -> Path:

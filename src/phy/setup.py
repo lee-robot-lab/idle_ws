@@ -24,6 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'hold_node = phy.hold_node:main',
+            'ee_xyz_trajectory_node = phy.ee_xyz_trajectory_node:main',
         ],
     },
 )

@@ -1,3 +1,13 @@
-# Writable control tuning overrides used at runtime.
+motors:
+  '1':
+    kd: 0.12
+    kp: 3.0
+  '2':
+    gravity_bias: 0.0
+    gravity_scale: 1.0
+    kd: 0.5
+    kp: 7.0
+  '3':
+    kd: 0.12
+    kp: 3.0
 version: 1
-motors: {}

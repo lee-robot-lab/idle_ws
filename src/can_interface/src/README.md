@@ -71,13 +71,15 @@
 - `tx_hz_by_motor_json` (예: `{"1":300,"7":450}`)
 - `cmd_timeout_ms`
 - `home_q_des`, `home_qd_des`, `home_kp`, `home_kd`, `home_tau_ff`
+- `home_q_des_by_motor_json` (예: `{"1":0.0,"2":0.0,"3":3.141592653589793,"4":0.0}`)
+- `home_kp_by_motor_json`, `home_kd_by_motor_json` (예: `{"1":5.0,"2":37.0,"3":30.0,"4":30.0}`)
+- `q_limit_min_by_motor_json`, `q_limit_max_by_motor_json`
 
 `can_bridge_node`는 더 이상 런타임 정책을 파일에서 폴링하지 않습니다. 제어 노드에서
-`SetParameters`(예: `ros2 param set`)로 `tx_hz_*`, `home_kp`, `home_kd`를 push 하면 즉시 반영됩니다.
+`SetParameters`(예: `ros2 param set`)로 `tx_hz_*`, `home_*`, `q_limit_*`를 push 하면 즉시 반영됩니다.
 
-`motor_id`별 home `kp/kd`는 코드에서 수동 관리합니다.
-`src/can_interface/src/can_bridge_node.cpp`의 `home_kp_for_motor()`, `home_kd_for_motor()`에서
-`switch` 케이스를 수정해 사용하세요.
+`Type01` 전송 시 `q_des`는 `q_limit_*_by_motor_json`으로 지정한 물리 제한(없으면 MIT 범위)으로
+항상 클램프됩니다.
 
 ## 시작 로그 예시
 
@@ -138,6 +140,9 @@ ros2 param set /can_bridge_node tx_hz_default 250.0
 ros2 param set /can_bridge_node tx_hz_by_motor_json '{"1":300,"7":450}'
 ros2 param set /can_bridge_node home_kp 30.0
 ros2 param set /can_bridge_node home_kd 5.0
+ros2 param set /can_bridge_node home_q_des_by_motor_json '{"1":0.0,"2":0.0,"3":3.141592653589793,"4":0.0}'
+ros2 param set /can_bridge_node q_limit_min_by_motor_json '{"1":-3.141592653589793,"2":-1.78,"3":-3.141592653589793,"4":-3.141592653589793}'
+ros2 param set /can_bridge_node q_limit_max_by_motor_json '{"1":3.141592653589793,"2":1.78,"3":3.141592653589793,"4":3.141592653589793}'
 ```
 
 ### 5) `/motor_cmd_array` 발행 (CLI)
