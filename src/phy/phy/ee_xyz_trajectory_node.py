@@ -39,7 +39,7 @@ from phy.gravity import (
     parse_float_map_json,
     parse_motor_joint_map_json,
 )
-from phy.ik import IKConfig, IKSolver
+from phy.ik import IKConfig, IKPolicyConfig, IKSolver
 from phy.traj import QuinticPlan, plan_quintic, sample_quintic
 
 
@@ -208,6 +208,13 @@ class EEXyzTrajectoryNode(Node):
                 damping=ik_damping,
                 step_scale=ik_step_scale,
             ),
+        )
+        self.ik_policy_config = IKPolicyConfig(
+            max_ik_residual_accept_m=self.max_ik_residual_accept_m,
+            ik_random_restarts=self.ik_random_restarts,
+            ik_seed_default_span=self.ik_seed_default_span,
+            max_joint_jump_rad=self.max_joint_jump_rad,
+            use_heuristic_seed=True,
         )
 
         dof = len(self.controlled_motor_ids)
@@ -490,64 +497,42 @@ class EEXyzTrajectoryNode(Node):
         self._update_desired_from_active_traj(now_s)
         q_start = self.ctrl_q_des.copy()
         qd_start = self.ctrl_qd_des.copy()
-        seed_list: list[np.ndarray] = [self.ctrl_q_des.copy()]
         measured_q = self._measured_ctrl_q(now_s)
-        if measured_q is not None:
-            seed_list.append(measured_q.copy())
-        seed_list.append(np.zeros_like(self.ctrl_q_des))
-
-        if len(self.ctrl_q_des) >= 1:
-            heuristic_seed = np.zeros_like(self.ctrl_q_des)
-            heuristic_seed[0] = math.atan2(float(goal_xyz[1]), float(goal_xyz[0]))
-            if len(heuristic_seed) >= 2:
-                heuristic_seed[1] = 1.2
-            if len(heuristic_seed) >= 3:
-                heuristic_seed[2] = 2.2
-            seed_list.append(self.ik_solver.clip_to_limits(heuristic_seed))
-
-        random_restarts = max(0, int(self.ik_random_restarts))
-        if random_restarts > 0:
-            lower = np.asarray(self.ik_solver.lower_limits, dtype=float)
-            upper = np.asarray(self.ik_solver.upper_limits, dtype=float)
-            for _ in range(random_restarts):
-                random_seed = np.zeros_like(self.ctrl_q_des)
-                for idx in range(len(random_seed)):
-                    low = float(lower[idx])
-                    high = float(upper[idx])
-                    if (not math.isfinite(low)) or (not math.isfinite(high)) or (high <= low):
-                        span = max(self.ik_seed_default_span, 1.0e-3)
-                        low, high = -span, span
-                    random_seed[idx] = float(self.rng.uniform(low, high))
-                seed_list.append(random_seed)
-
-        ik_results = [self.ik_solver.solve(goal_xyz, seed) for seed in seed_list]
-        feasible_indices = [
-            i
-            for i, result in enumerate(ik_results)
-            if (result.success or result.residual_norm <= self.max_ik_residual_accept_m)
-        ]
-        if not feasible_indices:
-            best_idx = min(range(len(ik_results)), key=lambda i: ik_results[i].residual_norm)
-            best = ik_results[best_idx]
-            self.get_logger().warn(
-                f"target rejected: IK residual too large ({best.residual_norm:.6f}m > "
-                f"{self.max_ik_residual_accept_m:.6f}m) xyz=({goal_xyz[0]:.4f}, {goal_xyz[1]:.4f}, {goal_xyz[2]:.4f})"
-            )
-            return
-        q_ref = measured_q.copy() if measured_q is not None else q_start
-        best_idx = min(
-            feasible_indices,
-            key=lambda i: (float(np.linalg.norm(ik_results[i].q - q_ref)), ik_results[i].residual_norm),
+        policy_result = self.ik_solver.solve_with_policy(
+            goal_xyz=goal_xyz,
+            q_ref=q_start,
+            q_measured=measured_q,
+            policy=self.ik_policy_config,
+            rng=self.rng,
         )
-        ik = ik_results[best_idx]
-        q_goal = ik.q
-        max_jump = float(np.max(np.abs(q_goal - q_ref)))
-        if max_jump > self.max_joint_jump_rad:
+        if not policy_result.accepted:
+            if policy_result.reason == "rejected_residual":
+                self.get_logger().warn(
+                    f"target rejected: IK residual too large ({policy_result.best_residual:.6f}m > "
+                    f"{self.max_ik_residual_accept_m:.6f}m) xyz=({goal_xyz[0]:.4f}, {goal_xyz[1]:.4f}, {goal_xyz[2]:.4f})"
+                )
+                return
+            if policy_result.reason == "rejected_joint_jump":
+                self.get_logger().warn(
+                    f"target rejected: joint jump too large ({policy_result.best_jump_rad:.3f}rad > "
+                    f"{self.max_joint_jump_rad:.3f}rad) "
+                    f"xyz=({goal_xyz[0]:.4f}, {goal_xyz[1]:.4f}, {goal_xyz[2]:.4f})"
+                )
+                return
             self.get_logger().warn(
-                f"target rejected: joint jump too large ({max_jump:.3f}rad > {self.max_joint_jump_rad:.3f}rad) "
-                f"xyz=({goal_xyz[0]:.4f}, {goal_xyz[1]:.4f}, {goal_xyz[2]:.4f})"
+                "target rejected: unknown IK policy reason "
+                f"'{policy_result.reason}' xyz=({goal_xyz[0]:.4f}, {goal_xyz[1]:.4f}, {goal_xyz[2]:.4f})"
             )
             return
+        if policy_result.q_goal is None:
+            self.get_logger().warn(
+                f"target rejected: IK policy accepted without q_goal xyz=({goal_xyz[0]:.4f}, "
+                f"{goal_xyz[1]:.4f}, {goal_xyz[2]:.4f})"
+            )
+            return
+
+        ik = policy_result.best_result
+        q_goal = policy_result.q_goal
         plan = plan_quintic(
             q_start=q_start,
             q_goal=q_goal,
@@ -562,7 +547,7 @@ class EEXyzTrajectoryNode(Node):
         predicted_xyz = self.ik_solver.forward_position(q_goal)
         msg = (
             f"new target accepted xyz=({goal_xyz[0]:.4f}, {goal_xyz[1]:.4f}, {goal_xyz[2]:.4f}) "
-            f"traj={plan.duration:.3f}s residual={ik.residual_norm:.6f} "
+            f"traj={plan.duration:.3f}s residual={policy_result.best_residual:.6f} "
             f"predicted=({predicted_xyz[0]:.4f}, {predicted_xyz[1]:.4f}, {predicted_xyz[2]:.4f})"
         )
         if ik.success:

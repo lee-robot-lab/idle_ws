@@ -207,7 +207,7 @@ public:
     q_limit_max_by_motor_json_ = declare_parameter<std::string>(
       "q_limit_max_by_motor_json", kDefaultQLimitMaxByMotorJson);
     if (default_tx_hz_ <= 0.0) {
-      default_tx_hz_ = 500.0;
+      default_tx_hz_ = 300.0;
     }
     if (tx_hz_default_ <= 0.0) {
       tx_hz_default_ = default_tx_hz_;
@@ -676,32 +676,8 @@ private:
     const float q_min,
     const float q_max) const
   {
-    const float period = 2.0F * static_cast<float>(M_PI);
-    const float span = q_max - q_min;
-    // For 2*pi windows (e.g. [-pi, pi]), wrap only when the reported state is far out of range.
-    // If it is just slightly outside (quantization/noise near boundary), clamp to keep sign continuity.
-    if (std::fabs(span - period) <= 1e-3F) {
-      if (current_q >= q_min && current_q <= q_max) {
-        return current_q;
-      }
-
-      constexpr float kNearBoundarySnapRad = 0.2F;
-      const float below = (current_q < q_min) ? (q_min - current_q) : 0.0F;
-      const float above = (current_q > q_max) ? (current_q - q_max) : 0.0F;
-      const float out_of_range = std::max(below, above);
-      if (out_of_range <= kNearBoundarySnapRad) {
-        return clamp(current_q, q_min, q_max);
-      }
-
-      float wrapped = q_min + std::fmod(current_q - q_min, period);
-      if (wrapped < q_min) {
-        wrapped += period;
-      }
-      if (wrapped > q_max) {
-        wrapped -= period;
-      }
-      return clamp(wrapped, q_min, q_max);
-    }
+    // State is treated as absolute in configured limits. Do not re-wrap here;
+    // just clamp to the allowed home window.
     return clamp(current_q, q_min, q_max);
   }
 
@@ -959,9 +935,7 @@ private:
     return (tx_policy_.tx_hz_default > 0.0) ? tx_policy_.tx_hz_default : default_tx_hz_;
   }
 
-  bool send_mit_command(
-    const msgs::msg::MotorCMD & cmd,
-    const bool allow_periodic_lift_for_2pi_limit = false)
+  bool send_mit_command(const msgs::msg::MotorCMD & cmd)
   {
     const uint8_t motor_id = cmd.motor_id;
     const MitRanges & r = ranges_for(motor_id);
@@ -980,32 +954,7 @@ private:
         static_cast<double>(limits.second));
     }
 
-    float q_des_for_encode = q_des_in_window;
-    const float period = 2.0F * static_cast<float>(M_PI);
-    const float span = limits.second - limits.first;
-    if (allow_periodic_lift_for_2pi_limit && std::fabs(span - period) <= 1e-3F) {
-      const auto rt_it = runtime_by_motor_.find(motor_id);
-      if (rt_it != runtime_by_motor_.end() && rt_it->second.has_state) {
-        const float q_des_lifted = nearest_periodic_target(
-          q_des_in_window,
-          rt_it->second.last_state.q,
-          period,
-          r.p_min,
-          r.p_max);
-        q_des_for_encode = clamp(q_des_lifted, r.p_min, r.p_max);
-        if (std::fabs(q_des_for_encode - q_des_in_window) > 1e-4F) {
-          RCLCPP_INFO_THROTTLE(
-            get_logger(),
-            *get_clock(),
-            2000,
-            "motor_id=%u periodic home lift applied: %.3f -> %.3f (state_q=%.3f)",
-            motor_id,
-            static_cast<double>(q_des_in_window),
-            static_cast<double>(q_des_for_encode),
-            static_cast<double>(rt_it->second.last_state.q));
-        }
-      }
-    }
+    const float q_des_for_encode = q_des_in_window;
 
     const uint16_t t_u16 = float_to_u16(cmd.tau_ff, r.t_min, r.t_max);
     const uint16_t q_u16 = float_to_u16(q_des_for_encode, r.p_min, r.p_max);
@@ -1159,14 +1108,33 @@ private:
       value_for_motor(home_policy_.kd_by_motor, motor_id, home_policy_.kd_default));
   }
 
-  float aligned_home_q_des(const uint8_t motor_id, const float current_q) const
+  float aligned_home_q_des(
+    const uint8_t motor_id,
+    const float current_q_raw,
+    const float current_q_wrapped) const
   {
     const auto limits = position_limits_for_motor(motor_id);
     const float q_base = home_q_des_for_motor(motor_id);
+    const float period = 2.0F * static_cast<float>(M_PI);
+    const float span = limits.second - limits.first;
+
+    // For motor 3 at +/-pi boundary, choose branch by RAW state sign.
+    // Example: raw=-3.178 -> target=-pi, raw=+3.178 -> target=+pi.
+    constexpr float kPiBoundaryTol = 0.05F;
+    if (
+      motor_id == 3 &&
+      std::fabs(span - period) <= 1e-3F &&
+      std::fabs(std::fabs(q_base) - static_cast<float>(M_PI)) <= kPiBoundaryTol)
+    {
+      const float q_pos_pi = clamp(static_cast<float>(M_PI), limits.first, limits.second);
+      const float q_neg_pi = clamp(-static_cast<float>(M_PI), limits.first, limits.second);
+      return (current_q_raw < 0.0F) ? q_neg_pi : q_pos_pi;
+    }
+
     return nearest_periodic_target(
       q_base,
-      current_q,
-      2.0F * static_cast<float>(M_PI),
+      current_q_wrapped,
+      period,
       limits.first,
       limits.second);
   }
@@ -1181,7 +1149,7 @@ private:
     const auto limits = position_limits_for_motor(motor_id);
     const float q_base = home_q_des_for_motor(motor_id);
     const float q_start = wrap_or_clamp_current_q_for_home(current_q, limits.first, limits.second);
-    const float q_goal = aligned_home_q_des(motor_id, q_start);
+    const float q_goal = aligned_home_q_des(motor_id, current_q, q_start);
     const float abs_dq = std::fabs(q_goal - q_start);
 
     cached.home_traj_start_q = q_start;
@@ -1354,8 +1322,7 @@ private:
           static_cast<double>(cached.home_traj_duration_sec));
       }
 
-      const bool allow_periodic_lift_for_2pi_limit = is_pre_home_stream || cmd_timed_out;
-      if (!send_mit_command(outgoing, allow_periodic_lift_for_2pi_limit)) {
+      if (!send_mit_command(outgoing)) {
         RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "failed to send TYPE01 command frame");
       }
       cached.has_sent = true;
