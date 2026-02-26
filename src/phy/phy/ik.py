@@ -38,13 +38,14 @@ class IKPolicyConfig:
     """Runtime knobs for higher-level IK acceptance policy."""
 
     # Allow non-converged IK if residual is under this bound; lower means more precision, more rejects.
-    max_ik_residual_accept_m: float = 0.02
+    max_ik_residual_accept_m: float = 0.005
     # Extra random starts to escape local minima; higher means more robustness, more compute cost.
     ik_random_restarts: int = 24
     # Random seed fallback span when joint bounds are not finite; higher means broader search, less focus.
     ik_seed_default_span: float = math.pi
-    # Reject goals requiring jumps larger than this from reference; lower means safer motion, less reachability.
-    max_joint_jump_rad: float = 1.2
+    # Reject goals requiring jumps larger than this from reference; <=0 disables the jump reject.
+    # Lower means safer motion, less reachability.
+    max_joint_jump_rad: float = 0.0
     # Add a simple geometry-based initial seed (yaw/elbow) to improve convergence probability.
     use_heuristic_seed: bool = True
 
@@ -284,7 +285,9 @@ class IKSolver:
         q_goal = aligned_q_by_idx[best_idx]
         best_jump = float(np.max(np.abs(q_goal - q_distance_ref)))
 
-        if best_jump > float(policy_cfg.max_joint_jump_rad):
+        jump_limit = float(policy_cfg.max_joint_jump_rad)
+        jump_limit_enabled = np.isfinite(jump_limit) and (jump_limit > 0.0)
+        if jump_limit_enabled and (best_jump > jump_limit):
             return IKPolicyResult(
                 accepted=False,
                 q_goal=None,

@@ -137,11 +137,12 @@ class EEXyzTrajectoryNode(Node):
         self.ee_log_hz = float(self.declare_parameter("ee_log_hz", 2.0).value)
         self.target_dedup_epsilon_m = float(self.declare_parameter("target_dedup_epsilon_m", 1.0e-4).value)
         self.max_ik_residual_accept_m = float(
-            self.declare_parameter("max_ik_residual_accept_m", 0.02).value
+            self.declare_parameter("max_ik_residual_accept_m", 0.005).value
         )
         self.ik_random_restarts = int(self.declare_parameter("ik_random_restarts", 24).value)
         self.ik_seed_default_span = float(self.declare_parameter("ik_seed_default_span", math.pi).value)
-        self.max_joint_jump_rad = float(self.declare_parameter("max_joint_jump_rad", 1.2).value)
+        # <=0 disables jump-based rejection to allow long detours when cable routing requires it.
+        self.max_joint_jump_rad = float(self.declare_parameter("max_joint_jump_rad", 0.0).value)
         self.reset_on_controlled_disconnect = bool(
             self.declare_parameter("reset_on_controlled_disconnect", True).value
         )
@@ -166,8 +167,8 @@ class EEXyzTrajectoryNode(Node):
 
         target_frame = str(self.declare_parameter("target_frame", "ee_link").value).strip()
         target_offset_json = str(self.declare_parameter("target_offset_xyz_json", "[0.0,0.0,0.0]").value)
-        ik_max_iterations = int(self.declare_parameter("ik_max_iterations", 100).value)
-        ik_tolerance = float(self.declare_parameter("ik_tolerance", 1.0e-4).value)
+        ik_max_iterations = int(self.declare_parameter("ik_max_iterations", 220).value)
+        ik_tolerance = float(self.declare_parameter("ik_tolerance", 1.0e-5).value)
         ik_damping = float(self.declare_parameter("ik_damping", 1.0e-6).value)
         ik_step_scale = float(self.declare_parameter("ik_step_scale", 1.0).value)
 
@@ -285,7 +286,8 @@ class EEXyzTrajectoryNode(Node):
             f"target_dedup_eps={self.target_dedup_epsilon_m:.6f}m "
             f"ik_accept_residual<={self.max_ik_residual_accept_m:.3f}m "
             f"ik_random_restarts={self.ik_random_restarts} "
-            f"max_joint_jump_rad={self.max_joint_jump_rad:.3f} "
+            f"max_joint_jump_rad="
+            f"{'disabled' if self.max_joint_jump_rad <= 0.0 else f'{self.max_joint_jump_rad:.3f}'} "
             f"target_topic={self.target_topic} point_topic={self.target_point_topic} "
             f"target_frame={target_frame} joints={list(self.controlled_joint_names)} "
             f"motors={list(self.motor_ids)} urdf={urdf_path}"

@@ -5,9 +5,9 @@ motors:
   '2':
     gravity_bias: 0.0
     gravity_scale: 1.0
-    kd: 0.5
-    kp: 7.0
+    kd: 0.7
+    kp: 9.0
   '3':
-    kd: 0.12
-    kp: 3.0
+    kd: 0.7
+    kp: 6.0
 version: 1
