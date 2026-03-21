@@ -66,8 +66,6 @@ def _empty_control() -> dict[str, Any]:
         "version": 1,
         "scan": {"min_id": DEFAULT_SCAN_MIN_ID, "max_id": DEFAULT_SCAN_MAX_ID},
         "defaults": {
-            "tx_hz": 500.0,
-            "rx_hz": 500.0,
             "kp": 0.0,
             "kd": 0.0,
             "q_des": 0.0,

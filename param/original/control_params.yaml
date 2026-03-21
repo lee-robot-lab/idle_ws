@@ -4,8 +4,6 @@ scan:
   min_id: 1
   max_id: 10
 defaults:
-  tx_hz: 300.0
-  rx_hz: 300.0
   kp: 0.0
   kd: 0.0
   q_des: 0.0

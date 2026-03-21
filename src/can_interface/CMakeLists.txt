@@ -8,12 +8,11 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(msgs REQUIRED)
-find_package(rcl_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 
 add_executable(can_bridge_node src/can_bridge_node.cpp)
 target_compile_features(can_bridge_node PUBLIC cxx_std_17)
-ament_target_dependencies(can_bridge_node rclcpp rcl_interfaces msgs)
+ament_target_dependencies(can_bridge_node rclcpp msgs)
 
 install(TARGETS
   can_bridge_node

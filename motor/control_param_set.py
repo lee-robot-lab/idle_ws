@@ -1,4 +1,4 @@
-"""모터별 제어 튜닝값을 갱신하고 dirty 상태로 표시."""
+"""모터별 제어 튜닝값을 갱신한다."""
 
 import argparse
 
@@ -11,11 +11,9 @@ def _dedupe(values: list[int]) -> list[int]:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Update control tuning values (marks control params as dirty)."
+        description="Update control tuning values."
     )
     ap.add_argument("--can_id", type=lambda x: int(x, 0), nargs="+", required=True)
-    ap.add_argument("--tx_hz", type=float, default=None)
-    ap.add_argument("--rx_hz", type=float, default=None)
     ap.add_argument("--kp", type=float, default=None)
     ap.add_argument("--kd", type=float, default=None)
     ap.add_argument("--q_des", type=float, default=None)
@@ -27,8 +25,6 @@ def main():
 
     updates = {}
     for key in (
-        "tx_hz",
-        "rx_hz",
         "kp",
         "kd",
         "q_des",
@@ -45,10 +41,7 @@ def main():
 
     can_ids = _dedupe(args.can_id)
     path = set_control_tuning(can_ids, updates)
-    print(
-        f"updated control tuning: can_id={can_ids} updates={updates} "
-        f"tuned_file={path} dirty=true"
-    )
+    print(f"updated control tuning: can_id={can_ids} updates={updates} tuned_file={path}")
 
 
 if __name__ == "__main__":

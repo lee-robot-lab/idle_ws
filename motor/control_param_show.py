@@ -1,9 +1,9 @@
-"""현재 유효 제어 튜닝값과 dirty 상태를 출력."""
+"""현재 유효 제어 튜닝값을 출력."""
 
 import argparse
 import json
 
-from lib.control_tuning import control_params_for_motor, control_params_dirty
+from lib.control_tuning import control_params_for_motor
 from lib.param_store import control_tuned_path, load_control_effective
 
 
@@ -20,7 +20,7 @@ def main():
         doc = load_control_effective()
         print(json.dumps(doc, indent=2, sort_keys=True))
 
-    print(f"dirty={control_params_dirty()} tuned_file={control_tuned_path()}")
+    print(f"tuned_file={control_tuned_path()}")
 
 
 if __name__ == "__main__":

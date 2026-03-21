@@ -13,4 +13,4 @@
 - Driver params are edited manually and applied only via `motor/apply_driver_params.py`.
 - Control tuning follows `modify -> save -> control`.
 - `tuned/control_params.yaml` is the only save target for control tuning.
-- `save` 후 제어 시작 전 `can_bridge_node`로 runtime Tx policy (`tx_hz_default`, `tx_hz_by_motor_json`)를 push한다.
+- `can_bridge_node` 설정 변경은 코드 상수 수정 후 재빌드/재시작으로 반영한다.

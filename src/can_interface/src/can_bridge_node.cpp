@@ -11,16 +11,13 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cctype>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
-#include <regex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -36,30 +33,69 @@
 #include "msgs/msg/motor_error_array.hpp"
 #include "msgs/msg/motor_state.hpp"
 #include "msgs/msg/motor_state_array.hpp"
-#include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 namespace
 {
+// MIT 확장 ID의 통신 타입 정의
 constexpr uint8_t TYPE00_GET_DEVICE_ID = 0x00;
 constexpr uint8_t TYPE01_OPERATION_CONTROL = 0x01;
 constexpr uint8_t TYPE02_FEEDBACK = 0x02;
 constexpr uint8_t TYPE03_ENABLE = 0x03;
 constexpr uint8_t TYPE04_STOP = 0x04;
 constexpr uint8_t TYPE_MASK = 0x1F;
+// Home 복귀 궤적 관련 기본값
 constexpr float kHomeReturnDurationSec = 5.0F;
 constexpr float kHomeEpsilon = 1e-4F;
-constexpr char kDefaultHomeQDesByMotorJson[] =
-  "{\"1\":0.0,\"2\":0.0,\"3\":3.141592653589793,\"4\":0.0}";
-constexpr char kDefaultHomeKpByMotorJson[] =
-  "{\"1\":5.0,\"2\":37.0,\"3\":30.0,\"4\":30.0}";
-constexpr char kDefaultHomeKdByMotorJson[] =
-  "{\"1\":0.5,\"2\":6.0,\"3\":5.0,\"4\":5.0}";
-constexpr char kDefaultQLimitMinByMotorJson[] =
-  "{\"1\":-3.141592653589793,\"2\":-1.78,\"3\":-3.141592653589793,\"4\":-3.141592653589793}";
-constexpr char kDefaultQLimitMaxByMotorJson[] =
-  "{\"1\":3.141592653589793,\"2\":1.78,\"3\":3.141592653589793,\"4\":3.141592653589793}";
 
+// 정적 브리지 설정(수정 후 재빌드/재시작 필요)
+constexpr char kChannel[] = "can0";
+constexpr uint8_t kHostId = 0xFD;
+constexpr uint8_t kRs03Id = 2;
+constexpr int kScanMinId = 1;
+constexpr int kScanMaxId = 10;
+constexpr int kScanWaitMs = 200;
+constexpr int kRxMaxFramesPerTick = 100;
+constexpr int kCmdTimeoutMs = 100;
+constexpr double kTxHzDefault = 500.0;
+const std::unordered_map<int, double> kTxHzByMotor {};
+constexpr double kHomeQDes = 0.0;
+constexpr double kHomeQdDes = 0.0;
+constexpr double kHomeKp = 30.0;
+constexpr double kHomeKd = 5.0;
+constexpr double kHomeTauFf = 0.0;
+const std::unordered_map<int, double> kHomeQDesByMotor {
+  {1, 0.0},
+  {2, 0.0},
+  {3, static_cast<double>(M_PI)},
+  {4, 0.0},
+};
+const std::unordered_map<int, double> kHomeKpByMotor {
+  {1, 5.0},
+  {2, 37.0},
+  {3, 30.0},
+  {4, 30.0},
+};
+const std::unordered_map<int, double> kHomeKdByMotor {
+  {1, 0.5},
+  {2, 6.0},
+  {3, 5.0},
+  {4, 5.0},
+};
+const std::unordered_map<int, double> kQLimitMinByMotor {
+  {1, -static_cast<double>(M_PI)},
+  {2, -1.78},
+  {3, -static_cast<double>(M_PI)},
+  {4, -static_cast<double>(M_PI)},
+};
+const std::unordered_map<int, double> kQLimitMaxByMotor {
+  {1, static_cast<double>(M_PI)},
+  {2, 1.78},
+  {3, static_cast<double>(M_PI)},
+  {4, static_cast<double>(M_PI)},
+};
+
+// MIT 인코딩/디코딩에 쓰는 모터별 물리 범위
 struct MitRanges
 {
   float p_min;
@@ -90,6 +126,7 @@ const MitRanges MIT_RS03{
   0.0F, 100.0F,
 };
 
+// (type, data2, data1)을 MIT 확장 arbitration ID로 패킹한다.
 inline uint32_t pack_ext_id(uint8_t comm_type, uint16_t data2, uint8_t data1)
 {
   return (static_cast<uint32_t>(comm_type & TYPE_MASK) << 24) |
@@ -97,26 +134,31 @@ inline uint32_t pack_ext_id(uint8_t comm_type, uint16_t data2, uint8_t data1)
          static_cast<uint32_t>(data1);
 }
 
+// 확장 ID에서 통신 타입을 추출한다.
 inline uint8_t comm_type_from_arb(uint32_t arb_id)
 {
   return static_cast<uint8_t>((arb_id >> 24) & TYPE_MASK);
 }
 
+// 확장 ID에서 data2 필드를 추출한다.
 inline uint16_t data2_from_arb(uint32_t arb_id)
 {
   return static_cast<uint16_t>((arb_id >> 8) & 0xFFFFU);
 }
 
+// 확장 ID에서 data1 필드를 추출한다.
 inline uint8_t data1_from_arb(uint32_t arb_id)
 {
   return static_cast<uint8_t>(arb_id & 0xFFU);
 }
 
+// 단순 범위 클램프 유틸리티
 inline float clamp(float x, float lo, float hi)
 {
   return (x < lo) ? lo : ((x > hi) ? hi : x);
 }
 
+// 주기성(2pi) 후보 중 현재 값에 가장 가까운 목표를 선택한다.
 inline float nearest_periodic_target(
   const float target_base,
   const float current,
@@ -137,6 +179,7 @@ inline float nearest_periodic_target(
   return clamp(target, lo, hi);
 }
 
+// 실수값을 [xmin, xmax] 범위의 u16로 인코딩한다.
 inline uint16_t float_to_u16(float x, float xmin, float xmax)
 {
   const float clamped = clamp(x, xmin, xmax);
@@ -145,17 +188,20 @@ inline uint16_t float_to_u16(float x, float xmin, float xmax)
   return static_cast<uint16_t>(rounded);
 }
 
+// u16 값을 [xmin, xmax] 실수 범위로 디코딩한다.
 inline float u16_to_float(uint16_t u, float xmin, float xmax)
 {
   const float ratio = static_cast<float>(u) / 65535.0F;
   return xmin + ratio * (xmax - xmin);
 }
 
+// big-endian 2바이트를 u16로 조합한다.
 inline uint16_t be_u16(const uint8_t hi, const uint8_t lo)
 {
   return static_cast<uint16_t>((static_cast<uint16_t>(hi) << 8) | static_cast<uint16_t>(lo));
 }
 
+// ROS Time을 builtin_interfaces::msg::Time으로 변환한다.
 inline builtin_interfaces::msg::Time to_builtin_time(const rclcpp::Time & t)
 {
   constexpr int64_t kNsecPerSec = 1000000000LL;
@@ -177,129 +223,31 @@ inline builtin_interfaces::msg::Time to_builtin_time(const rclcpp::Time & t)
 class CanBridgeNode : public rclcpp::Node
 {
 public:
+  // 노드 초기화: 정적 정책 적용, CAN 오픈, 토픽/타이머 설정
   CanBridgeNode()
   : Node("can_bridge_node")
   {
-    channel_ = declare_parameter<std::string>("channel", "can0");
-    host_id_ = static_cast<uint8_t>(declare_parameter<int>("host_id", 0xFD) & 0xFF);
-    rs03_id_ = static_cast<uint8_t>(declare_parameter<int>("rs03_id", 2) & 0xFF);
-    scan_min_id_ = declare_parameter<int>("scan_min_id", 1);
-    scan_max_id_ = declare_parameter<int>("scan_max_id", 10);
-    scan_wait_ms_ = declare_parameter<int>("scan_wait_ms", 200);
-    rx_max_frames_per_tick_ = declare_parameter<int>("rx_max_frames_per_tick", 100);
-    default_tx_hz_ = declare_parameter<double>("default_tx_hz", 500.0);
-    tx_hz_default_ = declare_parameter<double>("tx_hz_default", default_tx_hz_);
-    tx_hz_by_motor_json_ = declare_parameter<std::string>("tx_hz_by_motor_json", "{}");
-    cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 100);
-    home_q_des_ = declare_parameter<double>("home_q_des", 0.0);
-    home_q_des_by_motor_json_ = declare_parameter<std::string>(
-      "home_q_des_by_motor_json", kDefaultHomeQDesByMotorJson);
-    home_qd_des_ = declare_parameter<double>("home_qd_des", 0.0);
-    home_kp_ = declare_parameter<double>("home_kp", 30.0);
-    home_kp_by_motor_json_ = declare_parameter<std::string>(
-      "home_kp_by_motor_json", kDefaultHomeKpByMotorJson);
-    home_kd_ = declare_parameter<double>("home_kd", 5.0);
-    home_kd_by_motor_json_ = declare_parameter<std::string>(
-      "home_kd_by_motor_json", kDefaultHomeKdByMotorJson);
-    home_tau_ff_ = declare_parameter<double>("home_tau_ff", 0.0);
-    q_limit_min_by_motor_json_ = declare_parameter<std::string>(
-      "q_limit_min_by_motor_json", kDefaultQLimitMinByMotorJson);
-    q_limit_max_by_motor_json_ = declare_parameter<std::string>(
-      "q_limit_max_by_motor_json", kDefaultQLimitMaxByMotorJson);
-    if (default_tx_hz_ <= 0.0) {
-      default_tx_hz_ = 300.0;
-    }
-    if (tx_hz_default_ <= 0.0) {
-      tx_hz_default_ = default_tx_hz_;
-    }
-    if (cmd_timeout_ms_ < 0) {
-      cmd_timeout_ms_ = 0;
-    }
-    if (home_kp_ < 0.0) {
-      home_kp_ = 0.0;
-    }
-    if (home_kd_ < 0.0) {
-      home_kd_ = 0.0;
-    }
+    channel_ = kChannel;
+    host_id_ = kHostId;
+    rs03_id_ = kRs03Id;
+    scan_min_id_ = kScanMinId;
+    scan_max_id_ = kScanMaxId;
+    scan_wait_ms_ = kScanWaitMs;
+    rx_max_frames_per_tick_ = kRxMaxFramesPerTick;
+    cmd_timeout_ms_ = std::max(0, kCmdTimeoutMs);
 
-    std::unordered_map<int, double> tx_by_motor;
-    std::string parse_error;
-    if (!parse_tx_hz_by_motor_json(tx_hz_by_motor_json_, tx_by_motor, parse_error)) {
-      RCLCPP_WARN(
-        get_logger(),
-        "invalid initial tx_hz_by_motor_json (%s): falling back to {}",
-        parse_error.c_str());
-      tx_hz_by_motor_json_ = "{}";
-      tx_by_motor.clear();
-    }
-    apply_tx_policy(tx_hz_default_, tx_by_motor, false);
-
-    std::unordered_map<int, double> home_q_des_by_motor;
-    std::unordered_map<int, double> home_kp_by_motor;
-    std::unordered_map<int, double> home_kd_by_motor;
-    std::unordered_map<int, double> q_limit_min_by_motor;
-    std::unordered_map<int, double> q_limit_max_by_motor;
-    if (!parse_numeric_by_motor_json(home_q_des_by_motor_json_, home_q_des_by_motor, parse_error)) {
-      RCLCPP_WARN(
-        get_logger(),
-        "invalid initial home_q_des_by_motor_json (%s): falling back to defaults",
-        parse_error.c_str());
-      home_q_des_by_motor_json_ = kDefaultHomeQDesByMotorJson;
-      home_q_des_by_motor.clear();
-      std::string ignored_error;
-      (void)parse_numeric_by_motor_json(home_q_des_by_motor_json_, home_q_des_by_motor, ignored_error);
-    }
-    if (!parse_numeric_by_motor_json(home_kp_by_motor_json_, home_kp_by_motor, parse_error)) {
-      RCLCPP_WARN(
-        get_logger(),
-        "invalid initial home_kp_by_motor_json (%s): falling back to defaults",
-        parse_error.c_str());
-      home_kp_by_motor_json_ = kDefaultHomeKpByMotorJson;
-      home_kp_by_motor.clear();
-      std::string ignored_error;
-      (void)parse_numeric_by_motor_json(home_kp_by_motor_json_, home_kp_by_motor, ignored_error);
-    }
-    if (!parse_numeric_by_motor_json(home_kd_by_motor_json_, home_kd_by_motor, parse_error)) {
-      RCLCPP_WARN(
-        get_logger(),
-        "invalid initial home_kd_by_motor_json (%s): falling back to defaults",
-        parse_error.c_str());
-      home_kd_by_motor_json_ = kDefaultHomeKdByMotorJson;
-      home_kd_by_motor.clear();
-      std::string ignored_error;
-      (void)parse_numeric_by_motor_json(home_kd_by_motor_json_, home_kd_by_motor, ignored_error);
-    }
-    if (!parse_numeric_by_motor_json(q_limit_min_by_motor_json_, q_limit_min_by_motor, parse_error)) {
-      RCLCPP_WARN(
-        get_logger(),
-        "invalid initial q_limit_min_by_motor_json (%s): falling back to defaults",
-        parse_error.c_str());
-      q_limit_min_by_motor_json_ = kDefaultQLimitMinByMotorJson;
-      q_limit_min_by_motor.clear();
-      std::string ignored_error;
-      (void)parse_numeric_by_motor_json(q_limit_min_by_motor_json_, q_limit_min_by_motor, ignored_error);
-    }
-    if (!parse_numeric_by_motor_json(q_limit_max_by_motor_json_, q_limit_max_by_motor, parse_error)) {
-      RCLCPP_WARN(
-        get_logger(),
-        "invalid initial q_limit_max_by_motor_json (%s): falling back to defaults",
-        parse_error.c_str());
-      q_limit_max_by_motor_json_ = kDefaultQLimitMaxByMotorJson;
-      q_limit_max_by_motor.clear();
-      std::string ignored_error;
-      (void)parse_numeric_by_motor_json(q_limit_max_by_motor_json_, q_limit_max_by_motor, ignored_error);
-    }
+    apply_tx_policy(kTxHzDefault, kTxHzByMotor, false);
     apply_home_policy(
-      home_q_des_,
-      home_qd_des_,
-      home_kp_,
-      home_kd_,
-      home_tau_ff_,
-      home_q_des_by_motor,
-      home_kp_by_motor,
-      home_kd_by_motor,
-      q_limit_min_by_motor,
-      q_limit_max_by_motor,
+      kHomeQDes,
+      kHomeQdDes,
+      kHomeKp,
+      kHomeKd,
+      kHomeTauFf,
+      kHomeQDesByMotor,
+      kHomeKpByMotor,
+      kHomeKdByMotor,
+      kQLimitMinByMotor,
+      kQLimitMaxByMotor,
       false);
 
     if (!open_socketcan(channel_)) {
@@ -310,21 +258,24 @@ public:
     const auto qos_state = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort();
     const auto qos_reliable = rclcpp::QoS(rclcpp::KeepLast(20)).reliable();
 
-    state_array_pub_ = create_publisher<msgs::msg::MotorStateArray>("/motor_state_array", qos_state);
-    error_array_pub_ = create_publisher<msgs::msg::MotorErrorArray>("/motor_error_array", qos_reliable);
+    state_array_pub_ =
+      create_publisher<msgs::msg::MotorStateArray>("/motor_state_array", qos_state);
+    error_array_pub_ = create_publisher<msgs::msg::MotorErrorArray>(
+      "/motor_error_array",
+      qos_reliable);
     cmd_array_sub_ = create_subscription<msgs::msg::MotorCMDArray>(
       "/motor_cmd_array",
       qos_cmd,
       std::bind(&CanBridgeNode::on_cmd_array, this, std::placeholders::_1));
-
-    param_cb_handle_ = add_on_set_parameters_callback(
-      std::bind(&CanBridgeNode::on_parameters_set, this, std::placeholders::_1));
 
     scan_motor_ids();
     send_enable_once_from_scan();
     RCLCPP_INFO(
       get_logger(),
       "driver parameter write(Type18/Type22) is disabled in can_bridge_node; use maintenance tools only");
+    RCLCPP_INFO(
+      get_logger(),
+      "runtime parameter updates are disabled; tune static constants in can_bridge_node.cpp and restart");
     RCLCPP_INFO(
       get_logger(),
       "tx policy initialized: tx_hz_default=%.3f per_motor=%zu",
@@ -350,6 +301,7 @@ public:
       std::bind(&CanBridgeNode::poll_can_frames, this));
   }
 
+  // 종료 시 알려진 모터에 STOP을 1회 전송하고 소켓을 닫는다.
   ~CanBridgeNode() override
   {
     send_stop_once_on_shutdown();
@@ -360,12 +312,13 @@ public:
   }
 
 private:
-
+  // 모터 ID에 따라 RS02/RS03 MIT 범위를 선택한다.
   const MitRanges & ranges_for(const uint8_t motor_id) const
   {
     return (motor_id == rs03_id_) ? MIT_RS03 : MIT_RS02;
   }
 
+  // SocketCAN 채널을 열고 non-blocking으로 설정한다.
   bool open_socketcan(const std::string & channel)
   {
     sock_fd_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
@@ -377,7 +330,9 @@ private:
     struct ifreq ifr {};
     std::strncpy(ifr.ifr_name, channel.c_str(), IFNAMSIZ - 1);
     if (ioctl(sock_fd_, SIOCGIFINDEX, &ifr) < 0) {
-      RCLCPP_ERROR(get_logger(), "ioctl(SIOCGIFINDEX) failed for %s: %s", channel.c_str(), std::strerror(errno));
+      RCLCPP_ERROR(
+        get_logger(), "ioctl(SIOCGIFINDEX) failed for %s: %s",
+        channel.c_str(), std::strerror(errno));
       return false;
     }
 
@@ -397,7 +352,10 @@ private:
     return true;
   }
 
-  bool send_ext_frame(const uint32_t arb_id, const std::array<uint8_t, 8> & data, const uint8_t dlc = 8)
+  // MIT 확장 프레임 1개를 전송한다.
+  bool send_ext_frame(
+    const uint32_t arb_id, const std::array<uint8_t, 8> & data,
+    const uint8_t dlc = 8)
   {
     if (sock_fd_ < 0) {
       return false;
@@ -410,6 +368,7 @@ private:
     return n == static_cast<ssize_t>(sizeof(frame));
   }
 
+  // CAN 프레임 1개를 non-blocking으로 읽어 온다.
   std::optional<struct can_frame> recv_frame()
   {
     struct can_frame frame {};
@@ -428,6 +387,7 @@ private:
     return frame;
   }
 
+  // 모터별 최신 명령/전송 시각/홈 복귀 상태 캐시
   struct CachedCommand
   {
     msgs::msg::MotorCMD cmd {};
@@ -444,12 +404,14 @@ private:
     std::chrono::steady_clock::time_point last_received_cmd {};
   };
 
+  // 모터별 송신 주기 정책
   struct TxPolicy
   {
     double tx_hz_default {500.0};
     std::unordered_map<int, double> tx_hz_by_motor {};
   };
 
+  // 홈 복귀와 제한값 관련 정책
   struct HomePolicy
   {
     double q_des_default {0.0};
@@ -464,97 +426,17 @@ private:
     std::unordered_map<int, double> q_limit_max_by_motor {};
   };
 
-  bool parse_numeric_by_motor_json(
-    const std::string & text,
-    std::unordered_map<int, double> & out,
-    std::string & error) const
+  // 모터별 ready/state 런타임 상태
+  struct MotorRuntime
   {
-    error.clear();
-    out.clear();
+    bool enable_sent {false};
+    bool ready_for_control {false};  // Type03 was sent and Type02 feedback observed afterwards.
+    bool has_state {false};
+    msgs::msg::MotorState last_state {};
+    std::chrono::steady_clock::time_point last_enable_sent {};
+  };
 
-    const auto first = std::find_if_not(
-      text.begin(), text.end(),
-      [](char c) {return std::isspace(static_cast<unsigned char>(c)) != 0;});
-    if (first == text.end()) {
-      return true;
-    }
-    const auto last = std::find_if_not(
-      text.rbegin(), text.rend(),
-      [](char c) {return std::isspace(static_cast<unsigned char>(c)) != 0;}).base();
-    const std::string trimmed(first, last);
-    if (trimmed == "{}") {
-      return true;
-    }
-    if (trimmed.size() < 2 || trimmed.front() != '{' || trimmed.back() != '}') {
-      error = "expected object string like {\"1\":0.0,\"2\":1.5}";
-      return false;
-    }
-
-    const std::string inner = trimmed.substr(1, trimmed.size() - 2);
-    static const std::regex entry_re(
-      "\"([0-9]+)\"\\s*:\\s*([-+]?(?:[0-9]*\\.?[0-9]+)(?:[eE][-+]?[0-9]+)?)");
-
-    std::string leftover;
-    std::size_t cursor = 0;
-    auto it = std::sregex_iterator(inner.begin(), inner.end(), entry_re);
-    const auto end = std::sregex_iterator();
-    for (; it != end; ++it) {
-      const auto & match = *it;
-      const auto start = static_cast<std::size_t>(match.position());
-      const auto len = static_cast<std::size_t>(match.length());
-      if (start > cursor) {
-        leftover.append(inner, cursor, start - cursor);
-      }
-      cursor = start + len;
-
-      try {
-        const int motor_id = std::stoi(match[1].str());
-        const double value = std::stod(match[2].str());
-        if (motor_id < 0) {
-          error = "motor_id must be >= 0";
-          return false;
-        }
-        out[motor_id] = value;
-      } catch (...) {
-        error = "failed to parse numeric-by-motor json";
-        return false;
-      }
-    }
-    if (cursor < inner.size()) {
-      leftover.append(inner, cursor, inner.size() - cursor);
-    }
-
-    leftover.erase(
-      std::remove_if(
-        leftover.begin(), leftover.end(),
-        [](char c) {
-          return std::isspace(static_cast<unsigned char>(c)) != 0 || c == ',';
-        }),
-      leftover.end());
-    if (!leftover.empty()) {
-      error = "invalid object content";
-      return false;
-    }
-    return true;
-  }
-
-  bool parse_tx_hz_by_motor_json(
-    const std::string & text,
-    std::unordered_map<int, double> & out,
-    std::string & error) const
-  {
-    if (!parse_numeric_by_motor_json(text, out, error)) {
-      return false;
-    }
-    for (const auto & kv : out) {
-      if (kv.second <= 0.0) {
-        error = "motor_id must be >= 0 and hz must be > 0";
-        return false;
-      }
-    }
-    return true;
-  }
-
+  // tx 정책을 교체 적용한다.
   void apply_tx_policy(
     const double tx_hz_default,
     const std::unordered_map<int, double> & tx_hz_by_motor,
@@ -571,6 +453,7 @@ private:
     }
   }
 
+  // 홈 정책과 모터별 제한값을 교체 적용한다.
   void apply_home_policy(
     const double q_des_default,
     const double qd_des_default,
@@ -599,7 +482,7 @@ private:
       if (kv.second < 0.0) {
         RCLCPP_WARN(
           get_logger(),
-          "home_kp_by_motor_json[%d]=%.3f is negative; clamped to 0.0",
+          "home_kp_by_motor[%d]=%.3f is negative; clamped to 0.0",
           kv.first,
           kv.second);
         kv.second = 0.0;
@@ -609,7 +492,7 @@ private:
       if (kv.second < 0.0) {
         RCLCPP_WARN(
           get_logger(),
-          "home_kd_by_motor_json[%d]=%.3f is negative; clamped to 0.0",
+          "home_kd_by_motor[%d]=%.3f is negative; clamped to 0.0",
           kv.first,
           kv.second);
         kv.second = 0.0;
@@ -634,6 +517,7 @@ private:
     }
   }
 
+  // 모터별 override가 있으면 사용하고 없으면 기본값을 사용한다.
   double value_for_motor(
     const std::unordered_map<int, double> & by_motor,
     const uint8_t motor_id,
@@ -646,6 +530,7 @@ private:
     return it->second;
   }
 
+  // 모터별 위치 제한(min/max)을 계산한다.
   std::pair<float, float> position_limits_for_motor(const uint8_t motor_id) const
   {
     const MitRanges & r = ranges_for(motor_id);
@@ -671,6 +556,7 @@ private:
     return {q_min, q_max};
   }
 
+  // 홈 복귀 시작점으로 사용할 현재 위치를 제한 범위 안으로 맞춘다.
   float wrap_or_clamp_current_q_for_home(
     const float current_q,
     const float q_min,
@@ -681,260 +567,17 @@ private:
     return clamp(current_q, q_min, q_max);
   }
 
-  rcl_interfaces::msg::SetParametersResult on_parameters_set(
-    const std::vector<rclcpp::Parameter> & params)
-  {
-    rcl_interfaces::msg::SetParametersResult result {};
-    result.successful = true;
-
-    double next_tx_hz_default = tx_policy_.tx_hz_default;
-    std::string next_tx_hz_by_motor_json = tx_hz_by_motor_json_;
-    bool tx_default_changed = false;
-    bool tx_json_changed = false;
-    double next_home_q_des = home_q_des_;
-    double next_home_qd_des = home_qd_des_;
-    double next_home_kp = home_kp_;
-    double next_home_kd = home_kd_;
-    double next_home_tau_ff = home_tau_ff_;
-    std::string next_home_q_des_by_motor_json = home_q_des_by_motor_json_;
-    std::string next_home_kp_by_motor_json = home_kp_by_motor_json_;
-    std::string next_home_kd_by_motor_json = home_kd_by_motor_json_;
-    std::string next_q_limit_min_by_motor_json = q_limit_min_by_motor_json_;
-    std::string next_q_limit_max_by_motor_json = q_limit_max_by_motor_json_;
-    bool home_scalar_changed = false;
-    bool home_map_changed = false;
-
-    auto param_to_double = [](const rclcpp::Parameter & param, double & out) -> bool {
-      if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
-        out = param.as_double();
-        return true;
-      }
-      if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
-        out = static_cast<double>(param.as_int());
-        return true;
-      }
-      return false;
-    };
-
-    for (const auto & param : params) {
-      const std::string & name = param.get_name();
-      if (name == "tx_hz_default" || name == "default_tx_hz") {
-        double hz = 0.0;
-        if (!param_to_double(param, hz)) {
-          result.successful = false;
-          result.reason = name + " must be numeric";
-          return result;
-        }
-        if (hz <= 0.0) {
-          result.successful = false;
-          result.reason = name + " must be > 0";
-          return result;
-        }
-        next_tx_hz_default = hz;
-        tx_default_changed = true;
-        continue;
-      }
-
-      if (name == "tx_hz_by_motor_json") {
-        if (param.get_type() != rclcpp::ParameterType::PARAMETER_STRING) {
-          result.successful = false;
-          result.reason = "tx_hz_by_motor_json must be string";
-          return result;
-        }
-        next_tx_hz_by_motor_json = param.as_string();
-        tx_json_changed = true;
-        continue;
-      }
-
-      if (
-        name == "home_q_des" || name == "home_qd_des" || name == "home_kp" ||
-        name == "home_kd" || name == "home_tau_ff")
-      {
-        double value = 0.0;
-        if (!param_to_double(param, value)) {
-          result.successful = false;
-          result.reason = name + " must be numeric";
-          return result;
-        }
-        if ((name == "home_kp" || name == "home_kd") && value < 0.0) {
-          result.successful = false;
-          result.reason = name + " must be >= 0";
-          return result;
-        }
-        if (name == "home_q_des") {
-          next_home_q_des = value;
-        } else if (name == "home_qd_des") {
-          next_home_qd_des = value;
-        } else if (name == "home_kp") {
-          next_home_kp = value;
-        } else if (name == "home_kd") {
-          next_home_kd = value;
-        } else {
-          next_home_tau_ff = value;
-        }
-        home_scalar_changed = true;
-        continue;
-      }
-
-      if (
-        name == "home_q_des_by_motor_json" || name == "home_kp_by_motor_json" ||
-        name == "home_kd_by_motor_json" || name == "q_limit_min_by_motor_json" ||
-        name == "q_limit_max_by_motor_json")
-      {
-        if (param.get_type() != rclcpp::ParameterType::PARAMETER_STRING) {
-          result.successful = false;
-          result.reason = name + " must be string";
-          return result;
-        }
-        const std::string value = param.as_string();
-        if (name == "home_q_des_by_motor_json") {
-          next_home_q_des_by_motor_json = value;
-        } else if (name == "home_kp_by_motor_json") {
-          next_home_kp_by_motor_json = value;
-        } else if (name == "home_kd_by_motor_json") {
-          next_home_kd_by_motor_json = value;
-        } else if (name == "q_limit_min_by_motor_json") {
-          next_q_limit_min_by_motor_json = value;
-        } else {
-          next_q_limit_max_by_motor_json = value;
-        }
-        home_map_changed = true;
-        continue;
-      }
-    }
-
-    const bool tx_changed = tx_default_changed || tx_json_changed;
-    const bool home_changed = home_scalar_changed || home_map_changed;
-    if (!tx_changed && !home_changed) {
-      return result;
-    }
-
-    std::unordered_map<int, double> parsed_by_motor = tx_policy_.tx_hz_by_motor;
-    if (tx_json_changed) {
-      std::string parse_error;
-      if (!parse_tx_hz_by_motor_json(next_tx_hz_by_motor_json, parsed_by_motor, parse_error)) {
-        result.successful = false;
-        result.reason = "tx_hz_by_motor_json parse failed: " + parse_error;
-        return result;
-      }
-    }
-
-    std::unordered_map<int, double> parsed_home_q_des_by_motor = home_policy_.q_des_by_motor;
-    std::unordered_map<int, double> parsed_home_kp_by_motor = home_policy_.kp_by_motor;
-    std::unordered_map<int, double> parsed_home_kd_by_motor = home_policy_.kd_by_motor;
-    std::unordered_map<int, double> parsed_q_limit_min_by_motor = home_policy_.q_limit_min_by_motor;
-    std::unordered_map<int, double> parsed_q_limit_max_by_motor = home_policy_.q_limit_max_by_motor;
-    if (home_map_changed) {
-      std::string parse_error;
-      if (!parse_numeric_by_motor_json(
-          next_home_q_des_by_motor_json, parsed_home_q_des_by_motor, parse_error))
-      {
-        result.successful = false;
-        result.reason = "home_q_des_by_motor_json parse failed: " + parse_error;
-        return result;
-      }
-      if (!parse_numeric_by_motor_json(
-          next_home_kp_by_motor_json, parsed_home_kp_by_motor, parse_error))
-      {
-        result.successful = false;
-        result.reason = "home_kp_by_motor_json parse failed: " + parse_error;
-        return result;
-      }
-      if (!parse_numeric_by_motor_json(
-          next_home_kd_by_motor_json, parsed_home_kd_by_motor, parse_error))
-      {
-        result.successful = false;
-        result.reason = "home_kd_by_motor_json parse failed: " + parse_error;
-        return result;
-      }
-      if (!parse_numeric_by_motor_json(
-          next_q_limit_min_by_motor_json, parsed_q_limit_min_by_motor, parse_error))
-      {
-        result.successful = false;
-        result.reason = "q_limit_min_by_motor_json parse failed: " + parse_error;
-        return result;
-      }
-      if (!parse_numeric_by_motor_json(
-          next_q_limit_max_by_motor_json, parsed_q_limit_max_by_motor, parse_error))
-      {
-        result.successful = false;
-        result.reason = "q_limit_max_by_motor_json parse failed: " + parse_error;
-        return result;
-      }
-
-      for (const auto & kv : parsed_home_kp_by_motor) {
-        if (kv.second < 0.0) {
-          result.successful = false;
-          result.reason = "home_kp_by_motor_json must be >= 0";
-          return result;
-        }
-      }
-      for (const auto & kv : parsed_home_kd_by_motor) {
-        if (kv.second < 0.0) {
-          result.successful = false;
-          result.reason = "home_kd_by_motor_json must be >= 0";
-          return result;
-        }
-      }
-      for (const auto & kv : parsed_q_limit_min_by_motor) {
-        const auto it = parsed_q_limit_max_by_motor.find(kv.first);
-        if (it != parsed_q_limit_max_by_motor.end() && kv.second > it->second) {
-          result.successful = false;
-          result.reason = "q_limit_min_by_motor_json must be <= q_limit_max_by_motor_json";
-          return result;
-        }
-      }
-    }
-
-    if (tx_changed) {
-      apply_tx_policy(next_tx_hz_default, parsed_by_motor, true);
-      if (tx_default_changed) {
-        tx_hz_default_ = next_tx_hz_default;
-        default_tx_hz_ = next_tx_hz_default;  // Keep legacy alias in sync.
-      }
-      if (tx_json_changed) {
-        tx_hz_by_motor_json_ = next_tx_hz_by_motor_json;
-      }
-    }
-
-    if (home_changed) {
-      apply_home_policy(
-        next_home_q_des,
-        next_home_qd_des,
-        next_home_kp,
-        next_home_kd,
-        next_home_tau_ff,
-        parsed_home_q_des_by_motor,
-        parsed_home_kp_by_motor,
-        parsed_home_kd_by_motor,
-        parsed_q_limit_min_by_motor,
-        parsed_q_limit_max_by_motor,
-        true);
-      home_q_des_ = next_home_q_des;
-      home_qd_des_ = next_home_qd_des;
-      home_kp_ = next_home_kp;
-      home_kd_ = next_home_kd;
-      home_tau_ff_ = next_home_tau_ff;
-      if (home_map_changed) {
-        home_q_des_by_motor_json_ = next_home_q_des_by_motor_json;
-        home_kp_by_motor_json_ = next_home_kp_by_motor_json;
-        home_kd_by_motor_json_ = next_home_kd_by_motor_json;
-        q_limit_min_by_motor_json_ = next_q_limit_min_by_motor_json;
-        q_limit_max_by_motor_json_ = next_q_limit_max_by_motor_json;
-      }
-    }
-    return result;
-  }
-
+  // 모터별 명령 송신 주파수를 반환한다.
   double tx_hz_for_motor(const uint8_t motor_id) const
   {
     const auto it = tx_policy_.tx_hz_by_motor.find(static_cast<int>(motor_id));
     if (it != tx_policy_.tx_hz_by_motor.end() && it->second > 0.0) {
       return it->second;
     }
-    return (tx_policy_.tx_hz_default > 0.0) ? tx_policy_.tx_hz_default : default_tx_hz_;
+    return (tx_policy_.tx_hz_default > 0.0) ? tx_policy_.tx_hz_default : kTxHzDefault;
   }
 
+  // MotorCMD를 MIT Type01 프레임으로 인코딩해 전송한다.
   bool send_mit_command(const msgs::msg::MotorCMD & cmd)
   {
     const uint8_t motor_id = cmd.motor_id;
@@ -976,6 +619,7 @@ private:
     return send_ext_frame(arb, data);
   }
 
+  // Type03 ENABLE 프레임을 전송한다.
   bool send_enable_frame(const uint8_t motor_id)
   {
     std::array<uint8_t, 8> data {};
@@ -983,6 +627,7 @@ private:
     return send_ext_frame(arb, data);
   }
 
+  // Type04 STOP 프레임을 전송한다.
   bool send_stop_frame(const uint8_t motor_id, const bool clear_fault = false)
   {
     std::array<uint8_t, 8> data {};
@@ -991,6 +636,7 @@ private:
     return send_ext_frame(arb, data);
   }
 
+  // 종료 시점에 알려진 모터 전체로 STOP을 1회 전송한다.
   void send_stop_once_on_shutdown()
   {
     if (sock_fd_ < 0) {
@@ -1028,6 +674,7 @@ private:
       fail);
   }
 
+  // 스캔으로 찾은 모터에 ENABLE을 1회 전송한다.
   void send_enable_once_from_scan()
   {
     if (discovered_motor_ids_.empty()) {
@@ -1056,15 +703,7 @@ private:
       fail);
   }
 
-  struct MotorRuntime
-  {
-    bool enable_sent {false};
-    bool ready_for_control {false};  // Type03 was sent and Type02 feedback observed afterwards.
-    bool has_state {false};
-    msgs::msg::MotorState last_state {};
-    std::chrono::steady_clock::time_point last_enable_sent {};
-  };
-
+  // 외부 명령 적용 전, 해당 모터가 ready 상태인지 확인한다.
   bool ensure_motor_ready_for_control(const uint8_t motor_id)
   {
     MotorRuntime & rt = runtime_by_motor_[motor_id];
@@ -1072,12 +711,13 @@ private:
       return true;
     }
 
-      RCLCPP_INFO_THROTTLE(
+    RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 2000,
       "waiting TYPE02 before applying /motor_cmd_array for motor_id=%u", motor_id);
     return false;
   }
 
+  // 현재 홈 정책으로 모터별 home 명령 기본값을 생성한다.
   msgs::msg::MotorCMD make_home_command(const uint8_t motor_id) const
   {
     msgs::msg::MotorCMD home {};
@@ -1090,24 +730,28 @@ private:
     return home;
   }
 
+  // 모터별 home 목표 위치를 반환한다.
   float home_q_des_for_motor(const uint8_t motor_id) const
   {
     return static_cast<float>(
       value_for_motor(home_policy_.q_des_by_motor, motor_id, home_policy_.q_des_default));
   }
 
+  // 모터별 home kp를 반환한다.
   float home_kp_for_motor(const uint8_t motor_id) const
   {
     return static_cast<float>(
       value_for_motor(home_policy_.kp_by_motor, motor_id, home_policy_.kp_default));
   }
 
+  // 모터별 home kd를 반환한다.
   float home_kd_for_motor(const uint8_t motor_id) const
   {
     return static_cast<float>(
       value_for_motor(home_policy_.kd_by_motor, motor_id, home_policy_.kd_default));
   }
 
+  // 현재 위치 기준으로 주기성을 고려한 home 목표 분기를 선택한다.
   float aligned_home_q_des(
     const uint8_t motor_id,
     const float current_q_raw,
@@ -1139,6 +783,7 @@ private:
       limits.second);
   }
 
+  // home 복귀 선형 보간 궤적의 시작/목표 상태를 설정한다.
   void start_home_trajectory(
     const uint8_t motor_id,
     const float current_q,
@@ -1180,6 +825,7 @@ private:
     }
   }
 
+  // 현재 시각에서 home 궤적의 q_des 샘플을 계산한다.
   float sample_home_trajectory_q_des(
     CachedCommand & cached,
     const std::chrono::steady_clock::time_point & now_tp) const
@@ -1188,12 +834,14 @@ private:
       return cached.home_traj_goal_q;
     }
 
-    const double elapsed_sec = std::chrono::duration<double>(now_tp - cached.home_traj_start_tp).count();
+    const double elapsed_sec =
+      std::chrono::duration<double>(now_tp - cached.home_traj_start_tp).count();
     const float alpha = clamp(
       static_cast<float>(elapsed_sec / static_cast<double>(cached.home_traj_duration_sec)),
       0.0F,
       1.0F);
-    const float q_des = cached.home_traj_start_q + alpha * (cached.home_traj_goal_q - cached.home_traj_start_q);
+    const float q_des = cached.home_traj_start_q + alpha *
+      (cached.home_traj_goal_q - cached.home_traj_start_q);
     if (alpha >= 1.0F) {
       cached.home_traj_active = false;
       return cached.home_traj_goal_q;
@@ -1201,6 +849,7 @@ private:
     return q_des;
   }
 
+  // ready 직후 외부 명령이 없을 때 pre-home 스트림을 arm 한다.
   void start_home_stream_for_ready_motor(const uint8_t motor_id, const float current_q)
   {
     CachedCommand & cached = latest_cmd_by_motor_[motor_id];
@@ -1226,6 +875,7 @@ private:
       static_cast<double>(cached.home_traj_duration_sec));
   }
 
+  // /motor_cmd_array 입력을 모터별 최신 명령 캐시에 반영한다.
   void on_cmd_array(const msgs::msg::MotorCMDArray::SharedPtr msg)
   {
     if (msg->commands.empty()) {
@@ -1243,6 +893,7 @@ private:
     }
   }
 
+  // 캐시된 최신 명령을 모터별 주기에 맞춰 전송한다.
   void dispatch_cached_commands()
   {
     const auto now_tp = std::chrono::steady_clock::now();
@@ -1323,13 +974,16 @@ private:
       }
 
       if (!send_mit_command(outgoing)) {
-        RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "failed to send TYPE01 command frame");
+        RCLCPP_ERROR_THROTTLE(
+          get_logger(),
+          *get_clock(), 2000, "failed to send TYPE01 command frame");
       }
       cached.has_sent = true;
       cached.last_sent = now_tp;
     }
   }
 
+  // Type00 브로드캐스트 스캔으로 대상 모터 ID 목록을 수집한다.
   void scan_motor_ids()
   {
     if (scan_min_id_ > scan_max_id_) {
@@ -1342,7 +996,8 @@ private:
       (void)send_ext_frame(arb, zeros);
     }
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scan_wait_ms_);
+    const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(scan_wait_ms_);
     std::set<int> found;
     while (std::chrono::steady_clock::now() < deadline) {
       auto frame_opt = recv_frame();
@@ -1384,7 +1039,8 @@ private:
 
     if (discovered_motor_ids_.empty()) {
       RCLCPP_WARN(
-        get_logger(), "Type00 scan found no motor in id range [%d, %d]", scan_min_id_, scan_max_id_);
+        get_logger(), "Type00 scan found no motor in id range [%d, %d]", scan_min_id_,
+        scan_max_id_);
       return;
     }
 
@@ -1398,6 +1054,7 @@ private:
     RCLCPP_INFO(get_logger(), "Type00 scan discovered motor ids: [%s]", ids.c_str());
   }
 
+  // 주기 tick에서 Rx(Type02)를 배치 처리하고 Tx 디스패치를 수행한다.
   void poll_can_frames()
   {
     // Per tick, keep only the last sample/event per motor_id.
@@ -1452,7 +1109,8 @@ private:
       if (!rt.ready_for_control && rt.enable_sent) {
         if (mode_status == 2U) {
           rt.ready_for_control = true;
-          RCLCPP_INFO(get_logger(), "motor_id=%u ready: TYPE02 run-mode observed after TYPE03", motor_id);
+          RCLCPP_INFO(
+            get_logger(), "motor_id=%u ready: TYPE02 run-mode observed after TYPE03", motor_id);
           start_home_stream_for_ready_motor(motor_id, st.q);
         } else {
           RCLCPP_INFO_THROTTLE(
@@ -1520,20 +1178,7 @@ private:
   int scan_max_id_{10};
   int scan_wait_ms_{200};
   int rx_max_frames_per_tick_{100};
-  double default_tx_hz_{500.0};
-  double tx_hz_default_{500.0};
-  std::string tx_hz_by_motor_json_{"{}"};
   int cmd_timeout_ms_{100};
-  double home_q_des_{0.0};
-  std::string home_q_des_by_motor_json_{kDefaultHomeQDesByMotorJson};
-  double home_qd_des_{0.0};
-  double home_kp_{30.0};
-  std::string home_kp_by_motor_json_{kDefaultHomeKpByMotorJson};
-  double home_kd_{5.0};
-  std::string home_kd_by_motor_json_{kDefaultHomeKdByMotorJson};
-  double home_tau_ff_{0.0};
-  std::string q_limit_min_by_motor_json_{kDefaultQLimitMinByMotorJson};
-  std::string q_limit_max_by_motor_json_{kDefaultQLimitMaxByMotorJson};
 
   std::unordered_map<uint8_t, uint8_t> last_fault_bits_;
   std::unordered_map<uint8_t, CachedCommand> latest_cmd_by_motor_;
@@ -1541,13 +1186,13 @@ private:
   std::set<uint8_t> discovered_motor_ids_;
   TxPolicy tx_policy_;
   HomePolicy home_policy_;
-  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
   rclcpp::Publisher<msgs::msg::MotorStateArray>::SharedPtr state_array_pub_;
   rclcpp::Publisher<msgs::msg::MotorErrorArray>::SharedPtr error_array_pub_;
   rclcpp::Subscription<msgs::msg::MotorCMDArray>::SharedPtr cmd_array_sub_;
   rclcpp::TimerBase::SharedPtr io_timer_;
 };
 
+// ROS2 엔트리포인트
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);

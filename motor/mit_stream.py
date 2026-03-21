@@ -3,7 +3,7 @@
 import argparse
 import time
 
-from lib.control_tuning import assert_control_ready_for_command, control_session
+from lib.control_tuning import control_session
 from lib.config import DEFAULT_CH, HOST_ID
 from lib.frames import frame_type01_mit
 from lib.power import send_stop
@@ -35,7 +35,6 @@ def main():
         raise SystemExit("--hz must be > 0")
 
     def _run(bus):
-        assert_control_ready_for_command()
         with control_session():
             period = 1.0 / args.hz
             next_t = time.perf_counter()

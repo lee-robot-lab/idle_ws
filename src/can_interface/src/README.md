@@ -7,7 +7,7 @@
 노드 시작 순서는 아래와 같습니다.
 
 1. `Type00` 스캔 (`scan_motor_ids()`)
-   - `[scan_min_id, scan_max_id]` 범위로 `Type00` 요청을 보냅니다.
+   - 코드 상수 `kScanMinId..kScanMaxId` 범위로 `Type00` 요청을 보냅니다.
    - `Type00` 응답에서 모터 ID를 수집합니다.
 2. `Type03` enable 1회 전송 (`send_enable_once_from_scan()`)
    - 스캔으로 찾은 모터 ID마다 `Type03`를 정확히 1회 전송합니다.
@@ -48,7 +48,7 @@
   - `ready` 전에는 home/외부 명령 모두 송신하지 않습니다.
 - `/motor_cmd_array` 이후
   - 같은 모터 ID에 대해서 home 명령을 외부 명령으로 대체합니다.
-- 명령 타임아웃(`cmd_timeout_ms`) 발생 시
+- 명령 타임아웃(`kCmdTimeoutMs`) 발생 시
   - 외부 명령을 중단하고 고정 시간 선형 보간으로 home 명령에 자동 복귀합니다.
 
 - Array 입력/출력 규칙
@@ -59,26 +59,24 @@
 
 주의:
 
-- home 복귀 시간은 코드 상수(`kHomeReturnDurationSec`)로 고정되어 있으며 런타임 파라미터가 아닙니다.
+- home 복귀 시간은 코드 상수(`kHomeReturnDurationSec`)로 고정되어 있습니다.
 
-## 주요 파라미터
+## 주요 정적 설정(코드 상수)
 
-- `channel` (기본값: `can0`)
-- `host_id` (기본값: `0xFD`)
-- `scan_min_id`, `scan_max_id`, `scan_wait_ms`
-- `default_tx_hz` (레거시 alias, `tx_hz_default`와 동일하게 취급)
-- `tx_hz_default` (모터별 override가 없을 때 기본 송신 주기 Hz)
-- `tx_hz_by_motor_json` (예: `{"1":300,"7":450}`)
-- `cmd_timeout_ms`
-- `home_q_des`, `home_qd_des`, `home_kp`, `home_kd`, `home_tau_ff`
-- `home_q_des_by_motor_json` (예: `{"1":0.0,"2":0.0,"3":3.141592653589793,"4":0.0}`)
-- `home_kp_by_motor_json`, `home_kd_by_motor_json` (예: `{"1":5.0,"2":37.0,"3":30.0,"4":30.0}`)
-- `q_limit_min_by_motor_json`, `q_limit_max_by_motor_json`
+- `kChannel`, `kHostId`, `kRs03Id`
+- `kScanMinId`, `kScanMaxId`, `kScanWaitMs`
+- `kRxMaxFramesPerTick`, `kCmdTimeoutMs`
+- `kTxHzDefault`, `kTxHzByMotor`
+- `kHomeQDes`, `kHomeQdDes`, `kHomeKp`, `kHomeKd`, `kHomeTauFf`
+- `kHomeQDesByMotor`, `kHomeKpByMotor`, `kHomeKdByMotor`
+- `kQLimitMinByMotor`, `kQLimitMaxByMotor`
 
-`can_bridge_node`는 더 이상 런타임 정책을 파일에서 폴링하지 않습니다. 제어 노드에서
-`SetParameters`(예: `ros2 param set`)로 `tx_hz_*`, `home_*`, `q_limit_*`를 push 하면 즉시 반영됩니다.
+설정 변경 절차:
+1. `src/can_interface/src/can_bridge_node.cpp`의 정적 상수를 수정합니다.
+2. `colcon build --packages-select msgs can_interface`로 재빌드합니다.
+3. 노드를 재시작합니다.
 
-`Type01` 전송 시 `q_des`는 `q_limit_*_by_motor_json`으로 지정한 물리 제한(없으면 MIT 범위)으로
+`Type01` 전송 시 `q_des`는 `kQLimitMinByMotor/kQLimitMaxByMotor`로 지정한 물리 제한(없으면 MIT 범위)으로
 항상 클램프됩니다.
 
 ## 시작 로그 예시
@@ -117,35 +115,13 @@ source install/setup.bash
 ros2 run can_interface can_bridge_node
 ```
 
-파라미터를 함께 줄 때:
-
-```bash
-ros2 run can_interface can_bridge_node --ros-args \
-  -p scan_min_id:=1 \
-  -p scan_max_id:=10 \
-  -p scan_wait_ms:=500 \
-  -p cmd_timeout_ms:=300
-```
-
 ### 3) 상태 토픽 확인
 
 ```bash
 ros2 topic echo /motor_state_array --qos-reliability best_effort
 ```
 
-### 4) 런타임 정책 push (`SetParameters`)
-
-```bash
-ros2 param set /can_bridge_node tx_hz_default 250.0
-ros2 param set /can_bridge_node tx_hz_by_motor_json '{"1":300,"7":450}'
-ros2 param set /can_bridge_node home_kp 30.0
-ros2 param set /can_bridge_node home_kd 5.0
-ros2 param set /can_bridge_node home_q_des_by_motor_json '{"1":0.0,"2":0.0,"3":3.141592653589793,"4":0.0}'
-ros2 param set /can_bridge_node q_limit_min_by_motor_json '{"1":-3.141592653589793,"2":-1.78,"3":-3.141592653589793,"4":-3.141592653589793}'
-ros2 param set /can_bridge_node q_limit_max_by_motor_json '{"1":3.141592653589793,"2":1.78,"3":3.141592653589793,"4":3.141592653589793}'
-```
-
-### 5) `/motor_cmd_array` 발행 (CLI)
+### 4) `/motor_cmd_array` 발행 (CLI)
 
 ```bash
 ros2 topic pub /motor_cmd_array msgs/msg/MotorCMDArray \
@@ -153,7 +129,7 @@ ros2 topic pub /motor_cmd_array msgs/msg/MotorCMDArray \
   -r 200
 ```
 
-### 6) `/motor_cmd_array` 발행 (Python `rclpy`)
+### 5) `/motor_cmd_array` 발행 (Python `rclpy`)
 
 ```python
 #!/usr/bin/env python3
