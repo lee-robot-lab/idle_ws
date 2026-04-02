@@ -102,6 +102,46 @@
     </collision>
   </link>
 
+  <link name="rs00_1">
+    <inertial>
+      <origin xyz="0 0 -0.0215" rpy="0 0 0"/>
+      <mass value="0.9244"/>
+      <inertia ixx="8.7181026538e-04" ixy="-6.3224012508e-07" ixz="-7.1639989689e-06"
+               iyy="9.1644943246e-04" iyz="-1.1771250450e-06"
+               izz="1.1953222120e-03"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://sim/meshes/RS00.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://sim/meshes/RS00.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="rs00_2">
+    <inertial>
+      <origin xyz="0 0 -0.0215" rpy="0 0 0"/>
+      <mass value="0.9244"/>
+      <inertia ixx="8.7181026538e-04" ixy="-6.3224012508e-07" ixz="-7.1639989689e-06"
+               iyy="9.1644943246e-04" iyz="-1.1771250450e-06"
+               izz="1.1953222120e-03"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://sim/meshes/RS00.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://sim/meshes/RS00.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
   <link name="joint1">
     <inertial>
       <!-- COM: (0.0103, -14.2659, 57.9402) mm -->
@@ -249,6 +289,48 @@
     </collision>
   </link>
 
+  <link name="link3_1">
+    <inertial>
+      <!-- COM: (0.0, 0.0, 115.0000) mm -->
+      <origin xyz="0 0 0.115" rpy="0 0 0"/>
+      <mass value="0.170500037"/>
+      <inertia ixx="0.000759754048" ixy="0.0" ixz="0.0"
+               iyy="0.000759754048" iyz="0.0"
+               izz="0.000052564816"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://sim/meshes/link3_1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://sim/meshes/link3_1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link3_2">
+    <inertial>
+      <!-- COM: (0.0, 0.0, 115.0000) mm -->
+      <origin xyz="0 0 0.115" rpy="0 0 0"/>
+      <mass value="0.170500037"/>
+      <inertia ixx="0.000759754048" ixy="0.0" ixz="0.0"
+               iyy="0.000759754048" iyz="0.0"
+               izz="0.000052564816"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://sim/meshes/link3_2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://sim/meshes/link3_2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
   <!-- joints -->
   <joint name="m1" type="fixed">
     <parent link="base"/>
@@ -316,20 +398,52 @@
     <origin xyz="0 0 0.23" rpy="0 0 0"/>
   </joint>
 
-  <joint name="j4" type="revolute">
+  <joint name="m4" type="fixed">
     <parent link="link2_3"/>
     <child  link="rs02_3"/>
-    <origin xyz="0 -0.06185 0.05" rpy="1.5708 0 0"/>
+    <origin xyz="0 -0.06585 0.05" rpy="1.5708 0 0"/>
     <axis xyz="0 0 1"/>
     <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
 
+  <joint name="j4" type="revolute">
+    <parent link="rs02_3"/>
+    <child  link="link3_1"/>
+    <origin xyz="0 0 0" rpy="0 3.14159 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
+  </joint>
+
+  <joint name="m5" type="fixed">
+    <parent link="link3_1"/>
+    <child  link="rs00_1"/>
+    <origin xyz="0 0.0724 -0.053" rpy="-1.5708 0 0"/>
+  </joint>
+
+  <joint name="j5" type="revolute">
+    <parent link="rs00_1"/>
+    <child  link="link3_2"/>
+    <origin xyz="0 0 0" rpy="0 3.14159 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
+  </joint>
+
+  <joint name="m6" type="fixed">
+    <parent link="link3_2"/>
+    <child  link="rs00_2"/>
+    <origin xyz="0 0.072 -0.058" rpy="-1.5708 0 0"/>
+  </joint>
+
+
+
   <link name="ee_link"/>
 
-  <joint name="ee_fixed" type="fixed">
-    <parent link="link2_3"/>
+  <joint name="ee_fixed" type="revolute">
+    <parent link="rs00_2"/>
     <child  link="ee_link"/>
-    <origin xyz="0 0 0.23" rpy="0 0 0"/>
+    <origin xyz="0 0 0" rpy="3.14159 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
 
 </robot>
