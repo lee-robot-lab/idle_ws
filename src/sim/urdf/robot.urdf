@@ -142,6 +142,26 @@
     </collision>
   </link>
 
+  <link name='rs05'>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.9244"/>
+      <inertia ixx="8.7181026538e-04" ixy="-6.3224012508e-07" ixz="-7.1639989689e-06"
+               iyy="9.1644943246e-04" iyz="-1.1771250450e-06"
+               izz="1.1953222120e-03"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://sim/meshes/RS05.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://sim/meshes/RS05.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
   <link name="joint1">
     <inertial>
       <!-- COM: (0.0103, -14.2659, 57.9402) mm -->
@@ -331,6 +351,66 @@
     </collision>
   </link>
 
+  <link name="gripper">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.1"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0"
+               iyy="0.0001" iyz="0.0"
+               izz="0.0001"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://sim/meshes/gripper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://sim/meshes/gripper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="finger_r">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.1"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0"
+               iyy="0.0001" iyz="0.0"
+               izz="0.0001"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://sim/meshes/finger_r.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://sim/meshes/finger_r.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="finger_l">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.1"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0"
+               iyy="0.0001" iyz="0.0"
+               izz="0.0001"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://sim/meshes/finger_l.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://sim/meshes/finger_l.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
   <!-- joints -->
   <joint name="m1" type="fixed">
     <parent link="base"/>
@@ -433,17 +513,35 @@
     <child  link="rs00_2"/>
     <origin xyz="0 0.072 -0.058" rpy="-1.5708 0 0"/>
   </joint>
-
-
-
-  <link name="ee_link"/>
-
-  <joint name="ee_fixed" type="revolute">
+<!-- 원래 0.0437 -->
+  <joint name="j6" type="revolute">
     <parent link="rs00_2"/>
-    <child  link="ee_link"/>
-    <origin xyz="0 0 0" rpy="3.14159 0 0"/>
+    <child  link="rs05"/>
+    <origin xyz="0 0 0.0500" rpy="0 0 0"/>  
     <axis xyz="0 0 1"/>
     <limit lower="-3.14159" upper="3.14159" effort="50" velocity="100"/>
   </joint>
 
+  <joint name="m7" type="fixed">
+    <parent link="rs05"/>
+    <child  link="gripper"/>
+    <origin xyz="0 0 0" rpy="0 3.14159 0"/>
+  </joint>
+
+  <joint name="finger_r" type="prismatic">
+    <parent link="gripper"/>
+    <child  link="finger_r"/>
+    <origin xyz="0 -0.07375 -0.0198" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0" upper="0.05" effort="50" velocity="100"/>
+  </joint>
+
+  <joint name="finger_l" type="prismatic">
+    <parent link="gripper"/>
+    <child  link="finger_l"/>
+    <origin xyz="0 0.07375 -0.0198" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="0" upper="0.05" effort="50" velocity="100"/>
+    <mimic joint="finger_r" multiplier="1.0" offset="0"/>
+  </joint>
 </robot>

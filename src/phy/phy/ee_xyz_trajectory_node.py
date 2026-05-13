@@ -13,7 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
-from pathlib import Path
 import queue
 import re
 import sys
@@ -24,21 +23,22 @@ from typing import Optional, TextIO
 from geometry_msgs.msg import Point
 import numpy as np
 import rclpy
-from ament_index_python.packages import get_package_share_directory
 from idle_common.control_tuning import control_params_for_motor
+from idle_common.paths import resolve_share_file
+from idle_common.ros_params import declare_typed
 from msgs.msg import MotorCMD, MotorCMDArray, MotorStateArray
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Float64MultiArray
 
-from phy.gravity import (
+from idle_common.motor_map import (
     DEFAULT_MOTOR_JOINT_MAP,
     DEFAULT_TAU_LIMIT_BY_MOTOR,
-    GravityCompensator,
     parse_float_map_json,
     parse_motor_joint_map_json,
 )
+from phy.gravity import GravityCompensator
 from phy.ik import IKConfig, IKPolicyConfig, IKSolver
 from phy.traj import QuinticPlan, plan_quintic, sample_quintic
 
@@ -125,52 +125,48 @@ class EEXyzTrajectoryNode(Node):
     def __init__(self) -> None:
         super().__init__("ee_xyz_trajectory_node")
 
-        self.control_hz = float(self.declare_parameter("control_hz", 250.0).value)
-        self.state_timeout_s = float(self.declare_parameter("state_timeout_s", 0.2).value)
-        self.stale_warn_throttle_s = float(self.declare_parameter("stale_warn_throttle_s", 2.0).value)
+        strip_str = lambda v: str(v).strip()
 
-        self.kp = float(self.declare_parameter("kp", 1.0).value)
-        self.kd = float(self.declare_parameter("kd", 0.05).value)
-        self.min_traj_duration = float(self.declare_parameter("min_traj_duration", 0.2).value)
-        self.v_max = float(self.declare_parameter("v_max", 0.8).value)
-        self.a_max = float(self.declare_parameter("a_max", 1.5).value)
-        self.ee_log_hz = float(self.declare_parameter("ee_log_hz", 2.0).value)
-        self.target_dedup_epsilon_m = float(self.declare_parameter("target_dedup_epsilon_m", 1.0e-4).value)
-        self.max_ik_residual_accept_m = float(
-            self.declare_parameter("max_ik_residual_accept_m", 0.005).value
-        )
-        self.ik_random_restarts = int(self.declare_parameter("ik_random_restarts", 24).value)
-        self.ik_seed_default_span = float(self.declare_parameter("ik_seed_default_span", math.pi).value)
+        self.control_hz = declare_typed(self, "control_hz", 250.0)
+        self.state_timeout_s = declare_typed(self, "state_timeout_s", 0.2)
+        self.stale_warn_throttle_s = declare_typed(self, "stale_warn_throttle_s", 2.0)
+
+        self.kp = declare_typed(self, "kp", 1.0)
+        self.kd = declare_typed(self, "kd", 0.05)
+        self.min_traj_duration = declare_typed(self, "min_traj_duration", 0.2)
+        self.v_max = declare_typed(self, "v_max", 0.8)
+        self.a_max = declare_typed(self, "a_max", 1.5)
+        self.ee_log_hz = declare_typed(self, "ee_log_hz", 2.0)
+        self.target_dedup_epsilon_m = declare_typed(self, "target_dedup_epsilon_m", 1.0e-4)
+        self.max_ik_residual_accept_m = declare_typed(self, "max_ik_residual_accept_m", 0.005)
+        self.ik_random_restarts = declare_typed(self, "ik_random_restarts", 24)
+        self.ik_seed_default_span = declare_typed(self, "ik_seed_default_span", math.pi)
         # <=0 disables jump-based rejection to allow long detours when cable routing requires it.
-        self.max_joint_jump_rad = float(self.declare_parameter("max_joint_jump_rad", 0.0).value)
-        self.reset_on_controlled_disconnect = bool(
-            self.declare_parameter("reset_on_controlled_disconnect", True).value
-        )
+        self.max_joint_jump_rad = declare_typed(self, "max_joint_jump_rad", 0.0)
+        self.reset_on_controlled_disconnect = declare_typed(self, "reset_on_controlled_disconnect", True)
 
-        self.enable_terminal_input = bool(self.declare_parameter("enable_terminal_input", True).value)
-        self.input_prompt = str(self.declare_parameter("input_prompt", "target xyz> ").value)
-        self.target_topic = str(self.declare_parameter("target_topic", "/ee_target_xyz").value).strip()
+        self.enable_terminal_input = declare_typed(self, "enable_terminal_input", True)
+        self.input_prompt = declare_typed(self, "input_prompt", "target xyz> ")
+        self.target_topic = declare_typed(self, "target_topic", "/ee_target_xyz", cast=strip_str)
         if not self.target_topic:
             self.target_topic = "/ee_target_xyz"
-        self.target_point_topic = str(
-            self.declare_parameter("target_point_topic", "/ee_target_point").value
-        ).strip()
+        self.target_point_topic = declare_typed(self, "target_point_topic", "/ee_target_point", cast=strip_str)
         if not self.target_point_topic:
             self.target_point_topic = "/ee_target_point"
 
-        default_map_json = '{"1":"j1","2":"j2","3":"j3","4":"j4"}'
-        default_limit_json = '{"1":6.0,"2":20.0,"3":6.0,"4":6.0}'
-        map_json_text = str(self.declare_parameter("motor_joint_map_json", default_map_json).value)
-        limit_json_text = str(self.declare_parameter("tau_limit_by_motor_json", default_limit_json).value)
-        controlled_ids_json = str(self.declare_parameter("controlled_motor_ids_json", "[1,2,3]").value)
-        urdf_path_text = str(self.declare_parameter("urdf_path", "").value).strip()
+        default_map_json = json.dumps(DEFAULT_MOTOR_JOINT_MAP)
+        default_limit_json = json.dumps(DEFAULT_TAU_LIMIT_BY_MOTOR)
+        map_json_text = declare_typed(self, "motor_joint_map_json", default_map_json)
+        limit_json_text = declare_typed(self, "tau_limit_by_motor_json", default_limit_json)
+        controlled_ids_json = declare_typed(self, "controlled_motor_ids_json", "[1,2,3]")
+        urdf_path_text = declare_typed(self, "urdf_path", "", cast=strip_str)
 
-        target_frame = str(self.declare_parameter("target_frame", "ee_link").value).strip()
-        target_offset_json = str(self.declare_parameter("target_offset_xyz_json", "[0.0,0.0,0.0]").value)
-        ik_max_iterations = int(self.declare_parameter("ik_max_iterations", 220).value)
-        ik_tolerance = float(self.declare_parameter("ik_tolerance", 1.0e-5).value)
-        ik_damping = float(self.declare_parameter("ik_damping", 1.0e-6).value)
-        ik_step_scale = float(self.declare_parameter("ik_step_scale", 1.0).value)
+        target_frame = declare_typed(self, "target_frame", "ee_link", cast=strip_str)
+        target_offset_json = declare_typed(self, "target_offset_xyz_json", "[0.0,0.0,0.0]")
+        ik_max_iterations = declare_typed(self, "ik_max_iterations", 220)
+        ik_tolerance = declare_typed(self, "ik_tolerance", 1.0e-5)
+        ik_damping = declare_typed(self, "ik_damping", 1.0e-6)
+        ik_step_scale = declare_typed(self, "ik_step_scale", 1.0)
 
         motor_joint_map = parse_motor_joint_map_json(map_json_text)
         if not motor_joint_map:
@@ -190,7 +186,7 @@ class EEXyzTrajectoryNode(Node):
                 f"map keys={sorted(motor_joint_map.keys())}"
             )
 
-        urdf_path = self._resolve_urdf_path(urdf_path_text)
+        urdf_path = resolve_share_file("sim", "urdf/robot.urdf", urdf_path_text)
         self.gravity = GravityCompensator(urdf_path, motor_joint_map)
         self.motor_joint_map = motor_joint_map
         self.motor_ids = self.gravity.ordered_motor_ids
@@ -292,15 +288,6 @@ class EEXyzTrajectoryNode(Node):
             f"target_frame={target_frame} joints={list(self.controlled_joint_names)} "
             f"motors={list(self.motor_ids)} urdf={urdf_path}"
         )
-
-    def _resolve_urdf_path(self, urdf_path_text: str) -> Path:
-        if urdf_path_text:
-            path = Path(urdf_path_text).expanduser()
-            if path.is_absolute():
-                return path.resolve()
-            return (Path.cwd() / path).resolve()
-        sim_share = Path(get_package_share_directory("sim"))
-        return (sim_share / "urdf" / "robot.urdf").resolve()
 
     def _start_stdin_thread(self) -> None:
         stream = self._resolve_input_stream()

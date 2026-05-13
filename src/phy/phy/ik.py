@@ -14,9 +14,9 @@ import pinocchio as pin
 class IKConfig:
     """Runtime knobs for damped least-squares IK."""
 
-    target_frame: str = "joint2"
+    target_frame: str = "gripper"
     target_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    controlled_joints: tuple[str, ...] = ("j1", "j2", "j3")
+    controlled_joints: tuple[str, ...] = ("j1", "j2", "j3", "j4", "j5", "j6")
     max_iterations: int = 80
     tolerance: float = 1.0e-4
     damping: float = 1.0e-6
@@ -94,17 +94,6 @@ class IKSolver:
         self.lower_limits = np.where(np.isfinite(lower), lower, -np.inf)
         self.upper_limits = np.where(np.isfinite(upper), upper, np.inf)
 
-    @staticmethod
-    def _skew(v: np.ndarray) -> np.ndarray:
-        return np.asarray(
-            [
-                [0.0, -v[2], v[1]],
-                [v[2], 0.0, -v[0]],
-                [-v[1], v[0], 0.0],
-            ],
-            dtype=float,
-        )
-
     def _frame_point_world(self) -> np.ndarray:
         frame_pose = self.data.oMf[self.frame_id]
         return np.asarray(
@@ -124,7 +113,7 @@ class IKSolver:
         jacobian_ang = np.asarray(jacobian_6d[3:, :], dtype=float)
         frame_pose = self.data.oMf[self.frame_id]
         r_world = np.asarray(frame_pose.rotation @ self.target_offset_local, dtype=float)
-        jacobian_point = jacobian_pos - self._skew(r_world) @ jacobian_ang
+        jacobian_point = jacobian_pos - pin.skew(r_world) @ jacobian_ang
         return jacobian_point[:, self.v_indices]
 
     def _ordered_to_model_q(self, q_ordered: np.ndarray) -> np.ndarray:
@@ -332,3 +321,81 @@ class IKSolver:
             q = self.clip_to_limits(q + self.config.step_scale * dq)
 
         return IKResult(False, q.copy(), iters, residual)
+
+    def solve_pose(
+        self,
+        goal_xyz: np.ndarray,
+        goal_R: np.ndarray,
+        q_seed: np.ndarray,
+    ) -> IKResult:
+        """6 task-space DoF IK: target position + target rotation matrix.
+
+        Args:
+            goal_xyz: target position (world frame, 3D)
+            goal_R: target rotation matrix (3x3, world frame, ``R_world_from_target_frame``)
+            q_seed: initial joint configuration (ordered by ``controlled_joints``)
+
+        Error vector is 6D ``[Δp_world (3); ω_world (3)]`` where the angular
+        component uses the matrix-log of ``R_target @ R_current.T``.
+
+        Returns an :class:`IKResult` with ``residual_norm`` over all 6 components.
+        """
+        q = self.clip_to_limits(q_seed)
+        goal_p = np.asarray(goal_xyz, dtype=float)
+        goal_rot = np.asarray(goal_R, dtype=float)
+        iters = 0
+        residual = float("inf")
+
+        for iters in range(1, self.config.max_iterations + 1):
+            q_model = self._ordered_to_model_q(q)
+            pin.forwardKinematics(self.model, self.data, q_model)
+            pin.updateFramePlacements(self.model, self.data)
+
+            p_current = self._frame_point_world()
+            R_current = np.asarray(self.data.oMf[self.frame_id].rotation, dtype=float)
+
+            pos_err = goal_p - p_current
+            R_err = goal_rot @ R_current.T
+            ang_err = np.asarray(pin.log3(R_err), dtype=float)
+            err = np.concatenate([pos_err, ang_err])
+            residual = float(np.linalg.norm(err))
+            if residual <= self.config.tolerance:
+                return IKResult(True, q.copy(), iters, residual)
+
+            jacobian_6d_full = pin.computeFrameJacobian(
+                self.model,
+                self.data,
+                q_model,
+                self.frame_id,
+                pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
+            )
+            jacobian_pos = np.asarray(jacobian_6d_full[:3, :], dtype=float)
+            jacobian_ang = np.asarray(jacobian_6d_full[3:, :], dtype=float)
+            r_world = np.asarray(
+                self.data.oMf[self.frame_id].rotation @ self.target_offset_local,
+                dtype=float,
+            )
+            jacobian_point = jacobian_pos - pin.skew(r_world) @ jacobian_ang
+            jacobian_pose_ctrl = np.vstack(
+                [
+                    jacobian_point[:, self.v_indices],
+                    jacobian_ang[:, self.v_indices],
+                ]
+            )
+
+            jj_t = jacobian_pose_ctrl @ jacobian_pose_ctrl.T
+            reg = self.config.damping * np.eye(6)
+            dq = jacobian_pose_ctrl.T @ np.linalg.solve(jj_t + reg, err)
+
+            q = self.clip_to_limits(q + self.config.step_scale * dq)
+
+        return IKResult(False, q.copy(), iters, residual)
+
+    def forward_pose(self, q_ordered: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return ``(position, rotation_matrix)`` at the target frame."""
+        q_model = self._ordered_to_model_q(self.clip_to_limits(q_ordered))
+        pin.forwardKinematics(self.model, self.data, q_model)
+        pin.updateFramePlacements(self.model, self.data)
+        position = self._frame_point_world()
+        rotation = np.asarray(self.data.oMf[self.frame_id].rotation, dtype=float)
+        return position, rotation

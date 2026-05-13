@@ -4,26 +4,29 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 import time
 from typing import Optional
 
 import rclpy
-from ament_index_python.packages import get_package_share_directory
 from idle_common.control_tuning import control_params_for_motor
+from idle_common.motor_map import (
+    DEFAULT_MOTOR_JOINT_MAP,
+    DEFAULT_TAU_LIMIT_BY_MOTOR,
+    parse_float_map_json,
+    parse_motor_joint_map_json,
+)
+from idle_common.paths import resolve_share_file
+from idle_common.ros_params import declare_typed
 from msgs.msg import MotorCMD, MotorCMDArray, MotorStateArray
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_srvs.srv import Trigger
 
-from phy.gravity import (
-    DEFAULT_MOTOR_JOINT_MAP,
-    DEFAULT_TAU_LIMIT_BY_MOTOR,
-    GravityCompensator,
-    parse_float_map_json,
-    parse_motor_joint_map_json,
-)
+from phy.gravity import GravityCompensator
 
 
 @dataclass
@@ -61,16 +64,17 @@ class HoldNode(Node):
     def __init__(self) -> None:
         super().__init__("hold_node")
 
-        self.control_hz = float(self.declare_parameter("control_hz", 250.0).value)
-        self.state_timeout_s = float(self.declare_parameter("state_timeout_s", 0.2).value)
-        self.stale_warn_throttle_s = float(self.declare_parameter("stale_warn_throttle_s", 2.0).value)
+        self.control_hz = declare_typed(self, "control_hz", 250.0)
+        self.state_timeout_s = declare_typed(self, "state_timeout_s", 0.2)
+        self.stale_warn_throttle_s = declare_typed(self, "stale_warn_throttle_s", 2.0)
 
-        default_map_json = '{"1":"j1","2":"j2","3":"j3","4":"j4"}'
-        default_limit_json = '{"1":6.0,"2":20.0,"3":6.0,"4":6.0}'
-        map_json_text = str(self.declare_parameter("motor_joint_map_json", default_map_json).value)
-        limit_json_text = str(self.declare_parameter("tau_limit_by_motor_json", default_limit_json).value)
-        urdf_path_text = str(self.declare_parameter("urdf_path", "").value).strip()
-        csv_log_path_text = str(self.declare_parameter("csv_log_path", "").value).strip()
+        default_map_json = json.dumps(DEFAULT_MOTOR_JOINT_MAP)
+        default_limit_json = json.dumps(DEFAULT_TAU_LIMIT_BY_MOTOR)
+        map_json_text = declare_typed(self, "motor_joint_map_json", default_map_json)
+        limit_json_text = declare_typed(self, "tau_limit_by_motor_json", default_limit_json)
+        strip_str = lambda v: str(v).strip()
+        urdf_path_text = declare_typed(self, "urdf_path", "", cast=strip_str)
+        csv_log_path_text = declare_typed(self, "csv_log_path", "", cast=strip_str)
 
         motor_joint_map = parse_motor_joint_map_json(map_json_text)
         if not motor_joint_map:
@@ -79,7 +83,7 @@ class HoldNode(Node):
         if not tau_limit_map:
             tau_limit_map = dict(DEFAULT_TAU_LIMIT_BY_MOTOR)
 
-        urdf_path = self._resolve_urdf_path(urdf_path_text)
+        urdf_path = resolve_share_file("sim", "urdf/robot.urdf", urdf_path_text)
         self.gravity = GravityCompensator(urdf_path, motor_joint_map)
 
         self.motor_joint_map = motor_joint_map
@@ -114,6 +118,11 @@ class HoldNode(Node):
 
         period_s = max(1.0 / self.control_hz, 1.0e-4)
         self.control_timer = self.create_timer(period_s, self.on_timer)
+
+        self.halted = False
+        self.halt_srv = self.create_service(Trigger, "/halt_robot", self._on_halt)
+        self.resume_srv = self.create_service(Trigger, "/resume_robot", self._on_resume)
+
         self.get_logger().info(
             "hold_node initialized: "
             f"hz={self.control_hz:.1f} timeout={self.state_timeout_s:.3f}s "
@@ -121,14 +130,25 @@ class HoldNode(Node):
             f"csv={self.csv_path if self.csv_path is not None else 'disabled'}"
         )
 
-    def _resolve_urdf_path(self, urdf_path_text: str) -> Path:
-        if urdf_path_text:
-            path = Path(urdf_path_text).expanduser()
-            if path.is_absolute():
-                return path.resolve()
-            return (Path.cwd() / path).resolve()
-        sim_share = Path(get_package_share_directory("sim"))
-        return (sim_share / "urdf" / "robot.urdf").resolve()
+    def _on_halt(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        if not self.halted:
+            self.halted = True
+            self.get_logger().warn("/halt_robot activated — compliance-only (tuning bypassed)")
+            response.message = "halted"
+        else:
+            response.message = "already halted"
+        response.success = True
+        return response
+
+    def _on_resume(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        if self.halted:
+            self.halted = False
+            self.get_logger().info("/resume_robot — gravity-comp + tuning restored")
+            response.message = "resumed"
+        else:
+            response.message = "already running"
+        response.success = True
+        return response
 
     def _open_csv_logger(self, csv_log_path_text: str) -> None:
         if not csv_log_path_text:
@@ -214,13 +234,17 @@ class HoldNode(Node):
         scale_by_motor: dict[int, float] = {}
         bias_by_motor: dict[int, float] = {}
         for motor_id in connected_ids:
-            tuning = control_params_for_motor(motor_id)
-            gravity_scale = _as_float_or_default(tuning.get("gravity_scale"), 1.0)
-            gravity_bias = _as_float_or_default(tuning.get("gravity_bias"), 0.0)
+            sample = self.state_by_motor[motor_id]
+            if self.halted:
+                gravity_scale = 1.0
+                gravity_bias = 0.0
+            else:
+                tuning = control_params_for_motor(motor_id)
+                gravity_scale = _as_float_or_default(tuning.get("gravity_scale"), 1.0)
+                gravity_bias = _as_float_or_default(tuning.get("gravity_bias"), 0.0)
             tau_cmd = gravity_scale * tau_g_by_motor[motor_id] + gravity_bias
             tau_cmd = _clip_symmetric(tau_cmd, self.tau_limit_by_motor[motor_id])
 
-            sample = self.state_by_motor[motor_id]
             cmd_values[motor_id] = CommandValues(
                 q_des=sample.q,
                 qd_des=0.0,
@@ -281,7 +305,6 @@ class HoldNode(Node):
                     f"{bias_by_motor[motor_id]:.9f}",
                 ]
             )
-        self.csv_file.flush()
 
     def destroy_node(self) -> bool:
         if self.csv_file is not None:

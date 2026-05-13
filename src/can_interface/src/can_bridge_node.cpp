@@ -64,35 +64,20 @@ constexpr double kHomeQdDes = 0.0;
 constexpr double kHomeKp = 30.0;
 constexpr double kHomeKd = 5.0;
 constexpr double kHomeTauFf = 0.0;
-const std::unordered_map<int, double> kHomeQDesByMotor {
-  {1, 0.0},
-  {2, 0.0},
-  {3, static_cast<double>(M_PI)},
-  {4, 0.0},
+struct MotorHomeConfig
+{
+  double q_des;
+  double kp;
+  double kd;
+  double q_min;
+  double q_max;
 };
-const std::unordered_map<int, double> kHomeKpByMotor {
-  {1, 5.0},
-  {2, 37.0},
-  {3, 30.0},
-  {4, 30.0},
-};
-const std::unordered_map<int, double> kHomeKdByMotor {
-  {1, 0.5},
-  {2, 6.0},
-  {3, 5.0},
-  {4, 5.0},
-};
-const std::unordered_map<int, double> kQLimitMinByMotor {
-  {1, -static_cast<double>(M_PI)},
-  {2, -1.78},
-  {3, -static_cast<double>(M_PI)},
-  {4, -static_cast<double>(M_PI)},
-};
-const std::unordered_map<int, double> kQLimitMaxByMotor {
-  {1, static_cast<double>(M_PI)},
-  {2, 1.78},
-  {3, static_cast<double>(M_PI)},
-  {4, static_cast<double>(M_PI)},
+
+const std::unordered_map<int, MotorHomeConfig> kMotorHomeByMotor {
+  {1, {0.0,                         5.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {2, {0.0,                        37.0, 6.0, -1.78,                     1.78}},
+  {3, {static_cast<double>(M_PI),  30.0, 5.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {4, {0.0,                        30.0, 5.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
 };
 
 // MIT 인코딩/디코딩에 쓰는 모터별 물리 범위
@@ -152,12 +137,6 @@ inline uint8_t data1_from_arb(uint32_t arb_id)
   return static_cast<uint8_t>(arb_id & 0xFFU);
 }
 
-// 단순 범위 클램프 유틸리티
-inline float clamp(float x, float lo, float hi)
-{
-  return (x < lo) ? lo : ((x > hi) ? hi : x);
-}
-
 // 주기성(2pi) 후보 중 현재 값에 가장 가까운 목표를 선택한다.
 inline float nearest_periodic_target(
   const float target_base,
@@ -167,7 +146,7 @@ inline float nearest_periodic_target(
   const float hi)
 {
   if (period <= 0.0F) {
-    return clamp(target_base, lo, hi);
+    return std::clamp(target_base, lo, hi);
   }
   float target = target_base + std::round((current - target_base) / period) * period;
   while (target < lo) {
@@ -176,13 +155,13 @@ inline float nearest_periodic_target(
   while (target > hi) {
     target -= period;
   }
-  return clamp(target, lo, hi);
+  return std::clamp(target, lo, hi);
 }
 
 // 실수값을 [xmin, xmax] 범위의 u16로 인코딩한다.
 inline uint16_t float_to_u16(float x, float xmin, float xmax)
 {
-  const float clamped = clamp(x, xmin, xmax);
+  const float clamped = std::clamp(x, xmin, xmax);
   const float scaled = (clamped - xmin) * 65535.0F / (xmax - xmin);
   const float rounded = std::round(scaled);
   return static_cast<uint16_t>(rounded);
@@ -236,19 +215,31 @@ public:
     rx_max_frames_per_tick_ = kRxMaxFramesPerTick;
     cmd_timeout_ms_ = std::max(0, kCmdTimeoutMs);
 
-    apply_tx_policy(kTxHzDefault, kTxHzByMotor, false);
+    apply_tx_policy(kTxHzDefault, kTxHzByMotor);
+
+    std::unordered_map<int, double> q_des_by_motor;
+    std::unordered_map<int, double> kp_by_motor;
+    std::unordered_map<int, double> kd_by_motor;
+    std::unordered_map<int, double> q_limit_min_by_motor;
+    std::unordered_map<int, double> q_limit_max_by_motor;
+    for (const auto & [motor_id, cfg] : kMotorHomeByMotor) {
+      q_des_by_motor[motor_id] = cfg.q_des;
+      kp_by_motor[motor_id] = cfg.kp;
+      kd_by_motor[motor_id] = cfg.kd;
+      q_limit_min_by_motor[motor_id] = cfg.q_min;
+      q_limit_max_by_motor[motor_id] = cfg.q_max;
+    }
     apply_home_policy(
       kHomeQDes,
       kHomeQdDes,
       kHomeKp,
       kHomeKd,
       kHomeTauFf,
-      kHomeQDesByMotor,
-      kHomeKpByMotor,
-      kHomeKdByMotor,
-      kQLimitMinByMotor,
-      kQLimitMaxByMotor,
-      false);
+      q_des_by_motor,
+      kp_by_motor,
+      kd_by_motor,
+      q_limit_min_by_motor,
+      q_limit_max_by_motor);
 
     if (!open_socketcan(channel_)) {
       throw std::runtime_error("failed to open socketcan channel: " + channel_);
@@ -439,18 +430,10 @@ private:
   // tx 정책을 교체 적용한다.
   void apply_tx_policy(
     const double tx_hz_default,
-    const std::unordered_map<int, double> & tx_hz_by_motor,
-    const bool emit_log)
+    const std::unordered_map<int, double> & tx_hz_by_motor)
   {
     tx_policy_.tx_hz_default = tx_hz_default;
     tx_policy_.tx_hz_by_motor = tx_hz_by_motor;
-    if (emit_log) {
-      RCLCPP_INFO(
-        get_logger(),
-        "tx policy updated: tx_hz_default=%.3f per_motor=%zu",
-        tx_policy_.tx_hz_default,
-        tx_policy_.tx_hz_by_motor.size());
-    }
   }
 
   // 홈 정책과 모터별 제한값을 교체 적용한다.
@@ -464,8 +447,7 @@ private:
     const std::unordered_map<int, double> & kp_by_motor,
     const std::unordered_map<int, double> & kd_by_motor,
     const std::unordered_map<int, double> & q_limit_min_by_motor,
-    const std::unordered_map<int, double> & q_limit_max_by_motor,
-    const bool emit_log)
+    const std::unordered_map<int, double> & q_limit_max_by_motor)
   {
     home_policy_.q_des_default = q_des_default;
     home_policy_.qd_des_default = qd_des_default;
@@ -499,22 +481,6 @@ private:
       }
     }
 
-    if (emit_log) {
-      RCLCPP_INFO(
-        get_logger(),
-        "home policy updated: default(q_des=%.3f qd_des=%.3f kp=%.3f kd=%.3f tau_ff=%.3f), "
-        "per_motor(q_des=%zu kp=%zu kd=%zu qmin=%zu qmax=%zu)",
-        home_policy_.q_des_default,
-        home_policy_.qd_des_default,
-        home_policy_.kp_default,
-        home_policy_.kd_default,
-        home_policy_.tau_ff_default,
-        home_policy_.q_des_by_motor.size(),
-        home_policy_.kp_by_motor.size(),
-        home_policy_.kd_by_motor.size(),
-        home_policy_.q_limit_min_by_motor.size(),
-        home_policy_.q_limit_max_by_motor.size());
-    }
   }
 
   // 모터별 override가 있으면 사용하고 없으면 기본값을 사용한다.
@@ -564,7 +530,7 @@ private:
   {
     // State is treated as absolute in configured limits. Do not re-wrap here;
     // just clamp to the allowed home window.
-    return clamp(current_q, q_min, q_max);
+    return std::clamp(current_q, q_min, q_max);
   }
 
   // 모터별 명령 송신 주파수를 반환한다.
@@ -583,7 +549,7 @@ private:
     const uint8_t motor_id = cmd.motor_id;
     const MitRanges & r = ranges_for(motor_id);
     const auto limits = position_limits_for_motor(motor_id);
-    const float q_des_in_window = clamp(cmd.q_des, limits.first, limits.second);
+    const float q_des_in_window = std::clamp(cmd.q_des, limits.first, limits.second);
     if (std::fabs(q_des_in_window - cmd.q_des) > 1e-6F) {
       RCLCPP_WARN_THROTTLE(
         get_logger(),
@@ -770,8 +736,8 @@ private:
       std::fabs(span - period) <= 1e-3F &&
       std::fabs(std::fabs(q_base) - static_cast<float>(M_PI)) <= kPiBoundaryTol)
     {
-      const float q_pos_pi = clamp(static_cast<float>(M_PI), limits.first, limits.second);
-      const float q_neg_pi = clamp(-static_cast<float>(M_PI), limits.first, limits.second);
+      const float q_pos_pi = std::clamp(static_cast<float>(M_PI), limits.first, limits.second);
+      const float q_neg_pi = std::clamp(-static_cast<float>(M_PI), limits.first, limits.second);
       return (current_q_raw < 0.0F) ? q_neg_pi : q_pos_pi;
     }
 
@@ -836,7 +802,7 @@ private:
 
     const double elapsed_sec =
       std::chrono::duration<double>(now_tp - cached.home_traj_start_tp).count();
-    const float alpha = clamp(
+    const float alpha = std::clamp(
       static_cast<float>(elapsed_sec / static_cast<double>(cached.home_traj_duration_sec)),
       0.0F,
       1.0F);
@@ -943,7 +909,7 @@ private:
             start_home_trajectory(motor_id, rt.last_state.q, now_tp, "timeout-home");
           } else {
             const auto limits = position_limits_for_motor(motor_id);
-            const float q_home = clamp(home_q_des_for_motor(motor_id), limits.first, limits.second);
+            const float q_home = std::clamp(home_q_des_for_motor(motor_id), limits.first, limits.second);
             cached.home_traj_active = false;
             cached.home_traj_start_q = q_home;
             cached.home_traj_goal_q = q_home;

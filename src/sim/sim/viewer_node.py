@@ -10,36 +10,13 @@ import xml.etree.ElementTree as et
 
 import mujoco
 import rclpy
-from ament_index_python.packages import get_package_share_directory
+from idle_common.motor_map import DEFAULT_MOTOR_JOINT_MAP, parse_motor_joint_map_json
+from idle_common.paths import resolve_share_file
+from idle_common.ros_params import declare_typed
 from msgs.msg import MotorStateArray
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-
-
-DEFAULT_MOTOR_JOINT_MAP = {1: "j1", 2: "j2", 3: "j3", 4: "j4"}
-
-
-def parse_motor_joint_map_json(text: str) -> dict[int, str]:
-    text_stripped = text.strip()
-    if not text_stripped:
-        return {}
-    try:
-        raw = json.loads(text_stripped)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"motor_joint_map_json must be valid JSON object: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ValueError("motor_joint_map_json must be JSON object")
-    out: dict[int, str] = {}
-    for key, value in raw.items():
-        try:
-            motor_id = int(key)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid motor id key '{key}' in motor_joint_map_json") from exc
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"motor {motor_id} joint name must be non-empty string")
-        out[motor_id] = value.strip()
-    return out
 
 
 def load_model_with_workaround(model_xml: str) -> tuple[mujoco.MjModel, bool]:
@@ -84,20 +61,20 @@ class ViewerNode(Node):
     def __init__(self) -> None:
         super().__init__("viewer_node")
 
-        self.viewer_hz = float(self.declare_parameter("viewer_hz", 60.0).value)
-        self.viewer_enabled = bool(self.declare_parameter("viewer", True).value)
-        self.viewer_left_ui = bool(self.declare_parameter("viewer_left_ui", True).value)
-        self.viewer_right_ui = bool(self.declare_parameter("viewer_right_ui", True).value)
-        model_xml_text = str(self.declare_parameter("model_xml", "").value).strip()
-        map_json_text = str(
-            self.declare_parameter("motor_joint_map_json", '{"1":"j1","2":"j2","3":"j3","4":"j4"}').value
-        )
+        strip_str = lambda v: str(v).strip()
+
+        self.viewer_hz = declare_typed(self, "viewer_hz", 60.0)
+        self.viewer_enabled = declare_typed(self, "viewer", True)
+        self.viewer_left_ui = declare_typed(self, "viewer_left_ui", True)
+        self.viewer_right_ui = declare_typed(self, "viewer_right_ui", True)
+        model_xml_text = declare_typed(self, "model_xml", "", cast=strip_str)
+        map_json_text = declare_typed(self, "motor_joint_map_json", json.dumps(DEFAULT_MOTOR_JOINT_MAP))
 
         motor_joint_map = parse_motor_joint_map_json(map_json_text)
         if not motor_joint_map:
             motor_joint_map = dict(DEFAULT_MOTOR_JOINT_MAP)
 
-        model_xml = self._resolve_model_xml(model_xml_text)
+        model_xml = resolve_share_file("sim", "robot.xml", model_xml_text)
         self.model, used_workaround = load_model_with_workaround(str(model_xml))
         self.data = mujoco.MjData(self.model)
         self.viewer: Optional[object] = None
@@ -113,6 +90,7 @@ class ViewerNode(Node):
 
         self.latest_q: dict[int, float] = {}
         self.latest_qd: dict[int, float] = {}
+        self._state_dirty: bool = False
 
         qos_state = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -131,15 +109,6 @@ class ViewerNode(Node):
         self.get_logger().info(
             f"viewer_node initialized: model={model_xml} hz={self.viewer_hz:.1f} motors={sorted(self.qpos_idx_by_motor.keys())}"
         )
-
-    def _resolve_model_xml(self, model_xml_text: str) -> Path:
-        if model_xml_text:
-            path = Path(model_xml_text).expanduser()
-            if path.is_absolute():
-                return path.resolve()
-            return (Path.cwd() / path).resolve()
-        sim_share = Path(get_package_share_directory("sim"))
-        return (sim_share / "robot.xml").resolve()
 
     def _try_launch_viewer(self) -> None:
         if not self.viewer_enabled:
@@ -165,15 +134,17 @@ class ViewerNode(Node):
                 continue
             self.latest_q[motor_id] = float(state.q)
             self.latest_qd[motor_id] = float(state.qd)
+        self._state_dirty = True
 
     def on_timer(self) -> None:
-        for motor_id, qpos_idx in self.qpos_idx_by_motor.items():
-            if motor_id in self.latest_q:
-                self.data.qpos[qpos_idx] = self.latest_q[motor_id]
-            if motor_id in self.latest_qd:
-                self.data.qvel[self.qvel_idx_by_motor[motor_id]] = self.latest_qd[motor_id]
-
-        mujoco.mj_forward(self.model, self.data)
+        if self._state_dirty:
+            for motor_id, qpos_idx in self.qpos_idx_by_motor.items():
+                if motor_id in self.latest_q:
+                    self.data.qpos[qpos_idx] = self.latest_q[motor_id]
+                if motor_id in self.latest_qd:
+                    self.data.qvel[self.qvel_idx_by_motor[motor_id]] = self.latest_qd[motor_id]
+            mujoco.mj_forward(self.model, self.data)
+            self._state_dirty = False
 
         if self.viewer is not None:
             try:

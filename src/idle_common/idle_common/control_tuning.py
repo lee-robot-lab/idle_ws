@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .param_store import (
+    control_original_path,
     control_tuned_path,
     initialize_tuned_from_original_if_missing,
     load_control_effective,
@@ -43,6 +45,9 @@ def _read_state() -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as fp:
             obj = json.load(fp)
     except FileNotFoundError:
+        obj = {}
+    except json.JSONDecodeError as exc:
+        print(f"warning: gate state file corrupt at {path}: {exc}", file=sys.stderr)
         obj = {}
     except Exception:
         obj = {}
@@ -178,8 +183,31 @@ def save_control_tuning() -> Path:
     return tuned_path
 
 
+_EFFECTIVE_CACHE: dict[str, Any] | None = None
+_EFFECTIVE_CACHE_MTIME: tuple[float, float] = (0.0, 0.0)
+
+
+def _file_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _get_cached_effective() -> dict[str, Any]:
+    global _EFFECTIVE_CACHE, _EFFECTIVE_CACHE_MTIME
+    mtimes = (
+        _file_mtime(control_original_path()),
+        _file_mtime(control_tuned_path()),
+    )
+    if _EFFECTIVE_CACHE is None or mtimes != _EFFECTIVE_CACHE_MTIME:
+        _EFFECTIVE_CACHE = load_control_effective()
+        _EFFECTIVE_CACHE_MTIME = mtimes
+    return _EFFECTIVE_CACHE
+
+
 def control_params_for_motor(motor_id: int) -> dict[str, float]:
-    effective = load_control_effective()
+    effective = _get_cached_effective()
     defaults = effective.get("defaults", {})
     motors = effective.get("motors", {})
 

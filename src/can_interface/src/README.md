@@ -67,9 +67,8 @@
 - `kScanMinId`, `kScanMaxId`, `kScanWaitMs`
 - `kRxMaxFramesPerTick`, `kCmdTimeoutMs`
 - `kTxHzDefault`, `kTxHzByMotor`
-- `kHomeQDes`, `kHomeQdDes`, `kHomeKp`, `kHomeKd`, `kHomeTauFf`
-- `kHomeQDesByMotor`, `kHomeKpByMotor`, `kHomeKdByMotor`
-- `kQLimitMinByMotor`, `kQLimitMaxByMotor`
+- 모터 미발견 시 fallback default: `kHomeQDes`, `kHomeQdDes`, `kHomeKp`, `kHomeKd`, `kHomeTauFf`
+- 모터별 home/한계 통합 테이블: `kMotorHomeByMotor` — `{motor_id, MotorHomeConfig{q_des, kp, kd, q_min, q_max}}`
 
 설정 변경 절차:
 1. `src/can_interface/src/can_bridge_node.cpp`의 정적 상수를 수정합니다.
