@@ -30,6 +30,7 @@ setup(
     entry_points={
         'console_scripts': [
             'viewer_node = sim.viewer_node:main',
+            'sim_driver_node = sim.sim_driver_node:main',
         ],
     },
 )
