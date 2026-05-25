@@ -51,7 +51,10 @@ constexpr float kHomeEpsilon = 1e-4F;
 // 정적 브리지 설정(수정 후 재빌드/재시작 필요)
 constexpr char kChannel[] = "can0";
 constexpr uint8_t kHostId = 0xFD;
-constexpr uint8_t kRs03Id = 2;
+constexpr uint8_t kRs03Id  = 2;
+constexpr uint8_t kRs00Id1 = 5;
+constexpr uint8_t kRs00Id2 = 6;
+constexpr uint8_t kRs05Id  = 7;
 constexpr int kScanMinId = 1;
 constexpr int kScanMaxId = 10;
 constexpr int kScanWaitMs = 200;
@@ -78,6 +81,9 @@ const std::unordered_map<int, MotorHomeConfig> kMotorHomeByMotor {
   {2, {0.0,                        37.0, 6.0, -1.78,                     1.78}},
   {3, {static_cast<double>(M_PI),  30.0, 5.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
   {4, {0.0,                        30.0, 5.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {5, {0.0,                        15.0, 1.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {6, {0.0,                        15.0, 1.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {7, {0.0,                         8.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
 };
 
 // MIT 인코딩/디코딩에 쓰는 모터별 물리 범위
@@ -109,6 +115,24 @@ const MitRanges MIT_RS03{
   -60.0F, 60.0F,
   0.0F, 5000.0F,
   0.0F, 100.0F,
+};
+
+// RS00: rated 5 Nm, peak 14 Nm, 315 rpm no-load, 10:1 reduction (motors 5, 6)
+const MitRanges MIT_RS00{
+  -4.0F * static_cast<float>(M_PI), 4.0F * static_cast<float>(M_PI),
+  -33.0F, 33.0F,
+  -14.0F, 14.0F,
+  0.0F, 500.0F,
+  0.0F, 5.0F,
+};
+
+// RS05: rated 1.6 Nm, peak 5.5 Nm, 480 rpm no-load, 7.75:1 reduction (motor 7 / gripper)
+const MitRanges MIT_RS05{
+  -4.0F * static_cast<float>(M_PI), 4.0F * static_cast<float>(M_PI),
+  -50.0F, 50.0F,
+  -5.5F, 5.5F,
+  0.0F, 500.0F,
+  0.0F, 5.0F,
 };
 
 // (type, data2, data1)을 MIT 확장 arbitration ID로 패킹한다.
@@ -303,10 +327,13 @@ public:
   }
 
 private:
-  // 모터 ID에 따라 RS02/RS03 MIT 범위를 선택한다.
+  // 모터 ID에 따라 모터 모델별 MIT 범위를 선택한다.
   const MitRanges & ranges_for(const uint8_t motor_id) const
   {
-    return (motor_id == rs03_id_) ? MIT_RS03 : MIT_RS02;
+    if (motor_id == rs03_id_)                          return MIT_RS03;
+    if (motor_id == kRs00Id1 || motor_id == kRs00Id2) return MIT_RS00;
+    if (motor_id == kRs05Id)                           return MIT_RS05;
+    return MIT_RS02;
   }
 
   // SocketCAN 채널을 열고 non-blocking으로 설정한다.
