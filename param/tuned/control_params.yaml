@@ -5,7 +5,7 @@ motors:
   '2':
     gravity_bias: 0.0
     gravity_scale: 1.0
-    kd: 0.7
+    kd: 2.0
     kp: 9.0
   '3':
     kd: 0.7

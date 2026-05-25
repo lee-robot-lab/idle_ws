@@ -1,15 +1,14 @@
-"""Launch sim_driver + viewer + plan_node — single-motion sim demo.
+"""Launch sim_driver (physics + viewer) + plan_node — single-motion sim demo.
 
-Replaces ``can_bridge_node`` with ``sim_driver_node`` so the entire control
-stack runs in MuJoCo without hardware. Send a target with:
+sim_driver_node owns the MuJoCo physics AND the viewer window so that mouse
+perturbations (Ctrl+drag) apply forces directly to the simulated robot.
+
+Send a target with:
 
     ros2 topic pub --once /ee_target_pose geometry_msgs/PoseStamped \\
         '{header: {frame_id: "world"},
           pose: {position: {x: 0.3, y: 0.0, z: 0.6},
                  orientation: {w: 1.0}}}'
-
-The robot will plan an IK + quintic trajectory and execute it in MuJoCo while
-the viewer mirrors the simulated state in the GUI.
 """
 
 from launch import LaunchDescription
@@ -22,7 +21,7 @@ def generate_launch_description() -> LaunchDescription:
     viewer_arg = DeclareLaunchArgument(
         "viewer",
         default_value="true",
-        description="Enable MuJoCo viewer window",
+        description="Enable MuJoCo viewer window (physics-coupled, mouse perturbation enabled)",
     )
     viewer_left_ui_arg = DeclareLaunchArgument(
         "viewer_left_ui",
@@ -49,6 +48,11 @@ def generate_launch_description() -> LaunchDescription:
         default_value="false",
         description="Disable gravity comp in plan_node (only for sim with dummy inertials)",
     )
+    unlimited_tau_arg = DeclareLaunchArgument(
+        "unlimited_tau",
+        default_value="true",
+        description="Bypass tau_ff clipping in plan_node (sim with dummy inertials)",
+    )
 
     return LaunchDescription(
         [
@@ -58,16 +62,11 @@ def generate_launch_description() -> LaunchDescription:
             v_max_arg,
             a_max_arg,
             disable_gravity_arg,
+            unlimited_tau_arg,
             Node(
                 package="sim",
                 executable="sim_driver_node",
                 name="sim_driver_node",
-                output="screen",
-            ),
-            Node(
-                package="sim",
-                executable="viewer_node",
-                name="viewer_node",
                 output="screen",
                 parameters=[
                     {
@@ -87,6 +86,7 @@ def generate_launch_description() -> LaunchDescription:
                         "planner_v_max": LaunchConfiguration("planner_v_max"),
                         "planner_a_max": LaunchConfiguration("planner_a_max"),
                         "disable_gravity": LaunchConfiguration("disable_gravity"),
+                        "unlimited_tau": LaunchConfiguration("unlimited_tau"),
                     }
                 ],
             ),

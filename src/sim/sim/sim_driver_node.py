@@ -92,6 +92,24 @@ class SimDriverNode(Node):
             raise ValueError(f"MuJoCo model has non-positive timestep: {physics_dt}")
         self.physics_steps_per_tick = max(1, int(round(tick_period / physics_dt)))
 
+        viewer_enabled = declare_typed(self, "viewer", True)
+        show_left_ui = declare_typed(self, "viewer_left_ui", True)
+        show_right_ui = declare_typed(self, "viewer_right_ui", True)
+        self._viewer = None
+        self._viewer_sync_every = max(1, int(round(1.0 / (60.0 * tick_period))))
+        self._tick_count = 0
+        if viewer_enabled:
+            try:
+                import mujoco.viewer as mj_viewer
+                self._viewer = mj_viewer.launch_passive(
+                    self.model, self.data,
+                    show_left_ui=show_left_ui,
+                    show_right_ui=show_right_ui,
+                )
+                self.get_logger().info("mujoco viewer launched (physics-coupled, mouse perturbation enabled)")
+            except Exception as exc:
+                self.get_logger().warn(f"viewer launch failed, running headless: {exc}")
+
         qos_cmd = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -137,6 +155,13 @@ class SimDriverNode(Node):
         for _ in range(self.physics_steps_per_tick):
             mujoco.mj_step(self.model, self.data)
         self._publish_state()
+        self._tick_count += 1
+        if self._viewer is not None and self._tick_count % self._viewer_sync_every == 0:
+            if self._viewer.is_running():
+                self._viewer.sync()
+            else:
+                self._viewer = None
+                self.get_logger().warn("mujoco viewer closed; continuing headless")
 
     def _apply_mit_torques(self) -> None:
         # If no command received yet, fall back to passive gravity compensation

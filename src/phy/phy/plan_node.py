@@ -75,8 +75,8 @@ class PlanNode(Node):
         self.target_frame = declare_typed(self, "target_frame", "gripper", cast=strip_str)
         v_max = declare_typed(self, "planner_v_max", 0.5)
         a_max = declare_typed(self, "planner_a_max", 1.0)
-        # Demo flag: disable gravity comp when URDF inertials are dummy (sim only).
         disable_gravity = declare_typed(self, "disable_gravity", False)
+        self.unlimited_tau = bool(declare_typed(self, "unlimited_tau", False))
         urdf_path_text = declare_typed(self, "urdf_path", "", cast=strip_str)
 
         urdf_path = resolve_share_file("sim", "urdf/robot.urdf", urdf_path_text)
@@ -119,6 +119,7 @@ class PlanNode(Node):
         }
         self.state_by_motor = {m: MotorSample() for m in self.motor_ids}
         self.active: Optional[_ActiveTrajectory] = None
+        self._hold_q: Optional[dict[int, float]] = None
 
         qos_cmd = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -214,13 +215,15 @@ class PlanNode(Node):
         if self.active is not None:
             elapsed = now_s - self.active.start_time_s
             if elapsed >= self.active.plan.duration_s:
-                self.get_logger().info("trajectory complete — switching to compliance hold")
+                self.get_logger().info("trajectory complete — holding final pose")
+                q_final, _, _ = self.active.plan.sample(self.active.plan.duration_s)
+                self._hold_q = {m: float(q_final[i]) for i, m in enumerate(self.motor_ids)}
                 self.active = None
-                cmd_values = self._compliance_cmds(tau_g_by_motor)
+                cmd_values = self._hold_cmds(tau_g_by_motor)
             else:
                 cmd_values = self._trajectory_cmds(elapsed, tau_g_by_motor)
         else:
-            cmd_values = self._compliance_cmds(tau_g_by_motor)
+            cmd_values = self._hold_cmds(tau_g_by_motor)
 
         self._publish(cmd_values)
 
@@ -246,21 +249,28 @@ class PlanNode(Node):
             }
         return out
 
-    def _compliance_cmds(
+    def _hold_cmds(
         self, tau_g_by_motor: dict[int, float]
     ) -> dict[int, dict[str, float]]:
-        """No active trajectory — gravity compensation only, no position drive."""
+        """No active trajectory — hold last commanded pose with PD + gravity feedforward."""
         out: dict[int, dict[str, float]] = {}
         for motor_id in self.motor_ids:
             tuning = control_params_for_motor(motor_id)
+            kp = float(tuning.get("kp", 0.0))
+            kd = float(tuning.get("kd", 0.0))
             gscale = float(tuning.get("gravity_scale", 1.0))
             gbias = float(tuning.get("gravity_bias", 0.0))
             tau_ff = gscale * tau_g_by_motor[motor_id] + gbias
+            q_des = (
+                self._hold_q[motor_id]
+                if self._hold_q is not None
+                else self.state_by_motor[motor_id].q
+            )
             out[motor_id] = {
-                "q_des": self.state_by_motor[motor_id].q,
+                "q_des": q_des,
                 "qd_des": 0.0,
-                "kp": 0.0,
-                "kd": 0.0,
+                "kp": kp,
+                "kd": kd,
                 "tau_ff": tau_ff,
             }
         return out
@@ -276,7 +286,7 @@ class PlanNode(Node):
             kd = max(0.0, min(self.kd_max, v["kd"]))
             tau_limit = self.tau_limit_by_motor.get(motor_id, float("inf"))
             tau_ff = v["tau_ff"]
-            if not math.isfinite(tau_limit) or tau_limit > 0:
+            if not self.unlimited_tau and (not math.isfinite(tau_limit) or tau_limit > 0):
                 tau_ff = max(-tau_limit, min(tau_limit, tau_ff))
             for name, val in (("q_des", v["q_des"]), ("qd_des", v["qd_des"]), ("tau_ff", tau_ff)):
                 if not math.isfinite(val):
