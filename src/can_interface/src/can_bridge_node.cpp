@@ -51,10 +51,11 @@ constexpr float kHomeEpsilon = 1e-4F;
 // 정적 브리지 설정(수정 후 재빌드/재시작 필요)
 constexpr char kChannel[] = "can0";
 constexpr uint8_t kHostId = 0xFD;
-constexpr uint8_t kRs03Id  = 2;
+constexpr uint8_t kRs03Id  = 2;  // 어깨(j2) — RS03 모터
 constexpr uint8_t kRs00Id1 = 5;
 constexpr uint8_t kRs00Id2 = 6;
 constexpr uint8_t kRs05Id  = 7;
+constexpr uint8_t kJ3MotorId = 3;  // 엘보우(j3) — ±π 경계 wrapping 특수 처리 대상
 constexpr int kScanMinId = 1;
 constexpr int kScanMaxId = 10;
 constexpr int kScanWaitMs = 200;
@@ -232,7 +233,6 @@ public:
   {
     channel_ = kChannel;
     host_id_ = kHostId;
-    rs03_id_ = kRs03Id;
     scan_min_id_ = kScanMinId;
     scan_max_id_ = kScanMaxId;
     scan_wait_ms_ = kScanWaitMs;
@@ -330,7 +330,7 @@ private:
   // 모터 ID에 따라 모터 모델별 MIT 범위를 선택한다.
   const MitRanges & ranges_for(const uint8_t motor_id) const
   {
-    if (motor_id == rs03_id_)                          return MIT_RS03;
+    if (motor_id == kRs03Id)                           return MIT_RS03;
     if (motor_id == kRs00Id1 || motor_id == kRs00Id2) return MIT_RS00;
     if (motor_id == kRs05Id)                           return MIT_RS05;
     return MIT_RS02;
@@ -759,7 +759,7 @@ private:
     // Example: raw=-3.178 -> target=-pi, raw=+3.178 -> target=+pi.
     constexpr float kPiBoundaryTol = 0.05F;
     if (
-      motor_id == 3 &&
+      motor_id == kJ3MotorId &&
       std::fabs(span - period) <= 1e-3F &&
       std::fabs(std::fabs(q_base) - static_cast<float>(M_PI)) <= kPiBoundaryTol)
     {
@@ -1166,7 +1166,6 @@ private:
   int sock_fd_{-1};
   std::string channel_;
   uint8_t host_id_{0xFD};
-  uint8_t rs03_id_{2};
   int scan_min_id_{1};
   int scan_max_id_{10};
   int scan_wait_ms_{200};
