@@ -1,22 +1,16 @@
-<?xml version="1.0" ?>
+<?xml version="1.0" encoding="utf-8"?>
 <mujoco model="my_robot">
-  <compiler angle="radian" coordinate="local" meshdir="meshes" autolimits="true" inertiafromgeom="false"/>
-  <option timestep="0.001" gravity="0 0 -9.81" integrator="RK4"/>
-  <statistic center="0 0 0.4" extent="1.0"/>
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002"/>
+  <size njmax="200" nconmax="200"/>
   <default>
-    <joint damping="0.02" armature="0.001" limited="true"/>
-    <geom solimp="0.9 0.95 0.001" solref="0.02 1"/>
-    <default class="visual">
-      <geom contype="0" conaffinity="0" group="1" rgba="0.8 0.82 0.85 1"/>
-    </default>
-    <default class="collision">
-      <geom group="3" rgba="0.8 0.82 0.85 0.25"/>
-    </default>
+    <joint damping="0.05" armature="0.001"/>
+    <geom type="mesh" density="0" friction="1 0.005 0.0001"/>
   </default>
   <asset>
     <mesh name="base" file="base.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="RS02_0_0_0" file="RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
-    <mesh name="RS03_0_0_0" file="RS03(0.0.0).stl" scale="0.001 0.001 0.001"/>
+    <mesh name="RS02_000" file="RS02(0.0.0).stl" scale="0.001 0.001 0.001"/>
+    <mesh name="RS03_000" file="RS03(0.0.0).stl" scale="0.001 0.001 0.001"/>
     <mesh name="RS00" file="RS00.stl" scale="0.001 0.001 0.001"/>
     <mesh name="RS05" file="RS05.stl" scale="0.001 0.001 0.001"/>
     <mesh name="joint1" file="joint1.stl" scale="0.001 0.001 0.001"/>
@@ -28,119 +22,86 @@
     <mesh name="link2_3" file="link2_3.stl" scale="0.001 0.001 0.001"/>
     <mesh name="link3_1" file="link3_1.stl" scale="0.001 0.001 0.001"/>
     <mesh name="link3_2" file="link3_2.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="connect_00" file="connect_00.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="connect_05" file="connect_05.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="case" file="case.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="link3_3" file="link3_3.stl" scale="0.001 0.001 0.001"/>
     <mesh name="gripper" file="gripper.stl" scale="0.001 0.001 0.001"/>
     <mesh name="finger_r" file="finger_r.stl" scale="0.001 0.001 0.001"/>
     <mesh name="finger_l" file="finger_l.stl" scale="0.001 0.001 0.001"/>
   </asset>
   <worldbody>
-    <light name="top_light" pos="0 0 1.5" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
-    <geom name="floor" type="plane" size="1 1 0.02" rgba="0.45 0.45 0.45 1"/>
+    <light name="top_light" pos="0 0 1.5" dir="0 0 -1" mode="trackcom"/>
+    <camera name="front" pos="0.8 -1.2 0.7" xyaxes="1 0.5 0 -0.2 0.4 1"/>
     <body name="base">
-      <inertial pos="0 0 0.0348912" mass="0.6248" fullinertia="0.0021425 0.0020799 0.0030294 0 0 0"/>
-      <geom name="base_visual_0" class="visual" type="mesh" mesh="base"/>
-      <geom name="base_collision_0" class="collision" type="mesh" mesh="base"/>
+      <inertial pos="-0.00000248163 0.000000483416 0.035385988818" mass="0.685513" fullinertia="0.002363000000 0.002295000000 0.003326000000 0.000000000000 0.000000000000 0.000000000000"/>
+      <geom name="geom_base" mesh="base" contype="1" conaffinity="1"/>
       <body name="rs02_1" pos="0 0 0.1002" quat="1 0 0 0">
-        <inertial pos="0 0 -0.0183" mass="0.4116" fullinertia="0.0002744593935 0.0002739045499 0.0002868015076 -2.67562942e-08 -1.361358361e-08 -1.986923161e-07"/>
-        <geom name="rs02_1_visual_0" class="visual" type="mesh" mesh="RS02_0_0_0"/>
-        <geom name="rs02_1_collision_0" class="collision" type="mesh" mesh="RS02_0_0_0"/>
-        <body name="joint1" pos="0 0 0" quat="1.326794897e-06 1 0 0">
-          <inertial pos="1.03e-05 -0.0142659 0.0579402" mass="0.270398" fullinertia="0.00081368 0.00104368 0.00081949 0 0 0"/>
-          <joint name="j1" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
-          <geom name="joint1_visual_0" class="visual" type="mesh" mesh="joint1"/>
-          <geom name="joint1_collision_0" class="collision" type="mesh" mesh="joint1"/>
-          <body name="rs03" pos="-0.0362 0 -0.0893" quat="0.4999981634 0.5 -0.5000018366 -0.5">
-            <inertial pos="0 0 -0.0215" mass="0.9244" fullinertia="0.0008718102654 0.0009164494325 0.001195322212 -6.322401251e-07 -7.163998969e-06 -1.177125045e-06"/>
-            <geom name="rs03_visual_0" class="visual" type="mesh" mesh="RS03_0_0_0"/>
-            <geom name="rs03_collision_0" class="collision" type="mesh" mesh="RS03_0_0_0"/>
-            <body name="link1_1" pos="0 0 0" quat="2.679489659e-08 1 0 0">
-              <inertial pos="0 0.0121112 0.0430994" mass="0.236296" fullinertia="0.00039409 0.00035378 0.00043232 0 0 0"/>
-              <joint name="j2" type="hinge" axis="0 0 1" range="-1.78 1.78"/>
-              <geom name="link1_1_visual_0" class="visual" type="mesh" mesh="link1_1"/>
-              <geom name="link1_1_collision_0" class="collision" type="mesh" mesh="link1_1"/>
-              <body name="link1_2" pos="0 0.05 -0.05715" quat="0.7071054825 -0.7071080799 0 0">
-                <inertial pos="0 0 0.15" mass="0.508299975" fullinertia="0.003890759307 0.003890759307 0.000157018996 0 0 0"/>
-                <geom name="link1_2_visual_0" class="visual" type="mesh" mesh="link1_2"/>
-                <geom name="link1_2_collision_0" class="collision" type="mesh" mesh="link1_2"/>
-                <body name="link1_3" pos="0 0 0.3" quat="2.679489659e-08 0 0 1">
-                  <inertial pos="2e-07 0.0155124 0.0339681" mass="0.279149934" fullinertia="0.000661231823 0.000687897169 0.000472960204 -1.55e-09 1.529e-09 0.000125413257"/>
-                  <geom name="link1_3_visual_0" class="visual" type="mesh" mesh="link1_3"/>
-                  <geom name="link1_3_collision_0" class="collision" type="mesh" mesh="link1_3"/>
-                  <body name="rs02_2" pos="0 0.06735 0.05" quat="0.7071054825 -0.7071080799 0 0">
-                    <inertial pos="0 0 -0.0183" mass="0.4116" fullinertia="0.0002744593935 0.0002739045499 0.0002868015076 -2.67562942e-08 -1.361358361e-08 -1.986923161e-07"/>
-                    <geom name="rs02_2_visual_0" class="visual" type="mesh" mesh="RS02_0_0_0"/>
-                    <geom name="rs02_2_collision_0" class="collision" type="mesh" mesh="RS02_0_0_0"/>
-                    <body name="link2_1" pos="0 0 0" quat="0 2.679489659e-08 1 2.679489659e-08">
-                      <inertial pos="3.1e-06 -0.0100157 0.0438699" mass="0.151798" fullinertia="0.00026036 0.00033758 0.00027115 0 0 0"/>
-                      <joint name="j3" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
-                      <geom name="link2_1_visual_0" class="visual" type="mesh" mesh="link2_1"/>
-                      <geom name="link2_1_collision_0" class="collision" type="mesh" mesh="link2_1"/>
-                      <body name="link2_2" pos="0 -0.05 -0.07415" quat="0.7071054825 0.7071080799 0 0">
-                        <inertial pos="3.54e-05 -3.54e-05 0.0291096" mass="0.112" fullinertia="9.821e-05 9.821e-05 0.00011208 0 0 0"/>
-                        <geom name="link2_2_visual_0" class="visual" type="mesh" mesh="link2_2"/>
-                        <geom name="link2_2_collision_0" class="collision" type="mesh" mesh="link2_2"/>
+        <inertial pos="0 0 -0.0183" mass="0.411618" fullinertia="0.000201 0.000200 0.000287 0.000000 0.000000 0.000000"/>
+        <geom name="geom_rs02_1" mesh="RS02_000" contype="1" conaffinity="1"/>
+        <body name="joint1" pos="0 0 0" quat="0.000001326795 0.999999999999 0 0">
+          <joint name="j1" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" actuatorfrcrange="-50 50"/>
+          <inertial pos="0.005674051863 0.000004286091 -0.057303043346" mass="0.431305" fullinertia="0.001623000000 0.001247000000 0.001062000000 0.000000000000 -0.000147000000 0.000000000000"/>
+          <geom name="geom_joint1" mesh="joint1" contype="1" conaffinity="1"/>
+          <body name="rs03" pos="-0.0362 0 -0.0893" quat="0.499998163397 0.499999999997 -0.500001836603 -0.499999999997">
+            <inertial pos="0 0 -0.0215" mass="0.924357" fullinertia="0.000880 0.000920 0.001201 -0.000001 -0.000007 -0.000001"/>
+            <geom name="geom_rs03" mesh="RS03_000" contype="1" conaffinity="1"/>
+            <body name="link1_1" pos="0 0 0" quat="0.000000026795 1 0 0">
+              <joint name="j2" type="hinge" axis="0 0 1" range="-1.78 1.78" limited="true" actuatorfrcrange="-50 50"/>
+              <inertial pos="0.000000023649 0.022463093246 -0.0449012193" mass="0.350100" fullinertia="0.000685000000 0.000466000000 0.000710000000 0.000000000000 0.000000000000 0.000123000000"/>
+              <geom name="geom_link1_1" mesh="link1_1" contype="1" conaffinity="1"/>
+              <body name="link1_2" pos="0 0.05 -0.05715" quat="0.707105482511 -0.707108079859 0 0">
+                <inertial pos="0.000001692897 -0.000002036842 0.15" mass="0.502204" fullinertia="0.003839000000 0.003839000000 0.000146000000 0.000000000000 0.000000000000 0.000000000000"/>
+                <geom name="geom_link1_2" mesh="link1_2" contype="1" conaffinity="1"/>
+                <body name="link1_3" pos="0 0 0.3" quat="0.000000026795 0 0 1">
+                  <inertial pos="-0.000000306035 0.013487771767 0.021900262023" mass="0.279601" fullinertia="0.000662000000 0.000689000000 0.000476000000 -0.000002000000 -0.000002000000 -0.000126000000"/>
+                  <geom name="geom_link1_3" mesh="link1_3" contype="1" conaffinity="1"/>
+                  <body name="rs02_2" pos="0 0.06735 0.05" quat="0.707105482511 -0.707108079859 0 0">
+                    <inertial pos="0 0 -0.0183" mass="0.411618" fullinertia="0.000201 0.000200 0.000287 0.000000 0.000000 0.000000"/>
+                    <geom name="geom_rs02_2" mesh="RS02_000" contype="1" conaffinity="1"/>
+                    <body name="link2_1" pos="0 0 0" quat="0.000000026795 1 0 0">
+                      <joint name="j3" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" actuatorfrcrange="-50 50"/>
+                      <inertial pos="0.000566325368 -0.022115000982 -0.05767963311" mass="0.361563" fullinertia="0.000856000000 0.000639000000 0.000722000000 0.000010000000 0.000003000000 -0.000167000000"/>
+                      <geom name="geom_link2_1" mesh="link2_1" contype="1" conaffinity="1"/>
+                      <body name="link2_2" pos="0 -0.05 -0.07415" quat="0.707105482511 0.707108079859 0 0">
+                        <inertial pos="0 0 0.115" mass="0.154772" fullinertia="0.000690000000 0.000690000000 0.000048000000 0.000000000000 0.000000000000 0.000000000000"/>
+                        <geom name="geom_link2_2" mesh="link2_2" contype="1" conaffinity="1"/>
                         <body name="link2_3" pos="0 0 0.23" quat="1 0 0 0">
-                          <inertial pos="0 0 0.115" mass="0.170500037" fullinertia="0.000759754048 0.000759754048 5.2564816e-05 0 0 0"/>
-                          <geom name="link2_3_visual_0" class="visual" type="mesh" mesh="link2_3"/>
-                          <geom name="link2_3_collision_0" class="collision" type="mesh" mesh="link2_3"/>
-                          <body name="rs02_3" pos="0 -0.06585 0.05" quat="0.7071054825 0.7071080799 0 0">
-                            <inertial pos="0 0 -0.0183" mass="0.4116" fullinertia="0.0002744593935 0.0002739045499 0.0002868015076 -2.67562942e-08 -1.361358361e-08 -1.986923161e-07"/>
-                            <geom name="rs02_3_visual_0" class="visual" type="mesh" mesh="RS02_0_0_0"/>
-                            <geom name="rs02_3_collision_0" class="collision" type="mesh" mesh="RS02_0_0_0"/>
-                            <body name="link3_1" pos="0 0 0" quat="1.326794897e-06 0 1 0">
-                              <inertial pos="0 0 0.115" mass="0.170500037" fullinertia="0.000759754048 0.000759754048 5.2564816e-05 0 0 0"/>
-                              <joint name="j4" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
-                              <geom name="link3_1_visual_0" class="visual" type="mesh" mesh="link3_1"/>
-                              <geom name="link3_1_collision_0" class="collision" type="mesh" mesh="link3_1"/>
-                              <body name="rs00_1" pos="0 0.0724 -0.053" quat="0.7071054825 -0.7071080799 0 0">
-                                <inertial pos="0 0 -0.0215" mass="0.9244" fullinertia="0.0008718102654 0.0009164494325 0.001195322212 -6.322401251e-07 -7.163998969e-06 -1.177125045e-06"/>
-                                <geom name="rs00_1_visual_0" class="visual" type="mesh" mesh="RS00"/>
-                                <geom name="rs00_1_collision_0" class="collision" type="mesh" mesh="RS00"/>
-                                <body name="link3_2" pos="0 0 0" quat="1.326794897e-06 0 1 0">
-                                  <inertial pos="0 0 0.115" mass="0.170500037" fullinertia="0.000759754048 0.000759754048 5.2564816e-05 0 0 0"/>
-                                  <joint name="j5" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
-                                  <geom name="link3_2_visual_0" class="visual" type="mesh" mesh="link3_2"/>
-                                  <geom name="link3_2_collision_0" class="collision" type="mesh" mesh="link3_2"/>
-                                  <body name="rs00_2" pos="0 0.0724 -0.058" quat="0.7071054825 -0.7071080799 0 0">
-                                    <inertial pos="0 0 -0.0215" mass="0.9244" fullinertia="0.0008718102654 0.0009164494325 0.001195322212 -6.322401251e-07 -7.163998969e-06 -1.177125045e-06"/>
-                                    <geom name="rs00_2_visual_0" class="visual" type="mesh" mesh="RS00"/>
-                                    <geom name="rs00_2_collision_0" class="collision" type="mesh" mesh="RS00"/>
-                                    <body name="connect_00" pos="0 0 0" quat="3.267948965e-07 1 0 0">
-                                      <inertial pos="0 0 0" mass="0.1" fullinertia="0.0001 0.0001 0.0001 0 0 0"/>
-                                      <joint name="j6" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
-                                      <geom name="connect_00_visual_0" class="visual" type="mesh" mesh="connect_00"/>
-                                      <geom name="connect_00_collision_0" class="collision" type="mesh" mesh="connect_00"/>
-                                      <body name="connect_05" pos="0 0 -0.02" quat="3.267948965e-07 1 0 0">
-                                        <inertial pos="0 0 0" mass="0.1" fullinertia="0.0001 0.0001 0.0001 0 0 0"/>
-                                        <geom name="connect_05_visual_0" class="visual" type="mesh" mesh="connect_05"/>
-                                        <geom name="connect_05_collision_0" class="collision" type="mesh" mesh="connect_05"/>
-                                        <body name="rs05" pos="0 0 0.06" quat="1 0 0 0">
-                                          <inertial pos="0 0 0" mass="0.9244" fullinertia="0.0008718102654 0.0009164494325 0.001195322212 -6.322401251e-07 -7.163998969e-06 -1.177125045e-06"/>
-                                          <geom name="rs05_visual_0" class="visual" type="mesh" mesh="RS05"/>
-                                          <geom name="rs05_collision_0" class="collision" type="mesh" mesh="RS05"/>
-                                          <body name="case" pos="0 0 0" quat="1 0 0 0">
-                                            <inertial pos="0 0 0" mass="0.1" fullinertia="0.0001 0.0001 0.0001 0 0 0"/>
-                                            <geom name="case_visual_0" class="visual" type="mesh" mesh="case"/>
-                                            <geom name="case_collision_0" class="collision" type="mesh" mesh="case"/>
+                          <inertial pos="0.000674605271 -0.012156717809 0.021127478899" mass="0.302349" fullinertia="0.000684000000 0.000702000000 0.000504000000 -0.000003000000 0.000008000000 0.000139000000"/>
+                          <geom name="geom_link2_3" mesh="link2_3" contype="1" conaffinity="1"/>
+                          <body name="rs02_3" pos="0 -0.06585 0.05" quat="0.707105482511 0.707108079859 0 0">
+                            <inertial pos="0 0 -0.0183" mass="0.411618" fullinertia="0.000201 0.000200 0.000287 0.000000 0.000000 0.000000"/>
+                            <geom name="geom_rs02_3" mesh="RS02_000" contype="1" conaffinity="1"/>
+                            <body name="link3_1" pos="0 0 0" quat="0.000001326795 0 0.999999999999 0">
+                              <joint name="j4" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" actuatorfrcrange="-50 50"/>
+                              <inertial pos="-0.000000154781 0.022689723837 -0.040161124828" mass="0.264011" fullinertia="0.000540000000 0.000493000000 0.000580000000 0.000000000000 0.000000000000 0.000101000000"/>
+                              <geom name="geom_link3_1" mesh="link3_1" contype="1" conaffinity="1"/>
+                              <body name="rs00_1" pos="0 0.0724 -0.053" quat="0.707105482511 -0.707108079859 0 0">
+                                <inertial pos="0 0 -0.0208" mass="0.311841" fullinertia="0.000130 0.000129 0.000127 0.000000 0.000000 0.000000"/>
+                                <geom name="geom_rs00_1" mesh="RS00" contype="1" conaffinity="1"/>
+                                <body name="link3_2" pos="0 0 0" quat="0.000001326795 0 0.999999999999 0">
+                                  <joint name="j5" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" actuatorfrcrange="-50 50"/>
+                                  <inertial pos="-0.000001870544 0.023210308078 -0.045745385269" mass="0.259261" fullinertia="0.000535000000 0.000491000000 0.000579000000 0.000000000000 0.000000000000 0.000098000000"/>
+                                  <geom name="geom_link3_2" mesh="link3_2" contype="1" conaffinity="1"/>
+                                  <body name="rs00_2" pos="0 0.0724 -0.058" quat="0.707105482511 -0.707108079859 0 0">
+                                    <inertial pos="0 0 -0.0208" mass="0.311841" fullinertia="0.000130 0.000129 0.000127 0.000000 0.000000 0.000000"/>
+                                    <geom name="geom_rs00_2" mesh="RS00" contype="1" conaffinity="1"/>
+                                    <body name="link3_3" pos="0 0 0" quat="0 1 0 0">
+                                      <joint name="j6" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" actuatorfrcrange="-50 50"/>
+                                      <inertial pos="-0.00000028707 0.001356284705 -0.050392020362" mass="0.202651" fullinertia="0.000305000000 0.000348000000 0.000343000000 0.000000000000 0.000000000000 -0.000010000000"/>
+                                      <geom name="geom_link3_3" mesh="link3_3" contype="1" conaffinity="1"/>
+                                      <body name="rs05" pos="0 0 -0.093" quat="0.00000023108 -0.707104897878 0.70710866449 0.000000231078">
+                                        <inertial pos="0 0 -0.0183" mass="0.191090" fullinertia="0.000082 0.000082 0.000068 0.000000 0.000000 0.000000"/>
+                                        <geom name="geom_rs05" mesh="RS05" contype="1" conaffinity="1"/>
+                                        <body name="gripper" pos="0 0 0" quat="0.000001326795 0 0.999999999999 0">
+                                          <inertial pos="-0.000001543486 -0.00000289698 -0.012058477856" mass="0.090928" fullinertia="0.000134000000 0.000013000000 0.000138000000 0.000006000000 0.000000000000 0.000000000000"/>
+                                          <geom name="geom_gripper" mesh="gripper" contype="1" conaffinity="1"/>
+                                          <body name="finger_r" pos="0 -0.06475 -0.0218" quat="1 0 0 0">
+                                            <joint name="finger_r" type="slide" axis="0 1 0" range="0 0.0447" limited="true" actuatorfrcrange="-50 50"/>
+                                            <inertial pos="0.000927864812 0.006622883789 -0.011071668038" mass="0.030964" fullinertia="0.000011000000 0.000012000000 0.000006000000 0.000000000000 0.000000000000 0.000003000000"/>
+                                            <geom name="geom_finger_r" mesh="finger_r" contype="1" conaffinity="1"/>
                                           </body>
-                                          <body name="gripper" pos="0 0 0" quat="1.326794897e-06 0 1 0">
-                                            <inertial pos="0 0 0" mass="0.1" fullinertia="0.0001 0.0001 0.0001 0 0 0"/>
-                                            <geom name="gripper_visual_0" class="visual" type="mesh" mesh="gripper"/>
-                                            <geom name="gripper_collision_0" class="collision" type="mesh" mesh="gripper"/>
-                                            <body name="finger_r" pos="0 -0.0625 -0.0198" quat="1 0 0 0">
-                                              <inertial pos="0 0 0" mass="0.1" fullinertia="0.0001 0.0001 0.0001 0 0 0"/>
-                                              <joint name="finger_r" type="slide" axis="0 1 0" range="0 0.05"/>
-                                              <geom name="finger_r_visual_0" class="visual" type="mesh" mesh="finger_r"/>
-                                              <geom name="finger_r_collision_0" class="collision" type="mesh" mesh="finger_r"/>
-                                            </body>
-                                            <body name="finger_l" pos="0 0.0625 -0.0198" quat="1 0 0 0">
-                                              <inertial pos="0 0 0" mass="0.1" fullinertia="0.0001 0.0001 0.0001 0 0 0"/>
-                                              <joint name="finger_l" type="slide" axis="0 -1 0" range="0 0.05"/>
-                                              <geom name="finger_l_visual_0" class="visual" type="mesh" mesh="finger_l"/>
-                                              <geom name="finger_l_collision_0" class="collision" type="mesh" mesh="finger_l"/>
-                                            </body>
+                                          <body name="finger_l" pos="0 0.06475 -0.0218" quat="1 0 0 0">
+                                            <joint name="finger_l" type="slide" axis="0 -1 0" range="0 0.05" limited="true" actuatorfrcrange="-50 50"/>
+                                            <inertial pos="-0.000922783846 -0.006622999429 -0.011071668038" mass="0.030964" fullinertia="0.000011000000 0.000012000000 0.000006000000 0.000000000000 0.000000000000 -0.000003000000"/>
+                                            <geom name="geom_finger_l" mesh="finger_l" contype="1" conaffinity="1"/>
                                           </body>
                                         </body>
                                       </body>
@@ -163,18 +124,15 @@
     </body>
   </worldbody>
   <equality>
-    <joint name="finger_l_mimic_finger_r" joint1="finger_l" joint2="finger_r" polycoef="0 1 0 0 0"/>
+    <joint name="mimic_finger_l" joint1="finger_l" joint2="finger_r" polycoef="0 1 0 0 0"/>
   </equality>
   <actuator>
-    <motor name="j1_motor" joint="j1" gear="1" ctrllimited="true" ctrlrange="-50 50"/>
-    <motor name="j2_motor" joint="j2" gear="1" ctrllimited="true" ctrlrange="-50 50"/>
-    <motor name="j3_motor" joint="j3" gear="1" ctrllimited="true" ctrlrange="-50 50"/>
-    <motor name="j4_motor" joint="j4" gear="1" ctrllimited="true" ctrlrange="-50 50"/>
-    <motor name="j5_motor" joint="j5" gear="1" ctrllimited="true" ctrlrange="-50 50"/>
-    <motor name="j6_motor" joint="j6" gear="1" ctrllimited="true" ctrlrange="-50 50"/>
-    <motor name="finger_r_motor" joint="finger_r" gear="1" ctrllimited="true" ctrlrange="-50 50"/>
+    <motor name="act_j1" joint="j1" gear="1" ctrlrange="-50 50"/>
+    <motor name="act_j2" joint="j2" gear="1" ctrlrange="-50 50"/>
+    <motor name="act_j3" joint="j3" gear="1" ctrlrange="-50 50"/>
+    <motor name="act_j4" joint="j4" gear="1" ctrlrange="-50 50"/>
+    <motor name="act_j5" joint="j5" gear="1" ctrlrange="-50 50"/>
+    <motor name="act_j6" joint="j6" gear="1" ctrlrange="-50 50"/>
+    <motor name="act_finger_r" joint="finger_r" gear="1" ctrlrange="-50 50"/>
   </actuator>
-  <keyframe>
-    <key name="home" qpos="0 0 0 0 0 0 0 0" ctrl="0 0 0 0 0 0 0"/>
-  </keyframe>
 </mujoco>

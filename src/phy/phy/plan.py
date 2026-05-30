@@ -262,15 +262,27 @@ class Planner:
         R: np.ndarray,
         seed_q: np.ndarray,
     ) -> IKResult:
-        best = self.ik.solve_pose(target_xyz, R, seed_q)
+        yaw = math.atan2(float(target_xyz[1]), float(target_xyz[0]))
+        candidates = [
+            seed_q,                                                              # 1. 현재 측정 자세
+            self.ik.clip_to_limits(np.array([yaw,              1.2, 2.2, 0., 0., 0.])),  # 2. fwd elbow-up
+            self.ik.clip_to_limits(np.array([yaw + math.pi,    1.2, 2.2, 0., 0., 0.])),  # 3. bwd elbow-up
+            np.zeros(self._n_dof),                                               # 4. zeros
+        ]
+        best = self.ik.solve_pose(target_xyz, R, candidates[0])
         if best.success:
             return best
-        rng = np.random.default_rng(0)
-        for _ in range(self.cfg.ik_random_restarts):
-            random_seed = rng.uniform(self.ik.lower_limits, self.ik.upper_limits)
-            res = self.ik.solve_pose(target_xyz, R, random_seed)
-            if res.success:
-                return res
+        for seed in candidates[1:]:
+            res = self.ik.solve_pose(target_xyz, R, seed)
             if res.residual_norm < best.residual_norm:
                 best = res
+            if res.success:
+                return best
+        rng = np.random.default_rng()
+        for _ in range(self.cfg.ik_random_restarts):
+            res = self.ik.solve_pose(target_xyz, R, rng.uniform(self.ik.lower_limits, self.ik.upper_limits))
+            if res.residual_norm < best.residual_norm:
+                best = res
+            if res.success:
+                return best
         return best
