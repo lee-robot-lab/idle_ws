@@ -33,7 +33,7 @@
     <body name="base">
       <inertial pos="-0.00000248163 0.000000483416 0.035385988818" mass="0.685513" fullinertia="0.002363000000 0.002295000000 0.003326000000 0.000000000000 0.000000000000 0.000000000000"/>
       <geom name="geom_base" mesh="base" contype="1" conaffinity="1"/>
-      <body name="rs02_1" pos="0 0 0.1002" quat="1 0 0 0">
+      <body name="rs02_1" pos="0 0 0.1002" quat="0.70710678 0 0 0.70710678">
         <inertial pos="0 0 -0.0183" mass="0.411618" fullinertia="0.000201 0.000200 0.000287 0.000000 0.000000 0.000000"/>
         <geom name="geom_rs02_1" mesh="RS02_000" contype="1" conaffinity="1"/>
         <body name="joint1" pos="0 0 0" quat="0.000001326795 0.999999999999 0 0">

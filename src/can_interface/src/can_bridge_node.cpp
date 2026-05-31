@@ -45,7 +45,7 @@ constexpr uint8_t TYPE03_ENABLE = 0x03;
 constexpr uint8_t TYPE04_STOP = 0x04;
 constexpr uint8_t TYPE_MASK = 0x1F;
 // Home 복귀 궤적 관련 기본값
-constexpr float kHomeReturnDurationSec = 5.0F;
+constexpr float kHomeReturnDurationSec = 7.0F;
 constexpr float kHomeEpsilon = 1e-4F;
 
 // 정적 브리지 설정(수정 후 재빌드/재시작 필요)
@@ -56,17 +56,23 @@ constexpr uint8_t kRs00Id1 = 5;
 constexpr uint8_t kRs00Id2 = 6;
 constexpr uint8_t kRs05Id  = 7;
 constexpr uint8_t kJ3MotorId = 3;  // 엘보우(j3) — ±π 경계 wrapping 특수 처리 대상
+constexpr uint8_t kJ2MotorId = 2;
+constexpr float kJ3SafeHomeRad  = -0.785F;  // -45°: link2_3/joint1 충돌 없는 안전 구간
+constexpr float kJ2SafeFloorRad = -0.524F;  // -30°: j3=-45° 일 때 바닥 간섭 없는 최소 j2
+constexpr float kHomeSeqSpeedRadPerSec = 0.5F;
+constexpr float kHomeSeqMinDurationSec = 0.5F;
+constexpr float kHomeSeqDwellSec       = 1.0F;  // 페이즈 완료 후 안착 대기
 constexpr int kScanMinId = 1;
 constexpr int kScanMaxId = 10;
 constexpr int kScanWaitMs = 200;
 constexpr int kRxMaxFramesPerTick = 100;
 constexpr int kCmdTimeoutMs = 100;
-constexpr double kTxHzDefault = 500.0;
+constexpr double kTxHzDefault = 250.0;
 const std::unordered_map<int, double> kTxHzByMotor {};
 constexpr double kHomeQDes = 0.0;
 constexpr double kHomeQdDes = 0.0;
-constexpr double kHomeKp = 30.0;
-constexpr double kHomeKd = 5.0;
+constexpr double kHomeKp = 5.0;
+constexpr double kHomeKd = 1.0;
 constexpr double kHomeTauFf = 0.0;
 struct MotorHomeConfig
 {
@@ -78,13 +84,13 @@ struct MotorHomeConfig
 };
 
 const std::unordered_map<int, MotorHomeConfig> kMotorHomeByMotor {
-  {1, {0.0,                         5.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
-  {2, {0.0,                        37.0, 6.0, -1.78,                     1.78}},
-  {3, {static_cast<double>(M_PI),  30.0, 5.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
-  {4, {0.0,                        30.0, 5.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
-  {5, {0.0,                        15.0, 1.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
-  {6, {0.0,                        15.0, 1.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
-  {7, {0.0,                         8.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {1, {0.0,                        10.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {2, {0.0,                        30.0, 2.0, -1.78,                     1.78}},
+  {3, {0.0,                        20.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {4, {0.0,                        10.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {5, {0.0,                        5.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {6, {0.0,                        5.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {7, {0.0,                         2.0, 0.5, 0.0,                       1.3599}},
 };
 
 // MIT 인코딩/디코딩에 쓰는 모터별 물리 범위
@@ -744,6 +750,116 @@ private:
       value_for_motor(home_policy_.kd_by_motor, motor_id, home_policy_.kd_default));
   }
 
+  // j2/j3 순서 홈 복귀 시퀀서를 시작한다.
+  void start_j2j3_sequence(const std::chrono::steady_clock::time_point & now_tp)
+  {
+    const MotorRuntime & rt2 = runtime_by_motor_[kJ2MotorId];
+    const MotorRuntime & rt3 = runtime_by_motor_[kJ3MotorId];
+    j2j3_seq_.j2_q0  = rt2.has_state ? rt2.last_state.q : 0.0F;
+    j2j3_seq_.j3_q0  = rt3.has_state ? rt3.last_state.q : 0.0F;
+    j2j3_seq_.j2_via = std::max(j2j3_seq_.j2_q0, kJ2SafeFloorRad);
+    auto phase_dur = [](float dq) -> float {
+      return std::max(
+        kHomeSeqMinDurationSec, std::fabs(dq) / kHomeSeqSpeedRadPerSec);
+    };
+    j2j3_seq_.p1_dur = phase_dur(j2j3_seq_.j2_via - j2j3_seq_.j2_q0);
+    j2j3_seq_.p2_dur = phase_dur(kJ3SafeHomeRad  - j2j3_seq_.j3_q0);
+    j2j3_seq_.p3_dur = phase_dur(0.0F            - j2j3_seq_.j2_via);
+    j2j3_seq_.p4_dur = phase_dur(0.0F            - kJ3SafeHomeRad);
+    j2j3_seq_.phase_start = now_tp;
+    j2j3_seq_.phase = 1;
+    j2j3_seq_.done = false;
+    RCLCPP_INFO(
+      get_logger(),
+      "j2/j3 home seq started: j2_q0=%.3f j3_q0=%.3f j2_via=%.3f "
+      "dur=[%.1f, %.1f, %.1f, %.1f] s",
+      static_cast<double>(j2j3_seq_.j2_q0),
+      static_cast<double>(j2j3_seq_.j3_q0),
+      static_cast<double>(j2j3_seq_.j2_via),
+      static_cast<double>(j2j3_seq_.p1_dur),
+      static_cast<double>(j2j3_seq_.p2_dur),
+      static_cast<double>(j2j3_seq_.p3_dur),
+      static_cast<double>(j2j3_seq_.p4_dur));
+  }
+
+  // 경과 시간 기준으로 페이즈를 전진시킨다 (dispatch 루프 시작 전 1회 호출).
+  void advance_j2j3_phase(const std::chrono::steady_clock::time_point & now_tp)
+  {
+    if (j2j3_seq_.phase == 0) {
+      return;
+    }
+
+    if (j2j3_seq_.in_dwell) {
+      const double dwell_elapsed =
+        std::chrono::duration<double>(now_tp - j2j3_seq_.dwell_start).count();
+      if (dwell_elapsed < static_cast<double>(kHomeSeqDwellSec)) {
+        return;
+      }
+      j2j3_seq_.in_dwell = false;
+      const uint8_t next = j2j3_seq_.phase + 1U;
+      if (next > 4U) {
+        j2j3_seq_.phase = 0;
+        j2j3_seq_.done = true;
+        RCLCPP_INFO(get_logger(), "j2/j3 home seq complete");
+      } else {
+        j2j3_seq_.phase = next;
+        j2j3_seq_.phase_start = now_tp;
+        RCLCPP_INFO(get_logger(), "j2/j3 home seq → phase %u", static_cast<unsigned>(next));
+      }
+      return;
+    }
+
+    const float cur_dur =
+      (j2j3_seq_.phase == 1) ? j2j3_seq_.p1_dur :
+      (j2j3_seq_.phase == 2) ? j2j3_seq_.p2_dur :
+      (j2j3_seq_.phase == 3) ? j2j3_seq_.p3_dur : j2j3_seq_.p4_dur;
+    const double elapsed =
+      std::chrono::duration<double>(now_tp - j2j3_seq_.phase_start).count();
+    if (elapsed >= static_cast<double>(cur_dur)) {
+      j2j3_seq_.in_dwell = true;
+      j2j3_seq_.dwell_start = now_tp;
+      RCLCPP_INFO(
+        get_logger(), "j2/j3 home seq phase %u motion done → dwell %.1f s",
+        static_cast<unsigned>(j2j3_seq_.phase),
+        static_cast<double>(kHomeSeqDwellSec));
+    }
+  }
+
+  // 현재 페이즈·경과 시간으로 모터별 q_des를 계산한다.
+  float j2j3_seq_q_des(
+    const uint8_t motor_id,
+    const std::chrono::steady_clock::time_point & now_tp) const
+  {
+    float alpha = 1.0F;
+    if (!j2j3_seq_.in_dwell) {
+      const float cur_dur =
+        (j2j3_seq_.phase == 1) ? j2j3_seq_.p1_dur :
+        (j2j3_seq_.phase == 2) ? j2j3_seq_.p2_dur :
+        (j2j3_seq_.phase == 3) ? j2j3_seq_.p3_dur : j2j3_seq_.p4_dur;
+      const double elapsed =
+        std::chrono::duration<double>(now_tp - j2j3_seq_.phase_start).count();
+      alpha = std::clamp(
+        static_cast<float>(elapsed / static_cast<double>(cur_dur)), 0.0F, 1.0F);
+    }
+    if (motor_id == kJ2MotorId) {
+      switch (j2j3_seq_.phase) {
+        case 1: return j2j3_seq_.j2_q0 + alpha * (j2j3_seq_.j2_via - j2j3_seq_.j2_q0);
+        case 2: return j2j3_seq_.j2_via;
+        case 3: return j2j3_seq_.j2_via + alpha * (0.0F - j2j3_seq_.j2_via);
+        case 4: return 0.0F;
+        default: return 0.0F;
+      }
+    } else {
+      switch (j2j3_seq_.phase) {
+        case 1: return j2j3_seq_.j3_q0;
+        case 2: return j2j3_seq_.j3_q0 + alpha * (kJ3SafeHomeRad - j2j3_seq_.j3_q0);
+        case 3: return kJ3SafeHomeRad;
+        case 4: return kJ3SafeHomeRad + alpha * (0.0F - kJ3SafeHomeRad);
+        default: return 0.0F;
+      }
+    }
+  }
+
   // 현재 위치 기준으로 주기성을 고려한 home 목표 분기를 선택한다.
   float aligned_home_q_des(
     const uint8_t motor_id,
@@ -883,6 +999,14 @@ private:
       cached.last_received_cmd = now_tp;
       cached.timeout_home_active = false;
       cached.home_traj_active = false;
+      if (cmd.motor_id == kJ2MotorId || cmd.motor_id == kJ3MotorId) {
+        if (j2j3_seq_.phase != 0 || j2j3_seq_.done) {
+          j2j3_seq_.phase = 0;
+          j2j3_seq_.done = false;
+          RCLCPP_INFO(
+            get_logger(), "j2/j3 home seq cancelled: external cmd on motor %u", cmd.motor_id);
+        }
+      }
     }
   }
 
@@ -890,6 +1014,7 @@ private:
   void dispatch_cached_commands()
   {
     const auto now_tp = std::chrono::steady_clock::now();
+    advance_j2j3_phase(now_tp);
     for (auto & kv : latest_cmd_by_motor_) {
       const uint8_t motor_id = kv.first;
       CachedCommand & cached = kv.second;
@@ -964,6 +1089,24 @@ private:
           motor_id,
           static_cast<double>(cached.home_traj_goal_q),
           static_cast<double>(cached.home_traj_duration_sec));
+      }
+
+      // j2/j3 순서 홈 복귀 오버라이드: pre-home 또는 timeout-home 중에 적용
+      const bool in_home_mode = is_pre_home_stream || cmd_timed_out;
+      if (in_home_mode && (motor_id == kJ2MotorId || motor_id == kJ3MotorId)) {
+        if (j2j3_seq_.phase == 0 && !j2j3_seq_.done) {
+          start_j2j3_sequence(now_tp);
+        }
+        if (j2j3_seq_.phase != 0) {
+          outgoing = make_home_command(motor_id);
+          outgoing.q_des = j2j3_seq_q_des(motor_id, now_tp);
+          outgoing.stamp = to_builtin_time(now());
+        } else if (j2j3_seq_.done) {
+          // 완료 후 per-motor 궤적으로 복귀하지 않고 0에서 홀드
+          outgoing = make_home_command(motor_id);
+          outgoing.q_des = 0.0F;
+          outgoing.stamp = to_builtin_time(now());
+        }
       }
 
       if (!send_mit_command(outgoing)) {
@@ -1171,6 +1314,23 @@ private:
   int scan_wait_ms_{200};
   int rx_max_frames_per_tick_{100};
   int cmd_timeout_ms_{100};
+
+  // j2/j3 순서 홈 복귀 (4단계, 거리 비례 duration + 페이즈별 dwell)
+  // P1: j2→via(-30°)  P2: j3→-45°  P3: j2→0°  P4: j3→0°
+  struct J2J3Seq {
+    uint8_t phase {0};    // 0=idle, 1~4=각 페이즈
+    bool done {false};    // 한 사이클 완료 후 재기동 방지
+    bool in_dwell {false};  // 보간 완료 후 안착 대기 중
+    std::chrono::steady_clock::time_point phase_start {};
+    std::chrono::steady_clock::time_point dwell_start {};
+    float j2_q0  {0.0F};
+    float j3_q0  {0.0F};
+    float j2_via {0.0F};  // P1 목표: max(j2_q0, kJ2SafeFloorRad)
+    float p1_dur {1.0F};
+    float p2_dur {1.0F};
+    float p3_dur {1.0F};
+    float p4_dur {1.0F};
+  } j2j3_seq_ {};
 
   std::unordered_map<uint8_t, uint8_t> last_fault_bits_;
   std::unordered_map<uint8_t, CachedCommand> latest_cmd_by_motor_;
