@@ -118,50 +118,106 @@ class IKSolver:
         self._sh_z: float = float(p_j2[2])                      # shoulder height
         self._sh_r: float = float(math.sqrt(p_j2[0]**2 + p_j2[1]**2))  # shoulder radial offset
 
+    def _top_down_fk(self, j1: float, j2: float, j3: float) -> tuple[float, float]:
+        """FK for top-down grasp with J4=J2-J3-π/2, J5=-sign(J2)*π/2.
+
+        Returns (ee_r, ee_z) where ee_r = sqrt(ee_x²+ee_y²).
+        """
+        j4 = j2 - j3 - math.pi / 2.0
+        j5 = -math.pi / 2.0 if j2 >= 0.0 else math.pi / 2.0
+        q_ord = self.clip_to_limits(np.array([j1, j2, j3, j4, j5, 0.0], dtype=float))
+        pos = self.forward_position(q_ord)
+        return float(math.sqrt(pos[0] ** 2 + pos[1] ** 2)), float(pos[2])
+
+    def _solve_j2_j3(
+        self,
+        j1: float,
+        target_r: float,
+        target_z: float,
+        j2_init: float,
+        j3_init: float,
+        n_iter: int = 20,
+        tol: float = 1e-4,
+    ) -> tuple[float, float] | None:
+        """2D Newton's method: find (J2, J3) for target (r, z) under J4 constraint.
+
+        Uses Pinocchio FK at each step — exact for this arm's kinematics.
+        Converges in ~5 iterations for well-conditioned targets.
+        """
+        j2, j3 = j2_init, j3_init
+        eps = 1e-4
+
+        for _ in range(n_iter):
+            r0, z0 = self._top_down_fk(j1, j2, j3)
+            dr = target_r - r0
+            dz = target_z - z0
+            if math.sqrt(dr * dr + dz * dz) < tol:
+                return j2, j3
+
+            r_dj2, z_dj2 = self._top_down_fk(j1, j2 + eps, j3)
+            r_dj3, z_dj3 = self._top_down_fk(j1, j2, j3 + eps)
+            J00 = (r_dj2 - r0) / eps;  J01 = (r_dj3 - r0) / eps
+            J10 = (z_dj2 - z0) / eps;  J11 = (z_dj3 - z0) / eps
+
+            det = J00 * J11 - J01 * J10
+            if abs(det) < 1e-10:
+                return None
+            j2 += (J11 * dr - J01 * dz) / det
+            j3 += (-J10 * dr + J00 * dz) / det
+
+        r_f, z_f = self._top_down_fk(j1, j2, j3)
+        if math.sqrt((target_r - r_f) ** 2 + (target_z - z_f) ** 2) < tol * 10:
+            return j2, j3
+        return None
+
     def heuristic_seeds_from_target(self, target_xyz: np.ndarray) -> list[np.ndarray]:
-        """Analytically compute elbow-up seeds for the given Cartesian target.
+        """Compute elbow-up seeds using 2D Newton's method on Pinocchio FK.
 
-        Uses 2-link planar IK (law of cosines) for J2/J3, a verified empirical
-        formula for J4 (fit from IK analysis, max error 0.017 rad), and the
-        empirically confirmed relationship J5 = -sign(J2)*pi/2.
+        Solves (J2, J3) exactly for the given target under the top-down grasp
+        constraint J4=J2-J3-π/2, J5=-sign(J2)*π/2 (J2/J3/J4 all bending joints).
 
-        Returns two seeds: positive elbow-up (J2>0, J3>0) and negative elbow-up
-        (J2<0, J3<0).  Falls back to empty list if the target is out of planar reach.
+        Returns two seeds:
+          [0] positive elbow-up (J2>0, J3>0)
+          [1] negative elbow-up (J2<0, J3<0, J1+π)
         """
         x = float(target_xyz[0])
         y = float(target_xyz[1])
         z = float(target_xyz[2])
         j1 = math.atan2(y, x)
         half_pi = math.pi / 2.0
+        target_r = math.sqrt(x * x + y * y)
 
-        r_eff = math.sqrt(x * x + y * y) - self._sh_r
+        # Rough 2-link guess as Newton starting point.
+        r_eff = target_r - self._sh_r
         h_eff = z - self._sh_z
-        L1, L2 = self._L1, self._L2
+        cos_j3_approx = (r_eff**2 + h_eff**2 - self._L1**2 - self._L2**2) / (
+            2.0 * self._L1 * self._L2
+        )
+        if -1.0 <= cos_j3_approx <= 1.0:
+            j3_g = math.acos(float(np.clip(cos_j3_approx, -1.0, 1.0)))
+            j2_g = math.atan2(h_eff, r_eff) - math.atan2(
+                self._L2 * math.sin(j3_g), self._L1 + self._L2 * math.cos(j3_g)
+            )
+            j2_init, j3_init = abs(j2_g), abs(j3_g)
+        else:
+            j2_init, j3_init = 0.85, 1.49
 
-        dist_sq = r_eff * r_eff + h_eff * h_eff
-        cos_j3 = (dist_sq - L1 * L1 - L2 * L2) / (2.0 * L1 * L2)
-        if not (-1.0 <= cos_j3 <= 1.0):
-            return []   # target out of planar reach
+        # Positive elbow-up: Newton's method with J4=J2-J3-π/2, J5=-π/2.
+        result = self._solve_j2_j3(j1, target_r, z, j2_init, j3_init)
+        if result is None:
+            result = self._solve_j2_j3(j1, target_r, z, 0.85, 1.49)
+        if result is None:
+            return []
 
-        # Forward seed: positive elbow-up (J2>0, J3>0).
-        j3 = math.acos(float(np.clip(cos_j3, -1.0, 1.0)))
-        alpha = math.atan2(h_eff, r_eff)
-        beta = math.atan2(L2 * math.sin(j3), L1 + L2 * math.cos(j3))
-        j2 = alpha - beta
-        j5 = -half_pi if j2 >= 0.0 else half_pi
-        # J4 = J2 - J3 - pi/2: exact geometric constraint for top-down grasp.
-        # J2, J3, J4 are all bending joints; J4 must compensate so the last
-        # link points downward. Verified against IK data: error < 0.1 deg.
+        j2, j3 = result
         j4 = j2 - j3 - half_pi
+        j5 = -half_pi if j2 >= 0.0 else half_pi
         s_fwd = self.clip_to_limits(np.array([j1, j2, j3, j4, j5, 0.0], dtype=float))
 
-        # Backward seed: negative elbow-up (J2<0, J3<0).
-        # J1+π reverses the arm plane. J2/J3/J4/J5 are negated from the forward
-        # seed — consistent with J5=-sign(J2)*π/2 and J4≈-0.623*J3-1.275*sign(J2).
-        s_bwd = self.clip_to_limits(np.array(
-            [j1 + math.pi, -j2, -j3, -j4, -j5, 0.0], dtype=float
-        ))
-
+        # Negative elbow-up: J1+π, signs negated.
+        s_bwd = self.clip_to_limits(
+            np.array([j1 + math.pi, -j2, -j3, -j4, -j5, 0.0], dtype=float)
+        )
         return [s_fwd, s_bwd]
 
     def _frame_point_world(self) -> np.ndarray:
