@@ -152,12 +152,12 @@ class IKSolver:
         j4 = -0.623 * j3 - 1.275 * (1.0 if j2 >= 0.0 else -1.0)
         s_fwd = self.clip_to_limits(np.array([j1, j2, j3, j4, j5, 0.0], dtype=float))
 
-        # Backward seed: J1+π, same J2/J3/J4/J5 as forward seed.
-        # IK automatically adapts J2/J3 to negative values (negative elbow-up)
-        # because J1 already points in the backward direction.
-        s_bwd = s_fwd.copy()
-        s_bwd[0] = j1 + math.pi
-        s_bwd = self.clip_to_limits(s_bwd)
+        # Backward seed: negative elbow-up (J2<0, J3<0).
+        # J1+π reverses the arm plane. J2/J3/J4/J5 are negated from the forward
+        # seed — consistent with J5=-sign(J2)*π/2 and J4≈-0.623*J3-1.275*sign(J2).
+        s_bwd = self.clip_to_limits(np.array(
+            [j1 + math.pi, -j2, -j3, -j4, -j5, 0.0], dtype=float
+        ))
 
         return [s_fwd, s_bwd]
 
