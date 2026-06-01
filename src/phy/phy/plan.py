@@ -318,9 +318,9 @@ class Planner:
             j3_lo = max(float(lo[2]), 0.1) if j2 >= 0.0 else float(lo[2])
             j3_hi = float(hi[2]) if j2 >= 0.0 else min(float(hi[2]), -0.1)
             j3 = float(rng.uniform(j3_lo, j3_hi)) if j3_lo < j3_hi else j3_lo
-            # J4 from empirical formula + noise: J4 ≈ -0.623*J3 - 1.275*sign(J2)
-            j4_center = -0.623 * j3 - 1.275 * (1.0 if j2 >= 0.0 else -1.0)
-            j4 = float(np.clip(rng.normal(j4_center, 0.2), float(lo[3]), float(hi[3])))
+            # J4 = J2 - J3 - pi/2: exact geometric constraint for top-down grasp.
+            j4_center = j2 - j3 - math.pi / 2.0
+            j4 = float(np.clip(rng.normal(j4_center, 0.15), float(lo[3]), float(hi[3])))
             seeds.append(self.ik.clip_to_limits(np.array([
                 float(rng.uniform(float(lo[0]), float(hi[0]))),
                 j2, j3, j4, j5_val,
