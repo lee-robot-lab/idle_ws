@@ -95,6 +95,7 @@ class HoldNode(Node):
         self.last_cmd_by_motor: dict[int, CommandValues] = {}
         self.last_stale_warn_s = float("-inf")
         self.last_connected_ids: tuple[int, ...] = tuple()
+        self._warn_times: dict[str, float] = {}  # throttled warn 타임스탬프
 
         self.csv_file: Optional[object] = None
         self.csv_writer: Optional[csv.writer] = None
@@ -220,6 +221,11 @@ class HoldNode(Node):
             self.last_stale_warn_s = now_s
         self.last_cmd_by_motor = {}
 
+    def _warn_throttle(self, key: str, msg: str, now_s: float, interval_s: float = 2.0) -> None:
+        if now_s - self._warn_times.get(key, float("-inf")) >= interval_s:
+            self._warn_times[key] = now_s
+            self.get_logger().warn(msg)
+
     def _publish_gravity_hold(self, connected_ids: list[int], now_s: float) -> None:
         q_by_motor = {}
         for motor_id in self.motor_ids:
@@ -242,8 +248,16 @@ class HoldNode(Node):
                 tuning = control_params_for_motor(motor_id)
                 gravity_scale = _as_float_or_default(tuning.get("gravity_scale"), 1.0)
                 gravity_bias = _as_float_or_default(tuning.get("gravity_bias"), 0.0)
-            tau_cmd = gravity_scale * tau_g_by_motor[motor_id] + gravity_bias
-            tau_cmd = _clip_symmetric(tau_cmd, self.tau_limit_by_motor[motor_id])
+            tau_raw = gravity_scale * tau_g_by_motor[motor_id] + gravity_bias
+            tau_cmd = _clip_symmetric(tau_raw, self.tau_limit_by_motor[motor_id])
+            if abs(tau_cmd - tau_raw) > 1e-4:
+                self._warn_throttle(
+                    f"tau_clamp_{motor_id}",
+                    f"[SAFETY] motor {motor_id} tau_ff clamped: "
+                    f"{tau_raw:.3f} → {tau_cmd:.3f} Nm "
+                    f"(limit=±{self.tau_limit_by_motor[motor_id]:.1f})",
+                    now_s,
+                )
 
             cmd_values[motor_id] = CommandValues(
                 q_des=sample.q,

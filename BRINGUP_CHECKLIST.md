@@ -54,7 +54,7 @@
 - [ ] **encoder zero = joint zero** 가정 확인. 특히:
   - j3(motor 3): **±π wrapping 특수처리** — raw 부호로 +π/−π 분기 선택.
   - motor 2(어깨, RS03): home q-limit **±1.78** rad — 기구 한계 안전한지 확인.
-- [ ] **토크 클립 backstop = 유일 안전망** (모델 부정확하므로). `DEFAULT_TAU_LIMIT_BY_MOTOR`: 1=6, 2=20, 3=6, 4=6, 5=5, 6=5, 7=1.6 Nm. 7개 모두 값 있음(없으면 inf=무제한).
+- [ ] **토크 클립** (다층 안전망). `DEFAULT_TAU_LIMIT_BY_MOTOR`: 1=6, 2=25, 3=10, 4=6, 5=5, 6=5, 7=1.6 Nm. can_bridge on_cmd_array + plan_node + hold_node 3곳에서 적용.
 
 ## 5. 중력보상 튜닝 (hold_node)
 
@@ -152,7 +152,7 @@ python3 control_param_save.py
 - [ ] `canbusload can0@1000000` → **<70~80%** 목표.
 - [ ] `candump can0` → **Type02 피드백이 명령당 1:1인지 자율 주기인지** 확인(위 가정 검증).
 - [ ] `ip -details -statistics link show can0` → error counter / RX overrun 확인.
-- [ ] **레버**: hold_node는 250Hz publish인데 can_bridge는 `kTxHzDefault=500Hz`로 재전송(중복). 막히면 250~300Hz로 낮춤(재빌드). timeout 100ms보다만 빠르면 됨.
+- [ ] **레버**: can_bridge `kTxHzDefault=250Hz` (hold_node와 동일). 현재 CAN 부하 ~40% → 여유 충분. 막히면 150~200Hz로 낮춤(재빌드). timeout 100ms보다만 빠르면 됨.
 
 ## 9. j3 home 영점 재설정 (±π 모호성 제거)
 

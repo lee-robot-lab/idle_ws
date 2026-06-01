@@ -8,6 +8,7 @@ motors:
     kd: 2.0
     kp: 9.0
   '3':
+    gravity_scale: 1.0
     kd: 0.7
     kp: 6.0
   '4':

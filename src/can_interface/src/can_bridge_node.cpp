@@ -47,6 +47,11 @@ constexpr uint8_t TYPE_MASK = 0x1F;
 // Home 복귀 궤적 관련 기본값
 constexpr float kHomeReturnDurationSec = 7.0F;
 constexpr float kHomeEpsilon = 1e-4F;
+// 이 범위 이내면 "이미 홈 포즈"로 간주 — 궤적/j2j3 시퀀스 건너뜀.
+constexpr float kHomeNearThreshold = 0.0873F;  // ≈ 5도
+// 모터 온도 임계값 (°C)
+constexpr float kTempWarnDegC     = 70.0F;   // WARN 로그
+constexpr float kTempCriticalDegC = 90.0F;   // safe home 트리거
 
 // 정적 브리지 설정(수정 후 재빌드/재시작 필요)
 constexpr char kChannel[] = "can0";
@@ -69,6 +74,38 @@ constexpr int kRxMaxFramesPerTick = 100;
 constexpr int kCmdTimeoutMs = 100;
 constexpr double kTxHzDefault = 250.0;
 const std::unordered_map<int, double> kTxHzByMotor {};
+// q_des 슬루레이트 한계 (rad/s): 한 틱 안에 이 속도를 초과하는 q_des 점프를 클램프.
+// 홈 시퀀스·timeout-home·외부 명령 모두 적용된다.
+const std::unordered_map<int, double> kMaxQdotCmdByMotor {
+  {1, 1.5},  // RS02, j1
+  {2, 1.0},  // RS03, j2 어깨 — 가장 보수적
+  {3, 1.5},  // RS02, j3
+  {4, 1.5},  // RS02, j4
+  {5, 2.0},  // RS00, j5
+  {6, 2.0},  // RS00, j6
+  {7, 3.0},  // RS05, 그리퍼
+};
+// 외부 명령 tau_ff 클램프 한계 (Nm, 대칭).
+// plan_node/hold_node와 동일한 DEFAULT_TAU_LIMIT_BY_MOTOR 값.
+const std::unordered_map<int, float> kTauLimitByMotor {
+  {1, 6.0F},
+  {2, 25.0F},
+  {3, 10.0F},
+  {4, 6.0F},
+  {5, 5.0F},
+  {6, 5.0F},
+  {7, 1.6F},
+};
+// tau_ff 슬루레이트 한계 (Nm/s): 홈(tau_ff=0)에서 중력 보상값으로 전환 시 급격한 토크 점프를 방지.
+const std::unordered_map<int, float> kMaxTauRateByMotor {
+  {1, 10.0F},
+  {2, 20.0F},
+  {3, 15.0F},
+  {4, 10.0F},
+  {5,  8.0F},
+  {6,  8.0F},
+  {7,  3.0F},
+};
 constexpr double kHomeQDes = 0.0;
 constexpr double kHomeQdDes = 0.0;
 constexpr double kHomeKp = 5.0;
@@ -85,7 +122,7 @@ struct MotorHomeConfig
 
 const std::unordered_map<int, MotorHomeConfig> kMotorHomeByMotor {
   {1, {0.0,                        10.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
-  {2, {0.0,                        30.0, 2.0, -1.78,                     1.78}},
+  {2, {0.0,                        40.0, 2.0, -1.78,                     1.78}},
   {3, {0.0,                        20.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
   {4, {0.0,                        10.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
   {5, {0.0,                        5.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
@@ -100,7 +137,7 @@ struct MitRanges
   float p_max;
   float v_min;
   float v_max;
-  float t_min;
+  float t_min; 
   float t_max;
   float kp_min;
   float kp_max;
@@ -426,6 +463,12 @@ private:
     std::chrono::steady_clock::time_point home_traj_start_tp {};
     std::chrono::steady_clock::time_point last_sent {};
     std::chrono::steady_clock::time_point last_received_cmd {};
+    // q_des 슬루레이트: 직전 전송된 q_des (실제 모터 위치로 초기화)
+    bool slew_initialized {false};
+    float last_sent_q_des {0.0F};
+    // tau_ff 슬루레이트: 홈(0 Nm)에서 시작해 중력 보상값으로 천천히 증가
+    bool tau_slew_initialized {false};
+    float last_sent_tau_ff {0.0F};
   };
 
   // 모터별 송신 주기 정책
@@ -456,6 +499,13 @@ private:
     bool enable_sent {false};
     bool ready_for_control {false};  // Type03 was sent and Type02 feedback observed afterwards.
     bool has_state {false};
+    // 시작 시 실제 위치가 joint limit 밖이면 true: 명령 전송 차단.
+    // 수동 복구 후 can_bridge 재시작 필요.
+    bool startup_blocked {false};
+    // 온도 임계 초과 시 true → safe home 트리거. 온도 정상 복귀 시 자동 해제.
+    bool safe_shutdown_thermal {false};
+    // fault_bits raised 시 true → safe home 트리거. fault cleared 시 자동 해제.
+    bool safe_shutdown_fault {false};
     msgs::msg::MotorState last_state {};
     std::chrono::steady_clock::time_point last_enable_sent {};
   };
@@ -574,6 +624,13 @@ private:
       return it->second;
     }
     return (tx_policy_.tx_hz_default > 0.0) ? tx_policy_.tx_hz_default : kTxHzDefault;
+  }
+
+  // 모터별 q_des 슬루레이트 한계 (rad/s)를 반환한다.
+  double max_qdot_for_motor(const uint8_t motor_id) const
+  {
+    const auto it = kMaxQdotCmdByMotor.find(static_cast<int>(motor_id));
+    return (it != kMaxQdotCmdByMotor.end()) ? it->second : 0.0;
   }
 
   // MotorCMD를 MIT Type01 프레임으로 인코딩해 전송한다.
@@ -959,21 +1016,60 @@ private:
   }
 
   // ready 직후 외부 명령이 없을 때 pre-home 스트림을 arm 한다.
+  // ① 시작 위치가 joint limit 밖이면 startup_blocked 세우고 차단.
+  // ② 이미 홈 근처(kHomeNearThreshold)이면 궤적 없이 현재 위치 홀드.
+  // ③ 그 외에는 7초 홈 복귀 궤적 실행.
   void start_home_stream_for_ready_motor(const uint8_t motor_id, const float current_q)
   {
+    const auto limits = position_limits_for_motor(motor_id);
+    MotorRuntime & rt = runtime_by_motor_[motor_id];
+
+    if (current_q < limits.first || current_q > limits.second) {
+      rt.startup_blocked = true;
+      RCLCPP_ERROR(
+        get_logger(),
+        "motor_id=%u STARTUP BLOCKED: actual q=%.4f is outside limits [%.4f, %.4f]. "
+        "Manually reposition the joint, then restart can_bridge.",
+        motor_id,
+        static_cast<double>(current_q),
+        static_cast<double>(limits.first),
+        static_cast<double>(limits.second));
+      return;
+    }
+
     CachedCommand & cached = latest_cmd_by_motor_[motor_id];
     if (cached.has_received_cmd) {
       return;
     }
 
+    const float q_home = home_q_des_for_motor(motor_id);
+    const float abs_dq = std::fabs(q_home - current_q);
+
     cached.cmd = make_home_command(motor_id);
-    const auto now_tp = std::chrono::steady_clock::now();
-    start_home_trajectory(motor_id, current_q, now_tp, "pre-home");
-    cached.cmd.q_des = cached.home_traj_goal_q;
     cached.cmd.stamp = to_builtin_time(now());
     cached.valid = true;
     cached.has_sent = false;
     cached.timeout_home_active = false;
+
+    if (abs_dq <= kHomeNearThreshold) {
+      // 이미 홈 근처: 실제 위치를 유지하고 궤적 없이 홀드.
+      cached.cmd.q_des = current_q;
+      cached.home_traj_active = false;
+      cached.home_traj_start_q = current_q;
+      cached.home_traj_goal_q = current_q;
+      RCLCPP_INFO(
+        get_logger(),
+        "motor_id=%u already near home (q=%.4f, |dq|=%.4f <= %.4f): holding in place",
+        motor_id,
+        static_cast<double>(current_q),
+        static_cast<double>(abs_dq),
+        static_cast<double>(kHomeNearThreshold));
+      return;
+    }
+
+    const auto now_tp = std::chrono::steady_clock::now();
+    start_home_trajectory(motor_id, current_q, now_tp, "pre-home");
+    cached.cmd.q_des = cached.home_traj_goal_q;
     RCLCPP_INFO(
       get_logger(),
       "motor_id=%u home Type01 stream armed after ready (current_q_raw=%.3f q_start=%.3f q_goal=%.3f duration=%.3f s)",
@@ -985,13 +1081,95 @@ private:
   }
 
   // /motor_cmd_array 입력을 모터별 최신 명령 캐시에 반영한다.
+  // ① NaN/Inf 포함 시 해당 모터 명령 거부.
+  // ② q_des가 joint limit 밖이면 거부.
+  // ③ tau_ff는 kTauLimitByMotor로 클램프 (거부하지 않고 제한).
   void on_cmd_array(const msgs::msg::MotorCMDArray::SharedPtr msg)
   {
     if (msg->commands.empty()) {
       return;
     }
     const auto now_tp = std::chrono::steady_clock::now();
-    for (const auto & cmd : msg->commands) {
+    for (auto cmd : msg->commands) {
+      // ① NaN/Inf 검사: 어느 필드라도 비정상이면 거부.
+      if (
+        !std::isfinite(cmd.q_des) || !std::isfinite(cmd.qd_des) ||
+        !std::isfinite(cmd.tau_ff) || !std::isfinite(cmd.kp) || !std::isfinite(cmd.kd))
+      {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "motor_id=%u external cmd REJECTED: NaN/Inf in fields "
+          "(q_des=%g qd_des=%g tau_ff=%g kp=%g kd=%g)",
+          cmd.motor_id,
+          static_cast<double>(cmd.q_des), static_cast<double>(cmd.qd_des),
+          static_cast<double>(cmd.tau_ff), static_cast<double>(cmd.kp),
+          static_cast<double>(cmd.kd));
+        continue;
+      }
+      // ② safe shutdown 중 외부 명령 거부 (fault / 온도 임계 초과).
+      {
+        const MotorRuntime & rt_check = runtime_by_motor_[cmd.motor_id];
+        if (rt_check.safe_shutdown_thermal || rt_check.safe_shutdown_fault) {
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 2000,
+            "[SAFETY] motor_id=%u external cmd REJECTED: safe shutdown active "
+            "(thermal=%d fault=%d) — homing in progress",
+            cmd.motor_id,
+            static_cast<int>(rt_check.safe_shutdown_thermal),
+            static_cast<int>(rt_check.safe_shutdown_fault));
+          continue;
+        }
+      }
+      // ③ joint position limit 검사.
+      const auto limits = position_limits_for_motor(cmd.motor_id);
+      if (cmd.q_des < limits.first || cmd.q_des > limits.second) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "[SAFETY] motor_id=%u external cmd REJECTED: q_des=%.4f outside limits [%.4f, %.4f]",
+          cmd.motor_id,
+          static_cast<double>(cmd.q_des),
+          static_cast<double>(limits.first),
+          static_cast<double>(limits.second));
+        continue;
+      }
+      // ④ tau_ff 클램프.
+      {
+        const auto it = kTauLimitByMotor.find(static_cast<int>(cmd.motor_id));
+        if (it != kTauLimitByMotor.end()) {
+          const float limit = it->second;
+          const float clamped = std::clamp(cmd.tau_ff, -limit, limit);
+          if (std::fabs(clamped - cmd.tau_ff) > 1e-4F) {
+            RCLCPP_WARN_THROTTLE(
+              get_logger(), *get_clock(), 2000,
+              "[SAFETY] motor_id=%u tau_ff clamped: %.4f -> %.4f (limit=±%.1f Nm)",
+              cmd.motor_id,
+              static_cast<double>(cmd.tau_ff),
+              static_cast<double>(clamped),
+              static_cast<double>(limit));
+            cmd.tau_ff = clamped;
+          }
+        }
+      }
+      // ⑤ qd_des 클램프.
+      {
+        const double max_qd = max_qdot_for_motor(cmd.motor_id);
+        if (max_qd > 0.0) {
+          const float clamped_qd = std::clamp(
+            cmd.qd_des,
+            static_cast<float>(-max_qd),
+            static_cast<float>(max_qd));
+          if (std::fabs(clamped_qd - cmd.qd_des) > 1e-4F) {
+            RCLCPP_WARN_THROTTLE(
+              get_logger(), *get_clock(), 2000,
+              "[SAFETY] motor_id=%u qd_des clamped: %.4f -> %.4f (limit=±%.2f rad/s)",
+              cmd.motor_id,
+              static_cast<double>(cmd.qd_des),
+              static_cast<double>(clamped_qd),
+              max_qd);
+            cmd.qd_des = clamped_qd;
+          }
+        }
+      }
       CachedCommand & cached = latest_cmd_by_motor_[cmd.motor_id];
       cached.cmd = cmd;
       cached.valid = true;
@@ -1022,6 +1200,15 @@ private:
         continue;
       }
 
+      // 시작 위치가 joint limit 밖이면 모든 명령 전송을 차단한다.
+      if (runtime_by_motor_[motor_id].startup_blocked) {
+        RCLCPP_ERROR_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "motor_id=%u STARTUP BLOCKED — no commands sent. Reposition and restart.",
+          motor_id);
+        continue;
+      }
+
       const bool is_pre_home_stream = !cached.has_received_cmd;
       if (!is_pre_home_stream && !ensure_motor_ready_for_control(motor_id)) {
         continue;  // Hold external /motor_cmd_array until Type02 is observed.
@@ -1047,18 +1234,23 @@ private:
         cmd_timed_out = age_ms >= cmd_timeout_ms_;
       }
 
+      // safe shutdown(fault/온도) 중이면 home 복귀 강제.
+      const MotorRuntime & rt_dispatch = runtime_by_motor_[motor_id];
+      const bool force_home = rt_dispatch.safe_shutdown_thermal || rt_dispatch.safe_shutdown_fault;
+      const bool home_requested = cmd_timed_out || force_home;
+
       msgs::msg::MotorCMD outgoing = cached.cmd;
       if (is_pre_home_stream) {
         outgoing = make_home_command(motor_id);
         outgoing.q_des = sample_home_trajectory_q_des(cached, now_tp);
         outgoing.stamp = to_builtin_time(now());
-      } else if (cmd_timed_out) {
+      } else if (home_requested) {
         outgoing = make_home_command(motor_id);
-        const MotorRuntime & rt = runtime_by_motor_[motor_id];
         if (!cached.timeout_home_active) {
           cached.timeout_home_active = true;
-          if (rt.has_state) {
-            start_home_trajectory(motor_id, rt.last_state.q, now_tp, "timeout-home");
+          const char * reason = force_home ? "safe-shutdown" : "timeout-home";
+          if (rt_dispatch.has_state) {
+            start_home_trajectory(motor_id, rt_dispatch.last_state.q, now_tp, reason);
           } else {
             const auto limits = position_limits_for_motor(motor_id);
             const float q_home = std::clamp(home_q_des_for_motor(motor_id), limits.first, limits.second);
@@ -1068,15 +1260,28 @@ private:
             cached.home_traj_duration_sec = kHomeReturnDurationSec;
             cached.home_traj_start_tp = now_tp;
           }
-          RCLCPP_WARN(
-            get_logger(),
-            "motor_id=%u cmd timeout (%d ms): switching to home trajectory "
-            "(q_start=%.3f q_goal=%.3f duration=%.3f s)",
-            motor_id,
-            cmd_timeout_ms_,
-            static_cast<double>(cached.home_traj_start_q),
-            static_cast<double>(cached.home_traj_goal_q),
-            static_cast<double>(cached.home_traj_duration_sec));
+          if (force_home) {
+            RCLCPP_WARN(
+              get_logger(),
+              "[SAFETY] motor_id=%u safe shutdown: homing "
+              "(thermal=%d fault=%d q_start=%.3f q_goal=%.3f duration=%.3f s)",
+              motor_id,
+              static_cast<int>(rt_dispatch.safe_shutdown_thermal),
+              static_cast<int>(rt_dispatch.safe_shutdown_fault),
+              static_cast<double>(cached.home_traj_start_q),
+              static_cast<double>(cached.home_traj_goal_q),
+              static_cast<double>(cached.home_traj_duration_sec));
+          } else {
+            RCLCPP_WARN(
+              get_logger(),
+              "motor_id=%u cmd timeout (%d ms): switching to home trajectory "
+              "(q_start=%.3f q_goal=%.3f duration=%.3f s)",
+              motor_id,
+              cmd_timeout_ms_,
+              static_cast<double>(cached.home_traj_start_q),
+              static_cast<double>(cached.home_traj_goal_q),
+              static_cast<double>(cached.home_traj_duration_sec));
+          }
         }
         outgoing.q_des = sample_home_trajectory_q_des(cached, now_tp);
         outgoing.stamp = to_builtin_time(now());
@@ -1091,11 +1296,24 @@ private:
           static_cast<double>(cached.home_traj_duration_sec));
       }
 
-      // j2/j3 순서 홈 복귀 오버라이드: pre-home 또는 timeout-home 중에 적용
-      const bool in_home_mode = is_pre_home_stream || cmd_timed_out;
+      // j2/j3 순서 홈 복귀 오버라이드: pre-home 또는 home_requested 중에 적용
+      const bool in_home_mode = is_pre_home_stream || home_requested;
       if (in_home_mode && (motor_id == kJ2MotorId || motor_id == kJ3MotorId)) {
         if (j2j3_seq_.phase == 0 && !j2j3_seq_.done) {
-          start_j2j3_sequence(now_tp);
+          // j2, j3 모두 홈 근처이면 시퀀스 건너뜀 (이미 안전한 위치).
+          const MotorRuntime & rt2 = runtime_by_motor_[kJ2MotorId];
+          const MotorRuntime & rt3 = runtime_by_motor_[kJ3MotorId];
+          const bool j2_near = rt2.has_state &&
+            std::fabs(rt2.last_state.q - home_q_des_for_motor(kJ2MotorId)) <= kHomeNearThreshold;
+          const bool j3_near = rt3.has_state &&
+            std::fabs(rt3.last_state.q - home_q_des_for_motor(kJ3MotorId)) <= kHomeNearThreshold;
+          if (j2_near && j3_near) {
+            j2j3_seq_.done = true;
+            RCLCPP_INFO_ONCE(
+              get_logger(), "j2/j3 home seq skipped: both already near home");
+          } else {
+            start_j2j3_sequence(now_tp);
+          }
         }
         if (j2j3_seq_.phase != 0) {
           outgoing = make_home_command(motor_id);
@@ -1109,6 +1327,70 @@ private:
         }
       }
 
+      // q_des 슬루레이트 클램프: 모든 경로(홈/타임아웃/외부 명령)에 적용.
+      // 첫 전송 시 실제 모터 위치로 초기화해 시작 직후 점프를 방지한다.
+      {
+        const MotorRuntime & rt_slew = runtime_by_motor_[motor_id];
+        if (!cached.slew_initialized) {
+          cached.last_sent_q_des =
+            rt_slew.has_state ? rt_slew.last_state.q : outgoing.q_des;
+          cached.slew_initialized = true;
+        }
+        const double max_qdot = max_qdot_for_motor(motor_id);
+        if (max_qdot > 0.0 && cached.has_sent) {
+          // dt를 50ms로 클램프해 일시 정지 후 재시작 시 큰 점프를 방지한다.
+          const double dt = std::min(
+            std::chrono::duration<double>(now_tp - cached.last_sent).count(), 0.05);
+          const double max_dq = max_qdot * dt;
+          const float q_des_requested = outgoing.q_des;
+          const double dq =
+            static_cast<double>(q_des_requested) - static_cast<double>(cached.last_sent_q_des);
+          if (std::fabs(dq) > max_dq) {
+            outgoing.q_des =
+              cached.last_sent_q_des + static_cast<float>(std::copysign(max_dq, dq));
+            RCLCPP_WARN_THROTTLE(
+              get_logger(), *get_clock(), 2000,
+              "motor_id=%u q_des slew clamped: requested=%.4f sent=%.4f "
+              "(max_qdot=%.2f rad/s dt=%.4f s)",
+              motor_id,
+              static_cast<double>(q_des_requested),
+              static_cast<double>(outgoing.q_des),
+              max_qdot,
+              dt);
+          }
+        }
+      }
+
+      // tau_ff 슬루레이트 클램프: 0(홈)에서 중력 보상값으로의 급격한 전환을 방지.
+      // 정상 운행 중엔 중력 보상값이 연속적으로 변하므로 실질적으로 발동되지 않는다.
+      {
+        if (!cached.tau_slew_initialized) {
+          cached.last_sent_tau_ff = 0.0F;  // 홈 명령은 tau_ff=0에서 시작
+          cached.tau_slew_initialized = true;
+        }
+        const auto it = kMaxTauRateByMotor.find(static_cast<int>(motor_id));
+        if (it != kMaxTauRateByMotor.end() && cached.has_sent) {
+          const float max_tau_rate = it->second;
+          const double dt = std::min(
+            std::chrono::duration<double>(now_tp - cached.last_sent).count(), 0.05);
+          const float max_dtau = max_tau_rate * static_cast<float>(dt);
+          const float tau_requested = outgoing.tau_ff;
+          const float dtau = tau_requested - cached.last_sent_tau_ff;
+          if (std::fabs(dtau) > max_dtau) {
+            outgoing.tau_ff = cached.last_sent_tau_ff + std::copysign(max_dtau, dtau);
+            RCLCPP_WARN_THROTTLE(
+              get_logger(), *get_clock(), 2000,
+              "motor_id=%u tau_ff slew clamped: requested=%.3f sent=%.3f "
+              "(max_rate=%.1f Nm/s dt=%.4f s)",
+              motor_id,
+              static_cast<double>(tau_requested),
+              static_cast<double>(outgoing.tau_ff),
+              static_cast<double>(max_tau_rate),
+              dt);
+          }
+        }
+      }
+
       if (!send_mit_command(outgoing)) {
         RCLCPP_ERROR_THROTTLE(
           get_logger(),
@@ -1116,6 +1398,8 @@ private:
       }
       cached.has_sent = true;
       cached.last_sent = now_tp;
+      cached.last_sent_q_des = outgoing.q_des;
+      cached.last_sent_tau_ff = outgoing.tau_ff;
     }
   }
 
@@ -1259,6 +1543,33 @@ private:
         }
       }
 
+      // 온도 모니터링: 임계 초과 시 safe home 트리거, 정상 복귀 시 해제.
+      if (st.temp_c >= kTempCriticalDegC) {
+        if (!rt.safe_shutdown_thermal) {
+          rt.safe_shutdown_thermal = true;
+          RCLCPP_ERROR(
+            get_logger(),
+            "[SAFETY] motor_id=%u thermal critical: temp=%.1f°C >= %.1f°C — safe home triggered",
+            motor_id,
+            static_cast<double>(st.temp_c),
+            static_cast<double>(kTempCriticalDegC));
+        }
+      } else if (st.temp_c >= kTempWarnDegC) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "[SAFETY] motor_id=%u temperature warning: %.1f°C (critical=%.1f°C)",
+          motor_id,
+          static_cast<double>(st.temp_c),
+          static_cast<double>(kTempCriticalDegC));
+      } else if (rt.safe_shutdown_thermal) {
+        rt.safe_shutdown_thermal = false;
+        RCLCPP_INFO(
+          get_logger(),
+          "motor_id=%u temperature normal: %.1f°C — thermal safe shutdown cleared",
+          motor_id,
+          static_cast<double>(st.temp_c));
+      }
+
       const uint8_t prev_fault = last_fault_bits_[motor_id];
       const bool changed = (prev_fault != fault_bits);
       last_fault_bits_[motor_id] = fault_bits;
@@ -1274,10 +1585,28 @@ private:
       err.fault_bits = fault_bits;
       if (prev_fault == 0 && fault_bits != 0) {
         err.event = msgs::msg::MotorError::EVENT_RAISED;
+        rt.safe_shutdown_fault = true;
+        RCLCPP_ERROR(
+          get_logger(),
+          "[SAFETY] motor_id=%u fault raised: bits=0x%02X — safe home triggered",
+          motor_id,
+          static_cast<unsigned>(fault_bits));
       } else if (prev_fault != 0 && fault_bits == 0) {
         err.event = msgs::msg::MotorError::EVENT_CLEARED;
+        rt.safe_shutdown_fault = false;
+        RCLCPP_INFO(
+          get_logger(),
+          "motor_id=%u fault cleared (was 0x%02X) — fault safe shutdown cleared",
+          motor_id,
+          static_cast<unsigned>(prev_fault));
       } else {
         err.event = msgs::msg::MotorError::EVENT_CHANGED;
+        RCLCPP_WARN(
+          get_logger(),
+          "[SAFETY] motor_id=%u fault changed: 0x%02X → 0x%02X",
+          motor_id,
+          static_cast<unsigned>(prev_fault),
+          static_cast<unsigned>(fault_bits));
       }
       error_batch_by_motor[motor_id] = err;
     }

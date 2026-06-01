@@ -17,8 +17,8 @@ DEFAULT_MOTOR_JOINT_MAP: dict[int, str] = {
 # Motor 7 (gripper) is the smallest — external force estimation has poor SNR there.
 DEFAULT_TAU_LIMIT_BY_MOTOR: dict[int, float] = {
     1: 6.0,
-    2: 20.0,
-    3: 6.0,
+    2: 25.0,
+    3: 10.0,
     4: 6.0,
     5: 5.0,
     6: 5.0,
