@@ -168,6 +168,85 @@ class Planner:
             },
         )
 
+    def plan_to_q(
+        self,
+        target_q: np.ndarray,
+        start_q: np.ndarray,
+        v_max: float | None = None,
+        a_max: float | None = None,
+        min_duration: float | None = None,
+    ) -> Plan | None:
+        """Plan a quintic trajectory to a known joint configuration (no IK).
+
+        Used for via-point motions (e.g. safe transit through a known-safe q)
+        where the target joint config is already determined.  Returns None if
+        the trajectory collides.
+        """
+        target_q_arr = np.asarray(target_q, dtype=float)
+        start_q_arr = np.asarray(start_q, dtype=float)
+        if target_q_arr.shape != (self._n_dof,) or start_q_arr.shape != (self._n_dof,):
+            raise ValueError("start_q / target_q shape mismatch")
+
+        traj, n_samples = self._build_trajectory(
+            start_q_arr, target_q_arr, v_max=v_max, a_max=a_max, min_duration=min_duration
+        )
+        any_collision, first_idx = self._check_collisions(traj, n_samples)
+
+        # Compute approximate EE position via FK for metadata
+        try:
+            ee_pos = self.ik.forward_position(target_q_arr)
+        except Exception:
+            ee_pos = np.zeros(3)
+
+        return Plan(
+            trajectory=traj,
+            start_q=start_q_arr.copy(),
+            end_q=target_q_arr.copy(),
+            duration_s=traj.duration,
+            collision_safe=not any_collision,
+            collision_first_sample=first_idx,
+            target_xyz=ee_pos,
+            target_yaw=0.0,
+            metadata={
+                "created_at": time.time(),
+                "plan_type": "to_q",
+                "traj_length_rad": float(np.linalg.norm(target_q_arr - start_q_arr)),
+            },
+        )
+
+    def plan_via(
+        self,
+        via_q: np.ndarray,
+        target_xyz: np.ndarray,
+        target_yaw: float,
+        start_q: np.ndarray,
+        v_max: float | None = None,
+        a_max: float | None = None,
+        min_duration_leg2: float | None = None,
+    ) -> tuple[Plan, Plan] | None:
+        """Plan two segments: start_q → via_q → target.
+
+        Used for cage-safe trajectories: transit through a known-safe
+        configuration before moving to the final target.  Returns None if
+        either leg collides or IK fails.
+        """
+        leg1 = self.plan_to_q(via_q, start_q, v_max=v_max, a_max=a_max)
+        if leg1 is None or not leg1.collision_safe:
+            return None
+
+        leg2 = self.plan_to_pose(
+            target_xyz=target_xyz,
+            target_yaw=target_yaw,
+            start_q=np.asarray(via_q, dtype=float),
+            v_max=v_max,
+            a_max=a_max,
+            min_duration=min_duration_leg2,
+        )
+        if leg2 is None or not leg2.collision_safe:
+            return None
+
+        return leg1, leg2
+
     def rewarp_start(self, plan: Plan, actual_start_q: np.ndarray) -> Plan:
         """Re-build trajectory from ``actual_start_q`` to the original ``plan.end_q``.
 

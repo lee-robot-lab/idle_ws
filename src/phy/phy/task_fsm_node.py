@@ -178,7 +178,8 @@ class TaskFSMNode(Node):
 
         elif s == FSMState.PRE_GRASP:
             if self._state_ticks == 1:
-                self._send_approach(self._src_color, _Z_APPROACH, 0.0)
+                self._send_approach(self._src_color, _Z_APPROACH, 0.0,
+                                    use_safe_transit=True)
             elif self._plan_done():
                 self._transition(FSMState.GRASP_DESCEND)
 
@@ -222,7 +223,7 @@ class TaskFSMNode(Node):
         elif s == FSMState.PRE_PLACE:
             if self._state_ticks == 1:
                 z_pre = self._place_z_approach()
-                self._send_place_approach(z_pre, 0.0)
+                self._send_place_approach(z_pre, 0.0, use_safe_transit=True)
             elif self._drop_detected:
                 self._transition(FSMState.RECOVERY)
             elif self._plan_done():
@@ -285,16 +286,20 @@ class TaskFSMNode(Node):
         n = self._stack_count
         return _Z_TABLE + n * _Z_BLOCK + _Z_BLOCK * 0.5
 
-    def _send_approach(self, color: str, z: float, duration_s: float) -> None:
+    def _send_approach(self, color: str, z: float, duration_s: float,
+                       use_safe_transit: bool = False) -> None:
         xy = _BLOCK_XY.get(color, np.array([0.35, 0.0]))
-        self._send_ee_target(float(xy[0]), float(xy[1]), z, yaw=0.0, duration_s=duration_s)
+        self._send_ee_target(float(xy[0]), float(xy[1]), z, yaw=0.0,
+                             duration_s=duration_s, use_safe_transit=use_safe_transit)
 
-    def _send_place_approach(self, z: float, duration_s: float) -> None:
+    def _send_place_approach(self, z: float, duration_s: float,
+                             use_safe_transit: bool = False) -> None:
         if self._is_basket:
             xy = _BASKET_XY
         else:
             xy = _BLOCK_XY.get(self._dst_color, np.array([0.35, 0.0]))
-        self._send_ee_target(float(xy[0]), float(xy[1]), z, yaw=0.0, duration_s=duration_s)
+        self._send_ee_target(float(xy[0]), float(xy[1]), z, yaw=0.0,
+                             duration_s=duration_s, use_safe_transit=use_safe_transit)
 
     def _send_ready_pose(self) -> None:
         # Ready pose sent as a fixed joint-space config would require a different interface.
@@ -302,7 +307,13 @@ class TaskFSMNode(Node):
         self._send_ee_target(0.30, 0.0, _Z_LIFT + 0.05, yaw=0.0, duration_s=0.0)
 
     def _send_ee_target(
-        self, x: float, y: float, z: float, yaw: float, duration_s: float
+        self,
+        x: float,
+        y: float,
+        z: float,
+        yaw: float,
+        duration_s: float,
+        use_safe_transit: bool = False,
     ) -> None:
         qx, qy, qz, qw = _yaw_quat(yaw)
         pose = PoseStamped()
@@ -318,6 +329,7 @@ class TaskFSMNode(Node):
         msg = EETarget()
         msg.pose = pose
         msg.duration_override_s = float(duration_s)
+        msg.use_safe_transit = use_safe_transit
         self._ee_pub.publish(msg)
 
     def _call_gripper(self, close: bool) -> None:

@@ -24,6 +24,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from msgs.msg import EETarget
+from std_msgs.msg import Float64MultiArray
 from idle_common.control_tuning import control_params_for_motor
 from std_msgs.msg import String
 from idle_common.motor_map import (
@@ -168,6 +169,25 @@ class PlanNode(Node):
             depth=5,
         )
         self._duration_override_s: float = 0.0
+        self._use_safe_transit: bool = False
+
+        # Safe transit joint config [rad] — arm pose that clears the cage.
+        # Set via ROS parameter safe_transit_q (JSON array of 6 floats).
+        # Falls back to all-zeros (arm at neutral) if not set.
+        safe_q_json = declare_typed(self, "safe_transit_q", "[]", cast=strip_str)
+        try:
+            import json
+            _sq = json.loads(safe_q_json) if safe_q_json.strip() not in ("", "[]") else []
+            self._safe_transit_q: np.ndarray | None = (
+                np.array(_sq, dtype=float) if len(_sq) == len(self.motor_ids) else None
+            )
+        except Exception:
+            self._safe_transit_q = None
+        if self._safe_transit_q is None:
+            self.get_logger().info("safe_transit_q not set — via-point mode disabled")
+
+        # Via-point plan: two-leg trajectory (leg1 active, leg2 pending)
+        self._via_leg2: Optional[Plan] = None
 
         self.state_sub = self.create_subscription(
             MotorStateArray, "/motor_state_array", self.on_state_array, qos_state
@@ -232,6 +252,7 @@ class PlanNode(Node):
             msg.pose.pose.orientation.z,
             msg.pose.pose.orientation.w,
         )
+        self._use_safe_transit = bool(msg.use_safe_transit)
         self._start_planning(target_xyz, yaw, duration_override_s=float(msg.duration_override_s))
 
     def _start_planning(
@@ -272,6 +293,35 @@ class PlanNode(Node):
         duration_override_s: float = 0.0,
     ) -> None:
         min_dur = duration_override_s if duration_override_s > 0.0 else None
+        use_via = self._use_safe_transit and self._safe_transit_q is not None
+
+        if use_via:
+            result = self.planner.plan_via(
+                via_q=self._safe_transit_q,
+                target_xyz=target_xyz,
+                target_yaw=target_yaw,
+                start_q=start_q,
+                min_duration_leg2=min_dur,
+            )
+            if result is None:
+                self.get_logger().warn(
+                    f"[{my_serial}] via-point plan failed — falling back to direct"
+                )
+                use_via = False
+            else:
+                leg1, leg2 = result
+                with self._plan_lock:
+                    if self._plan_serial != my_serial:
+                        self.get_logger().info(f"[{my_serial}] stale via plan discarded")
+                        return
+                    self._pending_plan = leg1
+                    self._via_leg2 = leg2
+                self.get_logger().info(
+                    f"[{my_serial}] via-point plan committed: "
+                    f"leg1={leg1.duration_s:.2f}s leg2={leg2.duration_s:.2f}s"
+                )
+                return
+
         plan = self.planner.plan_to_pose(
             target_xyz=target_xyz,
             target_yaw=target_yaw,
@@ -296,6 +346,7 @@ class PlanNode(Node):
                 self.get_logger().info(f"[{my_serial}] stale plan discarded (newer target)")
                 return
             self._pending_plan = plan
+            self._via_leg2 = None
 
     # ------------------------------------------------------------------
     # Control timer
@@ -351,14 +402,24 @@ class PlanNode(Node):
                 self._warp_stall_s = 0.0
 
             if self._vt_elapsed_s >= self.active.plan.duration_s:
-                self.get_logger().info("trajectory complete — holding final pose")
                 q_final, _, _ = self.active.plan.sample(self.active.plan.duration_s)
                 self._hold_q = {m: float(q_final[i]) for i, m in enumerate(self.motor_ids)}
                 self.active = None
                 self._prev_max_err = 0.0
                 self._warp_stall_s = 0.0
-                self._publish_status("DONE")
-                cmd_values = self._hold_cmds(tau_g_by_motor)
+
+                # Via-point: leg1 done → immediately commit leg2
+                with self._plan_lock:
+                    leg2 = self._via_leg2
+                    self._via_leg2 = None
+                if leg2 is not None:
+                    self.get_logger().info("via-point leg1 done — starting leg2")
+                    self._commit_plan(leg2, now_s)
+                    cmd_values, _ = self._trajectory_cmds(0.0, 1.0, tau_g_by_motor)
+                else:
+                    self.get_logger().info("trajectory complete — holding final pose")
+                    self._publish_status("DONE")
+                    cmd_values = self._hold_cmds(tau_g_by_motor)
             else:
                 cmd_values, max_err = self._trajectory_cmds(
                     self._vt_elapsed_s, warp, tau_g_by_motor
