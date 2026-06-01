@@ -143,18 +143,23 @@ class IKSolver:
         if not (-1.0 <= cos_j3 <= 1.0):
             return []   # target out of planar reach
 
-        # Only positive elbow-up (elbow_sign=+1, J3>0 → J2>0, J3>0).
-        # elbow_sign=-1 gives elbow-DOWN (J2>0, J3<0), not negative elbow-up.
-        # Negative elbow-up (J2<0, J3<0, J1≈atan2+π) requires backward-reach
-        # IK which the simple 2-link model cannot correctly solve; it is covered
-        # instead by the G6 biased random seeds (J2*J3>0 constraint).
+        # Forward seed: positive elbow-up (J2>0, J3>0).
         j3 = math.acos(float(np.clip(cos_j3, -1.0, 1.0)))
         alpha = math.atan2(h_eff, r_eff)
         beta = math.atan2(L2 * math.sin(j3), L1 + L2 * math.cos(j3))
         j2 = alpha - beta
         j5 = -half_pi if j2 >= 0.0 else half_pi
         j4 = -0.623 * j3 - 1.275 * (1.0 if j2 >= 0.0 else -1.0)
-        return [self.clip_to_limits(np.array([j1, j2, j3, j4, j5, 0.0], dtype=float))]
+        s_fwd = self.clip_to_limits(np.array([j1, j2, j3, j4, j5, 0.0], dtype=float))
+
+        # Backward seed: J1+π, same J2/J3/J4/J5 as forward seed.
+        # IK automatically adapts J2/J3 to negative values (negative elbow-up)
+        # because J1 already points in the backward direction.
+        s_bwd = s_fwd.copy()
+        s_bwd[0] = j1 + math.pi
+        s_bwd = self.clip_to_limits(s_bwd)
+
+        return [s_fwd, s_bwd]
 
     def _frame_point_world(self) -> np.ndarray:
         frame_pose = self.data.oMf[self.frame_id]
