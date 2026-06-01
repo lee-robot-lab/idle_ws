@@ -271,68 +271,59 @@ class Planner:
         R: np.ndarray,
         seed_q: np.ndarray,
     ) -> IKResult:
-        """Structured seed IK: elbow-up biased multi-start, cost-based selection.
+        """Structured seed IK: analytically guided multi-start, cost-based selection.
 
         Seed groups:
-          G1 (1): warm start (current q)
-          G2 (3): positive elbow-up × far/mid/close distances
-          G3 (3): negative elbow-up × far/mid/close distances
-          G4 (4): shoulder variants (J1 ±π/6) × both elbow signs (mid distance)
-          G5 (2): backward (J1+π) × both elbow signs (mid distance)
-          G6 (N): biased random — J2*J3>0, J5=sign(J2)*π/2
-
-        Elbow-up condition for this arm (medium-long range): J2 * J3 > 0.
-        J5 follows the elbow sign: +π/2 when J2,J3>0, -π/2 when J2,J3<0.
-        J4 initialised to 0 for structured seeds (to be refined per arm).
+          G1 (1):   warm start (current q)
+          G2/G3 (2): analytical seeds — 2-link planar IK for J2/J3,
+                     empirical formula for J4, J5=-sign(J2)*pi/2.
+                     Automatically adapts to target position and URDF geometry.
+          G4 (4):   shoulder variants ±π/6 of analytical seeds
+          G5 (2):   backward (J1+π) of analytical seeds
+          G6 (N):   biased random — J2*J3>0, J5=-sign(J2)*pi/2,
+                    J4 near empirical centre ±2.2 rad
         """
-        j1_base = math.atan2(float(target_xyz[1]), float(target_xyz[0]))
         half_pi = math.pi / 2.0
         lo, hi = self.ik.lower_limits, self.ik.upper_limits
-
-        def _s(j1, j2, j3, j4, j5, j6) -> np.ndarray:
-            return self.ik.clip_to_limits(
-                np.array([j1, j2, j3, j4, j5, j6], dtype=float)
-            )
-
-        # Distance configs: (J2, J3, J5) — positive and negative elbow-up
-        _dist_pos = [(0.6, 1.2, half_pi), (1.2, 2.2, half_pi), (1.8, 3.0, half_pi)]
-        _dist_neg = [(-0.6, -1.2, -half_pi), (-1.2, -2.2, -half_pi), (-1.8, -3.0, -half_pi)]
 
         seeds: list[np.ndarray] = []
 
         # G1: warm start
         seeds.append(seed_q.copy())
 
-        # G2: positive elbow-up × far/mid/close
-        for j2, j3, j5 in _dist_pos:
-            seeds.append(_s(j1_base, j2, j3, 0.0, j5, 0.0))
+        # G2/G3: analytically computed seeds (URDF-derived L1, L2, sh_z, sh_r)
+        analytic = self.ik.heuristic_seeds_from_target(target_xyz)
+        seeds.extend(analytic)
 
-        # G3: negative elbow-up × far/mid/close
-        for j2, j3, j5 in _dist_neg:
-            seeds.append(_s(j1_base, j2, j3, 0.0, j5, 0.0))
+        # G4: shoulder variants ±π/6 of each analytical seed
+        for base in analytic:
+            for delta in (math.pi / 6, -math.pi / 6):
+                s = base.copy()
+                s[0] = base[0] + delta
+                seeds.append(self.ik.clip_to_limits(s))
 
-        # G4: shoulder variants (±π/6) × mid config for both signs
-        for delta in (math.pi / 6, -math.pi / 6):
-            seeds.append(_s(j1_base + delta, 1.2, 2.2, 0.0, half_pi, 0.0))
-            seeds.append(_s(j1_base + delta, -1.2, -2.2, 0.0, -half_pi, 0.0))
+        # G5: backward (J1+π) of each analytical seed
+        for base in analytic:
+            s = base.copy()
+            s[0] = base[0] + math.pi
+            seeds.append(self.ik.clip_to_limits(s))
 
-        # G5: backward × mid for both signs
-        seeds.append(_s(j1_base + math.pi, 1.2, 2.2, 0.0, half_pi, 0.0))
-        seeds.append(_s(j1_base + math.pi, -1.2, -2.2, 0.0, -half_pi, 0.0))
-
-        # G6: biased random — J2*J3>0, J5=sign(J2)*pi/2
+        # G6: biased random — J2*J3>0, J5=-sign(J2)*pi/2, J4 near expected range
         rng = np.random.default_rng()
         for _ in range(self.cfg.ik_random_restarts):
             j2 = float(rng.uniform(float(lo[1]), float(hi[1])))
-            j5_sign = 1.0 if j2 >= 0.0 else -1.0
+            # J5 = -sign(J2)*pi/2
+            j5_val = -half_pi if j2 >= 0.0 else half_pi
+            # J3 same sign as J2 (elbow-up bias)
             j3_lo = max(float(lo[2]), 0.1) if j2 >= 0.0 else float(lo[2])
             j3_hi = float(hi[2]) if j2 >= 0.0 else min(float(hi[2]), -0.1)
             j3 = float(rng.uniform(j3_lo, j3_hi)) if j3_lo < j3_hi else j3_lo
+            # J4 from empirical formula + noise: J4 ≈ -0.623*J3 - 1.275*sign(J2)
+            j4_center = -0.623 * j3 - 1.275 * (1.0 if j2 >= 0.0 else -1.0)
+            j4 = float(np.clip(rng.normal(j4_center, 0.2), float(lo[3]), float(hi[3])))
             seeds.append(self.ik.clip_to_limits(np.array([
                 float(rng.uniform(float(lo[0]), float(hi[0]))),
-                j2, j3,
-                float(rng.uniform(float(lo[3]), float(hi[3]))),
-                j5_sign * half_pi,
+                j2, j3, j4, j5_val,
                 float(rng.uniform(float(lo[5]), float(hi[5]))),
             ])))
 

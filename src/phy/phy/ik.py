@@ -94,6 +94,70 @@ class IKSolver:
         self.lower_limits = np.where(np.isfinite(lower), lower, -np.inf)
         self.upper_limits = np.where(np.isfinite(upper), upper, np.inf)
 
+        self._init_link_geometry()
+
+    def _init_link_geometry(self) -> None:
+        """Extract arm link geometry from URDF for analytical seed computation.
+
+        Derived once at init — automatically re-read when URDF changes and the
+        node is restarted.  Assumes controlled_joints[1]=shoulder (j2) and
+        controlled_joints[2]=elbow (j3).
+        """
+        q_neutral = pin.neutral(self.model)
+        pin.forwardKinematics(self.model, self.data, q_neutral)
+        pin.updateFramePlacements(self.model, self.data)
+
+        j2_id = self.joint_ids[1]
+        j3_id = self.joint_ids[2]
+        p_j2 = np.asarray(self.data.oMi[j2_id].translation, dtype=float)
+        p_j3 = np.asarray(self.data.oMi[j3_id].translation, dtype=float)
+        p_ee = np.asarray(self.data.oMf[self.frame_id].translation, dtype=float)
+
+        self._L1: float = float(np.linalg.norm(p_j3 - p_j2))   # shoulder → elbow
+        self._L2: float = float(np.linalg.norm(p_ee - p_j3))   # elbow → EE
+        self._sh_z: float = float(p_j2[2])                      # shoulder height
+        self._sh_r: float = float(math.sqrt(p_j2[0]**2 + p_j2[1]**2))  # shoulder radial offset
+
+    def heuristic_seeds_from_target(self, target_xyz: np.ndarray) -> list[np.ndarray]:
+        """Analytically compute elbow-up seeds for the given Cartesian target.
+
+        Uses 2-link planar IK (law of cosines) for J2/J3, a verified empirical
+        formula for J4 (fit from IK analysis, max error 0.017 rad), and the
+        empirically confirmed relationship J5 = -sign(J2)*pi/2.
+
+        Returns two seeds: positive elbow-up (J2>0, J3>0) and negative elbow-up
+        (J2<0, J3<0).  Falls back to empty list if the target is out of planar reach.
+        """
+        x = float(target_xyz[0])
+        y = float(target_xyz[1])
+        z = float(target_xyz[2])
+        j1 = math.atan2(y, x)
+        half_pi = math.pi / 2.0
+
+        r_eff = math.sqrt(x * x + y * y) - self._sh_r
+        h_eff = z - self._sh_z
+        L1, L2 = self._L1, self._L2
+
+        dist_sq = r_eff * r_eff + h_eff * h_eff
+        cos_j3 = (dist_sq - L1 * L1 - L2 * L2) / (2.0 * L1 * L2)
+        if not (-1.0 <= cos_j3 <= 1.0):
+            return []   # target out of planar reach
+
+        seeds: list[np.ndarray] = []
+        for elbow_sign in (+1.0, -1.0):
+            j3 = elbow_sign * math.acos(float(np.clip(cos_j3, -1.0, 1.0)))
+            alpha = math.atan2(h_eff, r_eff)
+            beta = math.atan2(L2 * math.sin(j3), L1 + L2 * math.cos(j3))
+            j2 = alpha - beta
+            # J5 = -sign(J2)*pi/2  (verified for this arm)
+            j5 = -half_pi if j2 >= 0.0 else half_pi
+            # J4 empirical linear fit: max error 0.017 rad
+            j4 = -0.623 * j3 - 1.275 * (1.0 if j2 >= 0.0 else -1.0)
+            seeds.append(
+                self.clip_to_limits(np.array([j1, j2, j3, j4, j5, 0.0], dtype=float))
+            )
+        return seeds
+
     def _frame_point_world(self) -> np.ndarray:
         frame_pose = self.data.oMf[self.frame_id]
         return np.asarray(

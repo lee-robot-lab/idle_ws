@@ -109,46 +109,39 @@ def _solve_new(
     n_random: int = 12,
     w_min_manip: float = 0.02,
 ) -> tuple[bool, float]:
-    j1_base = math.atan2(float(target_xyz[1]), float(target_xyz[0]))
+    """Analytical seed strategy matching updated plan.py _solve_ik_multistart."""
     half_pi = math.pi / 2.0
     lo, hi = ik.lower_limits, ik.upper_limits
 
-    def _s(j1, j2, j3, j4, j5, j6):
-        return ik.clip_to_limits(np.array([j1, j2, j3, j4, j5, j6], dtype=float))
+    seeds: list[np.ndarray] = [np.zeros(6)]
 
-    seeds = [
-        # G1
-        np.zeros(6),
-        # G2: positive elbow-up × distances
-        _s(j1_base, 0.6,  1.2, 0., half_pi, 0.),
-        _s(j1_base, 1.2,  2.2, 0., half_pi, 0.),
-        _s(j1_base, 1.8,  3.0, 0., half_pi, 0.),
-        # G3: negative elbow-up × distances
-        _s(j1_base, -0.6, -1.2, 0., -half_pi, 0.),
-        _s(j1_base, -1.2, -2.2, 0., -half_pi, 0.),
-        _s(j1_base, -1.8, -3.0, 0., -half_pi, 0.),
-        # G4: shoulder ±π/6 × both signs (mid)
-        _s(j1_base + math.pi/6,  1.2,  2.2, 0.,  half_pi, 0.),
-        _s(j1_base - math.pi/6,  1.2,  2.2, 0.,  half_pi, 0.),
-        _s(j1_base + math.pi/6, -1.2, -2.2, 0., -half_pi, 0.),
-        _s(j1_base - math.pi/6, -1.2, -2.2, 0., -half_pi, 0.),
-        # G5: backward × both signs (mid)
-        _s(j1_base + math.pi,  1.2,  2.2, 0.,  half_pi, 0.),
-        _s(j1_base + math.pi, -1.2, -2.2, 0., -half_pi, 0.),
-    ]
+    # G2/G3: analytical seeds from URDF geometry
+    analytic = ik.heuristic_seeds_from_target(target_xyz)
+    seeds.extend(analytic)
 
-    # G6: biased random — J2*J3>0
+    # G4: shoulder ±π/6 of each analytical seed
+    for base in analytic:
+        for delta in (math.pi / 6, -math.pi / 6):
+            s = base.copy(); s[0] = base[0] + delta
+            seeds.append(ik.clip_to_limits(s))
+
+    # G5: backward of each analytical seed
+    for base in analytic:
+        s = base.copy(); s[0] = base[0] + math.pi
+        seeds.append(ik.clip_to_limits(s))
+
+    # G6: biased random — J2*J3>0, J4 from empirical formula
     for _ in range(n_random):
         j2 = float(rng.uniform(float(lo[1]), float(hi[1])))
-        sign = 1.0 if j2 >= 0.0 else -1.0
-        j3_lo = max(float(lo[2]),  0.1) if sign > 0 else float(lo[2])
-        j3_hi = float(hi[2]) if sign > 0 else min(float(hi[2]), -0.1)
+        j5_val = -half_pi if j2 >= 0.0 else half_pi
+        j3_lo = max(float(lo[2]), 0.1) if j2 >= 0.0 else float(lo[2])
+        j3_hi = float(hi[2]) if j2 >= 0.0 else min(float(hi[2]), -0.1)
         j3 = float(rng.uniform(j3_lo, j3_hi)) if j3_lo < j3_hi else j3_lo
+        j4_center = -0.623 * j3 - 1.275 * (1.0 if j2 >= 0.0 else -1.0)
+        j4 = float(np.clip(rng.normal(j4_center, 0.2), float(lo[3]), float(hi[3])))
         seeds.append(ik.clip_to_limits(np.array([
             float(rng.uniform(float(lo[0]), float(hi[0]))),
-            j2, j3,
-            float(rng.uniform(float(lo[3]), float(hi[3]))),
-            sign * half_pi,
+            j2, j3, j4, j5_val,
             float(rng.uniform(float(lo[5]), float(hi[5]))),
         ])))
 
@@ -164,8 +157,7 @@ def _solve_new(
 
     if not feasible:
         return False, 0.0
-    # Pick highest manipulability
-    best_res, best_m = max(feasible, key=lambda x: x[1])
+    _, best_m = max(feasible, key=lambda x: x[1])
     return True, best_m
 
 
