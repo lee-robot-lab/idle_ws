@@ -143,20 +143,18 @@ class IKSolver:
         if not (-1.0 <= cos_j3 <= 1.0):
             return []   # target out of planar reach
 
-        seeds: list[np.ndarray] = []
-        for elbow_sign in (+1.0, -1.0):
-            j3 = elbow_sign * math.acos(float(np.clip(cos_j3, -1.0, 1.0)))
-            alpha = math.atan2(h_eff, r_eff)
-            beta = math.atan2(L2 * math.sin(j3), L1 + L2 * math.cos(j3))
-            j2 = alpha - beta
-            # J5 = -sign(J2)*pi/2  (verified for this arm)
-            j5 = -half_pi if j2 >= 0.0 else half_pi
-            # J4 empirical linear fit: max error 0.017 rad
-            j4 = -0.623 * j3 - 1.275 * (1.0 if j2 >= 0.0 else -1.0)
-            seeds.append(
-                self.clip_to_limits(np.array([j1, j2, j3, j4, j5, 0.0], dtype=float))
-            )
-        return seeds
+        # Only positive elbow-up (elbow_sign=+1, J3>0 → J2>0, J3>0).
+        # elbow_sign=-1 gives elbow-DOWN (J2>0, J3<0), not negative elbow-up.
+        # Negative elbow-up (J2<0, J3<0, J1≈atan2+π) requires backward-reach
+        # IK which the simple 2-link model cannot correctly solve; it is covered
+        # instead by the G6 biased random seeds (J2*J3>0 constraint).
+        j3 = math.acos(float(np.clip(cos_j3, -1.0, 1.0)))
+        alpha = math.atan2(h_eff, r_eff)
+        beta = math.atan2(L2 * math.sin(j3), L1 + L2 * math.cos(j3))
+        j2 = alpha - beta
+        j5 = -half_pi if j2 >= 0.0 else half_pi
+        j4 = -0.623 * j3 - 1.275 * (1.0 if j2 >= 0.0 else -1.0)
+        return [self.clip_to_limits(np.array([j1, j2, j3, j4, j5, 0.0], dtype=float))]
 
     def _frame_point_world(self) -> np.ndarray:
         frame_pose = self.data.oMf[self.frame_id]
