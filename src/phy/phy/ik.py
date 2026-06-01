@@ -17,10 +17,14 @@ class IKConfig:
     target_frame: str = "gripper"
     target_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     controlled_joints: tuple[str, ...] = ("j1", "j2", "j3", "j4", "j5", "j6")
-    max_iterations: int = 80
+    max_iterations: int = 100
     tolerance: float = 1.0e-4
-    damping: float = 1.0e-6
-    step_scale: float = 1.0
+    # DLS regularisation coefficient (added to J J^T diagonal).
+    # Equivalent to λ²≈0.01 in paper notation (LAMBDA≈0.1).
+    # Adaptive damping in plan.py further increases this near singularities.
+    damping: float = 0.01
+    # Step scale on dq update; 0.5 prevents overshoot near singularities.
+    step_scale: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -456,19 +460,16 @@ class IKSolver:
     ) -> IKResult:
         """6 task-space DoF IK: target position + target rotation matrix.
 
-        Args:
-            goal_xyz: target position (world frame, 3D)
-            goal_R: target rotation matrix (3x3, world frame, ``R_world_from_target_frame``)
-            q_seed: initial joint configuration (ordered by ``controlled_joints``)
+        Uses SE3 log6 error (geometrically correct on the manifold) and
+        damped least-squares with step_scale=0.5 for stable convergence.
 
-        Error vector is 6D ``[Δp_world (3); ω_world (3)]`` where the angular
-        component uses the matrix-log of ``R_target @ R_current.T``.
-
-        Returns an :class:`IKResult` with ``residual_norm`` over all 6 components.
+        Error = log6(current_SE3^{-1} ⊗ target_SE3) rotated to world frame.
+        Update: dq = J^T (J J^T + λI)^{-1} err,  q += step_scale * dq
         """
         q = self.clip_to_limits(q_seed)
         goal_p = np.asarray(goal_xyz, dtype=float)
         goal_rot = np.asarray(goal_R, dtype=float)
+        target_SE3 = pin.SE3(goal_rot, goal_p)
         iters = 0
         residual = float("inf")
 
@@ -477,42 +478,32 @@ class IKSolver:
             pin.forwardKinematics(self.model, self.data, q_model)
             pin.updateFramePlacements(self.model, self.data)
 
-            p_current = self._frame_point_world()
-            R_current = np.asarray(self.data.oMf[self.frame_id].rotation, dtype=float)
+            R_curr = np.asarray(self.data.oMf[self.frame_id].rotation, dtype=float)
+            p_eff = np.asarray(self.data.oMf[self.frame_id].translation, dtype=float) \
+                    + R_curr @ self.target_offset_local
+            current_SE3 = pin.SE3(R_curr, p_eff)
 
-            pos_err = goal_p - p_current
-            R_err = goal_rot @ R_current.T
-            ang_err = np.asarray(pin.log3(R_err), dtype=float)
-            err = np.concatenate([pos_err, ang_err])
+            # SE3 log6 error in LOCAL frame, rotated to LOCAL_WORLD_ALIGNED
+            err_local = np.asarray(
+                pin.log6(current_SE3.actInv(target_SE3)).vector, dtype=float
+            )
+            err = np.concatenate([R_curr @ err_local[:3], R_curr @ err_local[3:]])
             residual = float(np.linalg.norm(err))
             if residual <= self.config.tolerance:
                 return IKResult(True, q.copy(), iters, residual)
 
-            jacobian_6d_full = pin.computeFrameJacobian(
-                self.model,
-                self.data,
-                q_model,
-                self.frame_id,
+            J_full = pin.computeFrameJacobian(
+                self.model, self.data, q_model, self.frame_id,
                 pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
             )
-            jacobian_pos = np.asarray(jacobian_6d_full[:3, :], dtype=float)
-            jacobian_ang = np.asarray(jacobian_6d_full[3:, :], dtype=float)
-            r_world = np.asarray(
-                self.data.oMf[self.frame_id].rotation @ self.target_offset_local,
-                dtype=float,
-            )
-            jacobian_point = jacobian_pos - pin.skew(r_world) @ jacobian_ang
-            jacobian_pose_ctrl = np.vstack(
-                [
-                    jacobian_point[:, self.v_indices],
-                    jacobian_ang[:, self.v_indices],
-                ]
-            )
+            J_pos = np.asarray(J_full[:3, :], dtype=float)
+            J_ang = np.asarray(J_full[3:, :], dtype=float)
+            r_world = R_curr @ self.target_offset_local
+            J_pt = J_pos - pin.skew(r_world) @ J_ang
+            J_ctrl = np.vstack([J_pt[:, self.v_indices], J_ang[:, self.v_indices]])
 
-            jj_t = jacobian_pose_ctrl @ jacobian_pose_ctrl.T
-            reg = self.config.damping * np.eye(6)
-            dq = jacobian_pose_ctrl.T @ np.linalg.solve(jj_t + reg, err)
-
+            JJt = J_ctrl @ J_ctrl.T + self.config.damping * np.eye(6)
+            dq = J_ctrl.T @ np.linalg.solve(JJt, err)
             q = self.clip_to_limits(q + self.config.step_scale * dq)
 
         return IKResult(False, q.copy(), iters, residual)
