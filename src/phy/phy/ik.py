@@ -399,3 +399,29 @@ class IKSolver:
         position = self._frame_point_world()
         rotation = np.asarray(self.data.oMf[self.frame_id].rotation, dtype=float)
         return position, rotation
+
+    def manipulability(self, q_ordered: np.ndarray) -> float:
+        """Yoshikawa manipulability measure: sqrt(det(J @ J.T)).
+
+        Near 0 means the configuration is close to a kinematic singularity.
+        """
+        q_model = self._ordered_to_model_q(self.clip_to_limits(q_ordered))
+        pin.forwardKinematics(self.model, self.data, q_model)
+        pin.updateFramePlacements(self.model, self.data)
+        J_full = pin.computeFrameJacobian(
+            self.model, self.data, q_model, self.frame_id,
+            pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
+        )
+        J_pos = np.asarray(J_full[:3, :], dtype=float)
+        J_ang = np.asarray(J_full[3:, :], dtype=float)
+        r_world = np.asarray(
+            self.data.oMf[self.frame_id].rotation @ self.target_offset_local, dtype=float
+        )
+        J_point = J_pos - pin.skew(r_world) @ J_ang
+        J_ctrl = np.vstack([J_point[:, self.v_indices], J_ang[:, self.v_indices]])
+        return float(np.sqrt(max(0.0, np.linalg.det(J_ctrl @ J_ctrl.T))))
+
+    def forward_yaw(self, q_ordered: np.ndarray) -> float:
+        """Return EE yaw angle (rotation about world Z) at the given configuration."""
+        _, R = self.forward_pose(q_ordered)
+        return float(math.atan2(R[1, 0], R[0, 0]))

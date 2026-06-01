@@ -53,7 +53,15 @@ class PlannerConfig:
     collision_samples_per_rad: float = 30.0
     collision_samples_min: int = 10
     collision_samples_max: int = 50
-    ik_random_restarts: int = 8
+    # Biased random restarts (G6): J2*J3>0 constrained, J5=sign(J2)*pi/2.
+    ik_random_restarts: int = 12
+    # Candidate selection: cost = w_dist*||Δq|| + w_manip/manipulability
+    w_dist: float = 1.0
+    w_manip: float = 0.5
+    # Reject IK solutions with manipulability below this (near-singularity).
+    w_min_manipulability: float = 0.02
+    # IK residual acceptance bound (m).
+    ik_residual_accept_m: float = 0.005
 
 
 @dataclass(frozen=True)
@@ -115,6 +123,7 @@ class Planner:
         start_q: np.ndarray,
         v_max: float | None = None,
         a_max: float | None = None,
+        min_duration: float | None = None,
     ) -> Plan | None:
         """Plan a quintic trajectory from ``start_q`` to a top-down grasp pose.
 
@@ -137,7 +146,7 @@ class Planner:
         q_goal = np.asarray(ik_res.q, dtype=float)
 
         traj, n_samples = self._build_trajectory(
-            start_q_arr, q_goal, v_max=v_max, a_max=a_max
+            start_q_arr, q_goal, v_max=v_max, a_max=a_max, min_duration=min_duration
         )
         any_collision, first_idx = self._check_collisions(traj, n_samples)
 
@@ -262,27 +271,96 @@ class Planner:
         R: np.ndarray,
         seed_q: np.ndarray,
     ) -> IKResult:
-        yaw = math.atan2(float(target_xyz[1]), float(target_xyz[0]))
-        candidates = [
-            seed_q,                                                              # 1. 현재 측정 자세
-            self.ik.clip_to_limits(np.array([yaw,              1.2, 2.2, 0., 0., 0.])),  # 2. fwd elbow-up
-            self.ik.clip_to_limits(np.array([yaw + math.pi,    1.2, 2.2, 0., 0., 0.])),  # 3. bwd elbow-up
-            np.zeros(self._n_dof),                                               # 4. zeros
-        ]
-        best = self.ik.solve_pose(target_xyz, R, candidates[0])
-        if best.success:
-            return best
-        for seed in candidates[1:]:
-            res = self.ik.solve_pose(target_xyz, R, seed)
-            if res.residual_norm < best.residual_norm:
-                best = res
-            if res.success:
-                return best
+        """Structured seed IK: elbow-up biased multi-start, cost-based selection.
+
+        Seed groups:
+          G1 (1): warm start (current q)
+          G2 (3): positive elbow-up × far/mid/close distances
+          G3 (3): negative elbow-up × far/mid/close distances
+          G4 (4): shoulder variants (J1 ±π/6) × both elbow signs (mid distance)
+          G5 (2): backward (J1+π) × both elbow signs (mid distance)
+          G6 (N): biased random — J2*J3>0, J5=sign(J2)*π/2
+
+        Elbow-up condition for this arm (medium-long range): J2 * J3 > 0.
+        J5 follows the elbow sign: +π/2 when J2,J3>0, -π/2 when J2,J3<0.
+        J4 initialised to 0 for structured seeds (to be refined per arm).
+        """
+        j1_base = math.atan2(float(target_xyz[1]), float(target_xyz[0]))
+        half_pi = math.pi / 2.0
+        lo, hi = self.ik.lower_limits, self.ik.upper_limits
+
+        def _s(j1, j2, j3, j4, j5, j6) -> np.ndarray:
+            return self.ik.clip_to_limits(
+                np.array([j1, j2, j3, j4, j5, j6], dtype=float)
+            )
+
+        # Distance configs: (J2, J3, J5) — positive and negative elbow-up
+        _dist_pos = [(0.6, 1.2, half_pi), (1.2, 2.2, half_pi), (1.8, 3.0, half_pi)]
+        _dist_neg = [(-0.6, -1.2, -half_pi), (-1.2, -2.2, -half_pi), (-1.8, -3.0, -half_pi)]
+
+        seeds: list[np.ndarray] = []
+
+        # G1: warm start
+        seeds.append(seed_q.copy())
+
+        # G2: positive elbow-up × far/mid/close
+        for j2, j3, j5 in _dist_pos:
+            seeds.append(_s(j1_base, j2, j3, 0.0, j5, 0.0))
+
+        # G3: negative elbow-up × far/mid/close
+        for j2, j3, j5 in _dist_neg:
+            seeds.append(_s(j1_base, j2, j3, 0.0, j5, 0.0))
+
+        # G4: shoulder variants (±π/6) × mid config for both signs
+        for delta in (math.pi / 6, -math.pi / 6):
+            seeds.append(_s(j1_base + delta, 1.2, 2.2, 0.0, half_pi, 0.0))
+            seeds.append(_s(j1_base + delta, -1.2, -2.2, 0.0, -half_pi, 0.0))
+
+        # G5: backward × mid for both signs
+        seeds.append(_s(j1_base + math.pi, 1.2, 2.2, 0.0, half_pi, 0.0))
+        seeds.append(_s(j1_base + math.pi, -1.2, -2.2, 0.0, -half_pi, 0.0))
+
+        # G6: biased random — J2*J3>0, J5=sign(J2)*pi/2
         rng = np.random.default_rng()
         for _ in range(self.cfg.ik_random_restarts):
-            res = self.ik.solve_pose(target_xyz, R, rng.uniform(self.ik.lower_limits, self.ik.upper_limits))
-            if res.residual_norm < best.residual_norm:
-                best = res
-            if res.success:
-                return best
-        return best
+            j2 = float(rng.uniform(float(lo[1]), float(hi[1])))
+            j5_sign = 1.0 if j2 >= 0.0 else -1.0
+            j3_lo = max(float(lo[2]), 0.1) if j2 >= 0.0 else float(lo[2])
+            j3_hi = float(hi[2]) if j2 >= 0.0 else min(float(hi[2]), -0.1)
+            j3 = float(rng.uniform(j3_lo, j3_hi)) if j3_lo < j3_hi else j3_lo
+            seeds.append(self.ik.clip_to_limits(np.array([
+                float(rng.uniform(float(lo[0]), float(hi[0]))),
+                j2, j3,
+                float(rng.uniform(float(lo[3]), float(hi[3]))),
+                j5_sign * half_pi,
+                float(rng.uniform(float(lo[5]), float(hi[5]))),
+            ])))
+
+        # Solve IK for all seeds, collect feasible results
+        tol = self.cfg.ik_residual_accept_m
+        w_min = self.cfg.w_min_manipulability
+        feasible: list[IKResult] = []
+        best_any: IKResult | None = None
+
+        for seed in seeds:
+            res = self.ik.solve_pose(target_xyz, R, seed)
+            if best_any is None or res.residual_norm < best_any.residual_norm:
+                best_any = res
+            if not (res.success or res.residual_norm <= tol):
+                continue
+            if self.ik.manipulability(res.q) < w_min:
+                continue
+            feasible.append(res)
+
+        if not feasible:
+            return best_any  # type: ignore[return-value]
+
+        # Cost-based selection: minimise joint distance + inverse manipulability
+        w1, w2 = self.cfg.w_dist, self.cfg.w_manip
+
+        def _cost(r: IKResult) -> float:
+            dist = float(np.linalg.norm(r.q - seed_q))
+            manip = self.ik.manipulability(r.q)
+            return w1 * dist + w2 / (manip + 1e-6)
+
+        return min(feasible, key=_cost)
