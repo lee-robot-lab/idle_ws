@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+"""단일 파라미터 Type18 write(+옵션 Type22 save) 유지보수 스크립트."""
+
 import argparse
 
 from lib.config import HOST_ID, DEFAULT_CH
+from lib.control_tuning import assert_control_inactive
 from lib.runtime import run_with_bus
 from lib.frames import frame_type18_write_u32, frame_type22_save, frame_type17_read
 from lib.common import (
@@ -34,6 +37,7 @@ def main():
     g.add_argument("--ms", type=int, help="EPScan_time용: 10,15,20,... (ms)")
 
     args = ap.parse_args()
+    assert_control_inactive()
     can_ids = _dedupe(args.can_id)
 
     if args.list:

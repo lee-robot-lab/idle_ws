@@ -1,3 +1,5 @@
+"""Type03 enable / Type04 stop 전원 명령 유틸."""
+
 import argparse
 from lib.config import HOST_ID, DEFAULT_CH
 from lib.power import send_power
