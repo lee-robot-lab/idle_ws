@@ -74,6 +74,8 @@ class PlannerConfig:
     tuck_j5: float = -math.pi / 2
     # Multi-candidate trajectory selection: max IK candidates to collision-check.
     ik_max_traj_checks: int = 5
+    # Elbow-up filter: reject IK solutions where |j2|>0.15 and j2*j3<0.
+    elbow_up_filter: bool = False
 
 
 @dataclass(frozen=True)
@@ -241,8 +243,8 @@ class Planner:
         target_xyz: np.ndarray,
         target_yaw: float,
         start_q: np.ndarray,
-        v_max: float | None = None,
-        a_max: float | None = None,
+        v_max: "float | np.ndarray | None" = None,
+        a_max: "float | np.ndarray | None" = None,
         min_duration_leg2: float | None = None,
     ) -> tuple[Plan, Plan] | None:
         """Plan two segments: start_q → via_q → target.
@@ -273,8 +275,8 @@ class Planner:
         target_xyz: np.ndarray,
         target_yaw: float,
         start_q: np.ndarray,
-        v_max: float | None = None,
-        a_max: float | None = None,
+        v_max: "float | np.ndarray | None" = None,
+        a_max: "float | np.ndarray | None" = None,
         min_duration: float | None = None,
     ) -> Plan | tuple[Plan, Plan] | None:
         """Hybrid mode selection: direct (1-leg) vs fold-and-rotate (2-leg).
@@ -387,15 +389,20 @@ class Planner:
         self,
         q_start: np.ndarray,
         q_goal: np.ndarray,
-        v_max: float | None = None,
-        a_max: float | None = None,
+        v_max: "float | np.ndarray | None" = None,
+        a_max: "float | np.ndarray | None" = None,
         min_duration: float | None = None,
     ) -> tuple[QuinticPlan, int]:
-        v_max_eff = self.cfg.v_max if v_max is None else float(v_max)
-        a_max_eff = self.cfg.a_max if a_max is None else float(a_max)
+        def _to_vec(x, default: float) -> np.ndarray:
+            if x is None:
+                return np.full(self._n_dof, default)
+            if np.ndim(x) == 0:
+                return np.full(self._n_dof, float(x))
+            return np.asarray(x, dtype=float)
+
+        v_max_vec = _to_vec(v_max, self.cfg.v_max)
+        a_max_vec = _to_vec(a_max, self.cfg.a_max)
         min_dur = self.cfg.min_traj_duration if min_duration is None else float(min_duration)
-        v_max_vec = np.full(self._n_dof, v_max_eff)
-        a_max_vec = np.full(self._n_dof, a_max_eff)
         zeros = np.zeros(self._n_dof)
 
         traj = plan_quintic(
@@ -531,6 +538,9 @@ class Planner:
             if not (res.success or res.residual_norm <= tol):
                 continue
             if self.ik.manipulability(res.q) < w_min:
+                continue
+            q = np.asarray(res.q)
+            if self.cfg.elbow_up_filter and abs(q[1]) > 0.15 and q[1] * q[2] < 0:
                 continue
             feasible.append(res)
 

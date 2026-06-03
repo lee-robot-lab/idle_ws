@@ -1,8 +1,7 @@
-"""Launch sim_driver + pick_plan_node for pick-and-place demo.
+"""Launch sim_driver + plan_node for pick-and-place demo.
 
-Differences from sim_pickplace.launch.py:
-  - Uses pick_plan_node (elbow-up filter, collision retry, traj cost, sigmoid warp)
-  - Exposes ready_pose, retract_q, profile_sharpness parameters
+Uses plan_node with elbow_up_filter=true and hybrid fold-and-rotate motion.
+Per-joint v_max/a_max/kp are read from control_params.yaml at runtime.
 """
 
 from launch import LaunchDescription
@@ -21,10 +20,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("planner_min_traj_duration", default_value="1.5"),
         DeclareLaunchArgument("disable_gravity",  default_value="false"),
         DeclareLaunchArgument("unlimited_tau",    default_value="true"),
-        DeclareLaunchArgument("profile_sharpness", default_value="2.0"),
         DeclareLaunchArgument("warp_q_hi_rad",    default_value="1.0"),
-        DeclareLaunchArgument("use_ready_pose",   default_value="false"),
-        DeclareLaunchArgument("retract_q",        default_value=""),
+        DeclareLaunchArgument("elbow_up_filter",  default_value="true"),
 
         Node(
             package="sim",
@@ -39,19 +36,17 @@ def generate_launch_description() -> LaunchDescription:
         ),
         Node(
             package="phy",
-            executable="pick_plan_node",
+            executable="plan_node",
             name="plan_node",
             output="screen",
             parameters=[{
-                "planner_v_max":            LaunchConfiguration("planner_v_max"),
-                "planner_a_max":            LaunchConfiguration("planner_a_max"),
+                "planner_v_max":             LaunchConfiguration("planner_v_max"),
+                "planner_a_max":             LaunchConfiguration("planner_a_max"),
                 "planner_min_traj_duration": LaunchConfiguration("planner_min_traj_duration"),
-                "disable_gravity":          LaunchConfiguration("disable_gravity"),
-                "unlimited_tau":            LaunchConfiguration("unlimited_tau"),
-                "profile_sharpness":        LaunchConfiguration("profile_sharpness"),
-                "warp_q_hi_rad":            LaunchConfiguration("warp_q_hi_rad"),
-                "use_ready_pose":           LaunchConfiguration("use_ready_pose"),
-                "retract_q":               LaunchConfiguration("retract_q"),
+                "disable_gravity":           LaunchConfiguration("disable_gravity"),
+                "unlimited_tau":             LaunchConfiguration("unlimited_tau"),
+                "warp_q_hi_rad":             LaunchConfiguration("warp_q_hi_rad"),
+                "elbow_up_filter":           LaunchConfiguration("elbow_up_filter"),
             }],
         ),
     ])

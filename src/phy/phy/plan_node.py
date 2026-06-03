@@ -84,6 +84,7 @@ class PlanNode(Node):
         v_max = declare_typed(self, "planner_v_max", 1.0)
         a_max = declare_typed(self, "planner_a_max", 1.0)
         min_traj_duration = declare_typed(self, "planner_min_traj_duration", 1.5)
+        elbow_up_filter = bool(declare_typed(self, "elbow_up_filter", False))
         disable_gravity = declare_typed(self, "disable_gravity", False)
         self.unlimited_tau = bool(declare_typed(self, "unlimited_tau", False))
         urdf_path_text = declare_typed(self, "urdf_path", "", cast=strip_str)
@@ -128,7 +129,12 @@ class PlanNode(Node):
             self.robot,
             self.collision,
             self.ik,
-            PlannerConfig(v_max=v_max, a_max=a_max, min_traj_duration=min_traj_duration),
+            PlannerConfig(
+                v_max=v_max,
+                a_max=a_max,
+                min_traj_duration=min_traj_duration,
+                elbow_up_filter=elbow_up_filter,
+            ),
         )
 
         self.motor_ids = self.robot.ordered_motor_ids
@@ -294,6 +300,18 @@ class PlanNode(Node):
         duration_override_s: float = 0.0,
     ) -> None:
         min_dur = duration_override_s if duration_override_s > 0.0 else None
+        cfg = self.planner.cfg
+
+        # Per-joint v_max / a_max from YAML (fall back to PlannerConfig defaults).
+        v_max_arr = np.array([
+            float(control_params_for_motor(m).get("v_max", cfg.v_max))
+            for m in self.motor_ids
+        ])
+        a_max_arr = np.array([
+            float(control_params_for_motor(m).get("a_max", cfg.a_max))
+            for m in self.motor_ids
+        ])
+
         use_via = self._use_safe_transit and self._safe_transit_q is not None
 
         if use_via:
@@ -302,6 +320,8 @@ class PlanNode(Node):
                 target_xyz=target_xyz,
                 target_yaw=target_yaw,
                 start_q=start_q,
+                v_max=v_max_arr,
+                a_max=a_max_arr,
                 min_duration_leg2=min_dur,
             )
             if result is None:
@@ -327,6 +347,8 @@ class PlanNode(Node):
             target_xyz=target_xyz,
             target_yaw=target_yaw,
             start_q=start_q,
+            v_max=v_max_arr,
+            a_max=a_max_arr,
             min_duration=min_dur,
         )
         if result is None:
