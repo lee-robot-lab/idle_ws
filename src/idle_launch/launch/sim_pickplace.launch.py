@@ -35,7 +35,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     v_max_arg = DeclareLaunchArgument(
         "planner_v_max",
-        default_value="0.5",
+        default_value="1.0",
         description="Per-joint max velocity for trajectory generation (rad/s)",
     )
     a_max_arg = DeclareLaunchArgument(

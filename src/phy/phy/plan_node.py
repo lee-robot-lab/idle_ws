@@ -81,8 +81,9 @@ class PlanNode(Node):
         self.kp_max = declare_typed(self, "kp_max", 50.0)
         self.kd_max = declare_typed(self, "kd_max", 10.0)
         self.target_frame = declare_typed(self, "target_frame", "gripper", cast=strip_str)
-        v_max = declare_typed(self, "planner_v_max", 0.5)
+        v_max = declare_typed(self, "planner_v_max", 1.0)
         a_max = declare_typed(self, "planner_a_max", 1.0)
+        min_traj_duration = declare_typed(self, "planner_min_traj_duration", 1.5)
         disable_gravity = declare_typed(self, "disable_gravity", False)
         self.unlimited_tau = bool(declare_typed(self, "unlimited_tau", False))
         urdf_path_text = declare_typed(self, "urdf_path", "", cast=strip_str)
@@ -94,7 +95,7 @@ class PlanNode(Node):
         # Time warp: trajectory virtual time freezes when max joint error exceeds
         # warp_q_hi_rad; full speed below warp_q_lo_rad; linear ramp between them.
         self.warp_q_lo_rad = float(declare_typed(self, "warp_q_lo_rad", 0.04))
-        self.warp_q_hi_rad = float(declare_typed(self, "warp_q_hi_rad", 0.15))
+        self.warp_q_hi_rad = float(declare_typed(self, "warp_q_hi_rad", 0.30))
 
         urdf_path = resolve_share_file("sim", "urdf/robot.urdf", urdf_path_text)
         srdf_path = resolve_share_file("sim", "srdf/robot.srdf", "")
@@ -127,7 +128,7 @@ class PlanNode(Node):
             self.robot,
             self.collision,
             self.ik,
-            PlannerConfig(v_max=v_max, a_max=a_max),
+            PlannerConfig(v_max=v_max, a_max=a_max, min_traj_duration=min_traj_duration),
         )
 
         self.motor_ids = self.robot.ordered_motor_ids
@@ -484,7 +485,30 @@ class PlanNode(Node):
     ) -> tuple[dict[int, dict[str, float]], float]:
         """Sample trajectory at virtual time vt_s; returns cmd dict and max joint error."""
         assert self.active is not None
+        traj = self.active.plan.trajectory
         q_des_vec, qd_des_vec, _ = self.active.plan.sample(vt_s)
+
+        # qdd from quintic coefficients (analytical derivative)
+        t = float(np.clip(vt_s, 0.0, traj.duration))
+        t2, t3 = t * t, t * t * t
+        c = traj.coeffs  # [dof, 6]
+        qdd_des_vec = (2.0 * c[:, 2]
+                       + 6.0  * c[:, 3] * t
+                       + 12.0 * c[:, 4] * t2
+                       + 20.0 * c[:, 5] * t3)
+
+        # inertia+Coriolis feedforward at desired state, scaled by warp
+        # (warp=0 → trajectory frozen → no acceleration feedforward needed)
+        tau_iff: dict[int, float] = {}
+        if warp > 0.05:
+            q_des_m   = {m: float(q_des_vec[i])   for i, m in enumerate(self.motor_ids)}
+            qd_des_m  = {m: float(qd_des_vec[i])  for i, m in enumerate(self.motor_ids)}
+            qdd_des_m = {m: float(qdd_des_vec[i]) for i, m in enumerate(self.motor_ids)}
+            try:
+                tau_iff = self.robot.inertia_ff_torque(q_des_m, qd_des_m, qdd_des_m)
+            except Exception:
+                tau_iff = {}
+
         max_err = 0.0
         out: dict[int, dict[str, float]] = {}
         for idx, motor_id in enumerate(self.motor_ids):
@@ -492,14 +516,19 @@ class PlanNode(Node):
             kp = float(tuning.get("kp", 0.0))
             kd = float(tuning.get("kd", 0.0))
             gscale = float(tuning.get("gravity_scale", 1.0))
-            gbias = float(tuning.get("gravity_bias", 0.0))
+            gbias  = float(tuning.get("gravity_bias", 0.0))
+            iff_scale = float(tuning.get("inertia_ff_scale", 0.0))
+
             tau_ff = gscale * tau_g_by_motor[motor_id] + gbias
+            if iff_scale > 0.0 and motor_id in tau_iff:
+                tau_ff += iff_scale * tau_iff[motor_id]
+
             q_err = abs(self.state_by_motor[motor_id].q - float(q_des_vec[idx]))
             if q_err > max_err:
                 max_err = q_err
             out[motor_id] = {
                 "q_des": float(q_des_vec[idx]),
-                "qd_des": float(qd_des_vec[idx]) * warp,  # chain-rule: scale by dvt/dt
+                "qd_des": float(qd_des_vec[idx]) * warp,
                 "kp": kp,
                 "kd": kd,
                 "tau_ff": tau_ff,

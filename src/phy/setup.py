@@ -27,6 +27,7 @@ setup(
             'hold_node = phy.hold_node:main',
             'ee_xyz_trajectory_node = phy.ee_xyz_trajectory_node:main',
             'plan_node = phy.plan_node:main',
+            'pick_plan_node = phy.pick_plan_node:main',
             'send_target = phy.send_target:main',
             'gripper_node = phy.gripper_node:main',
             'task_fsm_node = phy.task_fsm_node:main',

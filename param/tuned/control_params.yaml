@@ -1,23 +1,38 @@
 motors:
   '1':
-    kd: 0.12
-    kp: 3.0
+    kp: 12.0
+    kd: 5.3
+    inertia_ff_scale: 1.0
+    v_max: 0.8
+    a_max: 1.5
+    goal_mode: 1
   '2':
     gravity_bias: 0.0
     gravity_scale: 1.0
-    kd: 2.0
-    kp: 9.0
+    kp: 28.0
+    kd: 10.0
+    inertia_ff_scale: 0.7
+    v_max: 1.5
+    a_max: 3.0
   '3':
     gravity_scale: 1.0
-    kd: 0.7
-    kp: 6.0
+    kp: 8.0
+    kd: 2.5
+    v_max: 1.5
+    a_max: 2.5
   '4':
-    kd: 0.4
     kp: 5.0
+    kd: 0.8
+    v_max: 2.0
+    a_max: 4.0
   '5':
-    kd: 0.3
     kp: 3.0
+    kd: 0.4
+    v_max: 2.0
+    a_max: 5.0
   '6':
-    kd: 0.2
     kp: 2.0
+    kd: 0.1
+    v_max: 2.0
+    a_max: 5.0
 version: 1

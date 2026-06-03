@@ -32,6 +32,11 @@ CONTROL_TUNING_KEYS = {
     "tau_ff",
     "gravity_scale",
     "gravity_bias",
+    "inertia_ff_scale",
+    "v_max",
+    "a_max",
+    "profile_sharpness",
+    "goal_mode",
 }
 
 

@@ -437,7 +437,7 @@
   <joint name="j3_2" type="fixed">
     <parent link="link2_1"/>
     <child link="link2_2"/>
-    <origin xyz="0 -0.050 -0.07415" rpy="1.5708 0 0"/>
+    <origin xyz="0 -0.050 -0.07465" rpy="1.5708 0 0"/>
   </joint>
 
   <joint name="j3_3" type="fixed">

@@ -110,6 +110,33 @@ class RobotModel:
             for motor_id in self.ordered_motor_ids
         }
 
+    def inertia_ff_torque(
+        self,
+        q_by_motor: Mapping[int, float],
+        qd_by_motor: Mapping[int, float],
+        qdd_by_motor: Mapping[int, float],
+    ) -> dict[int, float]:
+        """Inertia + Coriolis feedforward: RNEA(q,qd,qdd) − gravity(q).
+
+        Computed at desired trajectory state so gravity comp (q_actual) and
+        this term can be summed without double-counting gravity.
+        """
+        nv = self.model.nv
+        self._fill_q_buf(q_by_motor)
+        qd_model = np.zeros(nv)
+        qdd_model = np.zeros(nv)
+        for motor_id in self.ordered_motor_ids:
+            vi = self.bindings[motor_id].v_index
+            qd_model[vi]  = float(qd_by_motor[motor_id])
+            qdd_model[vi] = float(qdd_by_motor[motor_id])
+        tau_rnea = pin.rnea(self.model, self.data, self._q_buf, qd_model, qdd_model)
+        tau_g    = pin.computeGeneralizedGravity(self.model, self.data, self._q_buf)
+        return {
+            motor_id: float(tau_rnea[self.bindings[motor_id].v_index]
+                            - tau_g[self.bindings[motor_id].v_index])
+            for motor_id in self.ordered_motor_ids
+        }
+
     def forward_kinematics(
         self, q_by_motor: Mapping[int, float], frame_name: str
     ) -> pin.SE3:

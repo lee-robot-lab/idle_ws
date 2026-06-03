@@ -70,19 +70,9 @@ class SimDriverNode(Node):
                 self.gripper_qpos_idxs.append(int(self.model.jnt_qposadr[jid]))
                 self.gripper_qvel_idxs.append(int(self.model.jnt_dofadr[jid]))
 
-        # Add passive damping to arm joints so the sim is numerically stable.
-        # Default damping=0 in new robot.xml causes free oscillation with any
-        # numerical noise. These values are small enough not to affect gravity-
-        # comp behaviour but prevent runaway drift during compliance mode.
-        _damping_by_joint = {
-            "j1": 0.5, "j2": 1.0, "j3": 0.5,
-            "j4": 0.5, "j5": 0.3, "j6": 0.2,
-        }
-        for joint_name, damp in _damping_by_joint.items():
-            jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-            if jid >= 0:
-                dof_idx = int(self.model.jnt_dofadr[jid])
-                self.model.dof_damping[dof_idx] = damp
+        # dof_damping override removed — use robot.xml default (damping=0.05).
+        # Artificial damping caused model mismatch with Pinocchio URDF,
+        # distorting inertia FF and PD convergence in simulation.
 
         self.latest_cmd: dict[int, dict[str, float]] = {}
 
