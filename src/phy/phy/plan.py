@@ -61,6 +61,10 @@ class PlannerConfig:
     # Penalty on base-joint (j1) travel: prefer elbow-flip branches that keep j1
     # over solutions that sweep j1 far. Start above w_dist; tune in sim.
     w_j1: float = 2.0
+    # Soft elbow-up penalty: cost += w_elbow * max(0, -j2*j3).
+    # j2*j3 > 0 → elbow-up, no penalty; j2*j3 < 0 → elbow-down, penalised.
+    # Soft penalty avoids IK failure for compact/close poses unlike hard filter.
+    w_elbow: float = 5.0
     # Reject IK solutions with manipulability below this (near-singularity).
     w_min_manipulability: float = 0.02
     # IK residual acceptance bound (m).
@@ -74,8 +78,6 @@ class PlannerConfig:
     tuck_j5: float = -math.pi / 2
     # Multi-candidate trajectory selection: max IK candidates to collision-check.
     ik_max_traj_checks: int = 5
-    # Elbow-up filter: reject IK solutions where |j2|>0.15 and j2*j3<0.
-    elbow_up_filter: bool = False
 
 
 @dataclass(frozen=True)
@@ -539,21 +541,20 @@ class Planner:
                 continue
             if self.ik.manipulability(res.q) < w_min:
                 continue
-            q = np.asarray(res.q)
-            if self.cfg.elbow_up_filter and abs(q[1]) > 0.15 and q[1] * q[2] < 0:
-                continue
             feasible.append(res)
 
         if not feasible:
             return [best_any]  # type: ignore[list-item]
 
         # Cost-based ranking: joint distance + inverse manipulability + j1 travel.
-        w1, w2, w3 = self.cfg.w_dist, self.cfg.w_manip, self.cfg.w_j1
+        w1, w2, w3, w4 = self.cfg.w_dist, self.cfg.w_manip, self.cfg.w_j1, self.cfg.w_elbow
 
         def _cost(r: IKResult) -> float:
-            dist = float(np.linalg.norm(r.q - seed_q))
-            manip = self.ik.manipulability(r.q)
-            dj1 = abs(float(r.q[0] - seed_q[0]))
-            return w1 * dist + w2 / (manip + 1e-6) + w3 * dj1
+            q = np.asarray(r.q)
+            dist  = float(np.linalg.norm(q - seed_q))
+            manip = self.ik.manipulability(q)
+            dj1   = abs(float(q[0] - seed_q[0]))
+            elbow = float(max(0.0, -q[1] * q[2]))  # 0 if elbow-up, >0 if elbow-down
+            return w1 * dist + w2 / (manip + 1e-6) + w3 * dj1 + w4 * elbow
 
         return sorted(feasible, key=_cost)

@@ -21,7 +21,6 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("disable_gravity",  default_value="false"),
         DeclareLaunchArgument("unlimited_tau",    default_value="true"),
         DeclareLaunchArgument("warp_q_hi_rad",    default_value="1.0"),
-        DeclareLaunchArgument("elbow_up_filter",  default_value="true"),
 
         Node(
             package="sim",
@@ -46,7 +45,6 @@ def generate_launch_description() -> LaunchDescription:
                 "disable_gravity":           LaunchConfiguration("disable_gravity"),
                 "unlimited_tau":             LaunchConfiguration("unlimited_tau"),
                 "warp_q_hi_rad":             LaunchConfiguration("warp_q_hi_rad"),
-                "elbow_up_filter":           LaunchConfiguration("elbow_up_filter"),
             }],
         ),
     ])

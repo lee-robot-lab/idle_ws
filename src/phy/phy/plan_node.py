@@ -50,6 +50,7 @@ class MotorSample:
     qd: float = 0.0
     tau_measured: float = 0.0
     last_seen_s: float = float("-inf")
+    qdd_est: float = 0.0   # finite-difference acceleration estimate
 
 
 @dataclass
@@ -84,7 +85,6 @@ class PlanNode(Node):
         v_max = declare_typed(self, "planner_v_max", 1.0)
         a_max = declare_typed(self, "planner_a_max", 1.0)
         min_traj_duration = declare_typed(self, "planner_min_traj_duration", 1.5)
-        elbow_up_filter = bool(declare_typed(self, "elbow_up_filter", False))
         disable_gravity = declare_typed(self, "disable_gravity", False)
         self.unlimited_tau = bool(declare_typed(self, "unlimited_tau", False))
         urdf_path_text = declare_typed(self, "urdf_path", "", cast=strip_str)
@@ -129,12 +129,7 @@ class PlanNode(Node):
             self.robot,
             self.collision,
             self.ik,
-            PlannerConfig(
-                v_max=v_max,
-                a_max=a_max,
-                min_traj_duration=min_traj_duration,
-                elbow_up_filter=elbow_up_filter,
-            ),
+            PlannerConfig(v_max=v_max, a_max=a_max, min_traj_duration=min_traj_duration),
         )
 
         self.motor_ids = self.robot.ordered_motor_ids
@@ -229,11 +224,16 @@ class PlanNode(Node):
             motor_id = int(state.motor_id)
             if motor_id not in self.state_by_motor:
                 continue
+            prev = self.state_by_motor[motor_id]
+            new_qd = float(state.qd)
+            dt = stamp_s - prev.last_seen_s
+            qdd_est = (new_qd - prev.qd) / dt if (0.0 < dt < 0.1) else prev.qdd_est
             self.state_by_motor[motor_id] = MotorSample(
                 q=float(state.q),
-                qd=float(state.qd),
+                qd=new_qd,
                 tau_measured=float(state.tau),
                 last_seen_s=stamp_s,
+                qdd_est=qdd_est,
             )
 
     def on_target(self, msg: PoseStamped) -> None:
@@ -537,40 +537,67 @@ class PlanNode(Node):
                        + 12.0 * c[:, 4] * t2
                        + 20.0 * c[:, 5] * t3)
 
-        # inertia+Coriolis feedforward at desired state, scaled by warp
-        # (warp=0 → trajectory frozen → no acceleration feedforward needed)
+        # Per-motor tuning (read once per tick)
+        tuning_list = [control_params_for_motor(m) for m in self.motor_ids]
+        goal_modes  = [bool(tuning_list[i].get("goal_mode", 0)) for i in range(len(self.motor_ids))]
+
+        # Build RNEA inputs: trajectory joints use desired state, goal_mode joints
+        # use actual measured state (q_actual, qd_actual, qdd_est) so they still
+        # receive inertia+Coriolis compensation during large-angle moves.
+        q_rnea   = {}
+        qd_rnea  = {}
+        qdd_rnea = {}
+        for i, m in enumerate(self.motor_ids):
+            if goal_modes[i]:
+                s = self.state_by_motor[m]
+                q_rnea[m]   = float(s.q)
+                qd_rnea[m]  = float(s.qd)
+                qdd_rnea[m] = float(s.qdd_est)
+            else:
+                q_rnea[m]   = float(q_des_vec[i])
+                qd_rnea[m]  = float(qd_des_vec[i])
+                qdd_rnea[m] = float(qdd_des_vec[i])
+
+        # inertia+Coriolis feedforward (warp=0 → trajectory frozen → skip)
         tau_iff: dict[int, float] = {}
         if warp > 0.05:
-            q_des_m   = {m: float(q_des_vec[i])   for i, m in enumerate(self.motor_ids)}
-            qd_des_m  = {m: float(qd_des_vec[i])  for i, m in enumerate(self.motor_ids)}
-            qdd_des_m = {m: float(qdd_des_vec[i]) for i, m in enumerate(self.motor_ids)}
             try:
-                tau_iff = self.robot.inertia_ff_torque(q_des_m, qd_des_m, qdd_des_m)
+                tau_iff = self.robot.inertia_ff_torque(q_rnea, qd_rnea, qdd_rnea)
             except Exception:
                 tau_iff = {}
 
         max_err = 0.0
         out: dict[int, dict[str, float]] = {}
+        end_q = self.active.plan.end_q
         for idx, motor_id in enumerate(self.motor_ids):
-            tuning = control_params_for_motor(motor_id)
-            kp = float(tuning.get("kp", 0.0))
-            kd = float(tuning.get("kd", 0.0))
-            gscale = float(tuning.get("gravity_scale", 1.0))
-            gbias  = float(tuning.get("gravity_bias", 0.0))
+            tuning    = tuning_list[idx]
+            kp        = float(tuning.get("kp",            0.0))
+            kd        = float(tuning.get("kd",            0.0))
+            gscale    = float(tuning.get("gravity_scale", 1.0))
+            gbias     = float(tuning.get("gravity_bias",  0.0))
             iff_scale = float(tuning.get("inertia_ff_scale", 0.0))
 
             tau_ff = gscale * tau_g_by_motor[motor_id] + gbias
             if iff_scale > 0.0 and motor_id in tau_iff:
                 tau_ff += iff_scale * tau_iff[motor_id]
 
-            q_err = abs(self.state_by_motor[motor_id].q - float(q_des_vec[idx]))
-            if q_err > max_err:
-                max_err = q_err
+            if goal_modes[idx]:
+                # goal_mode: drive directly to end_q, ignore trajectory timing.
+                # Does not contribute to warp error (not a trajectory-tracking joint).
+                q_cmd  = float(end_q[idx])
+                qd_cmd = 0.0
+            else:
+                q_cmd  = float(q_des_vec[idx])
+                qd_cmd = float(qd_des_vec[idx]) * warp
+                q_err  = abs(self.state_by_motor[motor_id].q - q_cmd)
+                if q_err > max_err:
+                    max_err = q_err
+
             out[motor_id] = {
-                "q_des": float(q_des_vec[idx]),
-                "qd_des": float(qd_des_vec[idx]) * warp,
-                "kp": kp,
-                "kd": kd,
+                "q_des":  q_cmd,
+                "qd_des": qd_cmd,
+                "kp":     kp,
+                "kd":     kd,
                 "tau_ff": tau_ff,
             }
         return out, max_err
