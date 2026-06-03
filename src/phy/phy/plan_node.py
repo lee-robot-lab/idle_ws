@@ -323,18 +323,36 @@ class PlanNode(Node):
                 )
                 return
 
-        plan = self.planner.plan_to_pose(
+        result = self.planner.plan_motion(
             target_xyz=target_xyz,
             target_yaw=target_yaw,
             start_q=start_q,
             min_duration=min_dur,
         )
-        if plan is None:
+        if result is None:
             self.get_logger().warn(
-                f"[{my_serial}] IK unreachable xyz={target_xyz.tolist()} — discarded"
+                f"[{my_serial}] IK unreachable / no safe plan xyz={target_xyz.tolist()} — discarded"
             )
             self._publish_status("FAIL")
             return
+
+        # Fold-and-rotate: two-leg plan (both legs pre-solved & collision-safe).
+        if isinstance(result, tuple):
+            leg1, leg2 = result
+            with self._plan_lock:
+                if self._plan_serial != my_serial:
+                    self.get_logger().info(f"[{my_serial}] stale plan discarded (newer target)")
+                    return
+                self._pending_plan = leg1
+                self._via_leg2 = leg2
+            self.get_logger().info(
+                f"[{my_serial}] fold-and-rotate plan committed: "
+                f"leg1={leg1.duration_s:.2f}s leg2={leg2.duration_s:.2f}s"
+            )
+            return
+
+        # Direct: single-leg plan.
+        plan = result
         if not plan.collision_safe:
             self.get_logger().warn(
                 f"[{my_serial}] collision at sample {plan.collision_first_sample} — discarded"

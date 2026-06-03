@@ -156,6 +156,97 @@ def test_collision_in_trajectory_flagged(planner, start_q):
         assert isinstance(plan.collision_first_sample, int)
 
 
+def test_plan_motion_direct_for_small_dj1(planner, start_q):
+    """Front target needs little base rotation → direct single-leg plan."""
+    result = planner.plan_motion(
+        target_xyz=np.array([0.3, 0.0, 0.6]),
+        target_yaw=0.0,
+        start_q=start_q,
+    )
+    assert result is not None
+    assert isinstance(result, Plan), "small |Δj1| should pick direct (single Plan)"
+    assert result.collision_safe
+
+
+def test_plan_motion_fold_for_large_dj1(planner, start_q):
+    """With a tiny threshold any base motion trips fold-and-rotate (2-leg)."""
+    cfg = PlannerConfig(j1_flip_threshold_rad=0.001)
+    p = Planner(planner.robot, planner.collision, planner.ik, cfg)
+    result = p.plan_motion(
+        target_xyz=np.array([0.0, 0.3, 0.6]),
+        target_yaw=0.0,
+        start_q=start_q,
+    )
+    # Never a single direct Plan; either a 2-leg tuple or None (if a leg collides).
+    assert not isinstance(result, Plan)
+    if result is not None:
+        leg1, leg2 = result
+        # leg1 ends at a tuck: |j2| matches the configured tuck magnitude.
+        assert np.isclose(abs(leg1.end_q[1]), abs(cfg.tuck_j2), atol=0.05)
+        # base joint set in leg1 (the tuck) matches the final goal's base joint.
+        assert abs(leg1.end_q[0] - leg2.end_q[0]) < 0.3
+
+
+def test_tuck_pose_picks_closer_elbow(planner):
+    cfg = planner.cfg
+    cur_a = np.array([0.0, cfg.tuck_j2, cfg.tuck_j3, cfg.tuck_j4, cfg.tuck_j5, 0.0])
+    tuck_a = planner._tuck_pose(0.5, cur_a)
+    assert tuck_a[1] > 0, "near tuck_A → positive j2 elbow side"
+    assert np.isclose(tuck_a[0], 0.5), "j1 set to target angle"
+    assert np.isclose(tuck_a[5], 0.0), "j6 kept at current"
+
+    cur_b = np.array([0.0, -cfg.tuck_j2, -cfg.tuck_j3, -cfg.tuck_j4, -cfg.tuck_j5, 0.0])
+    tuck_b = planner._tuck_pose(0.5, cur_b)
+    assert tuck_b[1] < 0, "near tuck_B → negative j2 elbow side"
+
+
+def test_cost_prefers_near_j1(planner, start_q):
+    """A stronger w_j1 penalty must not increase the chosen base-joint travel.
+
+    Uses a single shared candidate set so the test is deterministic regardless
+    of random restart seeds.
+    """
+    target = np.array([0.0, 0.3, 0.6])
+    R = top_down_R(0.0)
+
+    # Generate candidates once — both comparisons operate on the same set.
+    cands = planner._rank_ik_candidates(target, R, start_q)
+    if len(cands) < 2:
+        pytest.skip("IK found only one candidate — cannot test ranking")
+
+    def _cost(r, w_j1: float) -> float:
+        dist = float(np.linalg.norm(r.q - start_q))
+        manip = planner.ik.manipulability(r.q)
+        dj1 = abs(float(r.q[0] - start_q[0]))
+        return dist + 0.5 / (manip + 1e-6) + w_j1 * dj1
+
+    best_no = min(cands, key=lambda r: _cost(r, 0.0))
+    best_strong = min(cands, key=lambda r: _cost(r, 50.0))
+    dj1_no = abs(float(best_no.q[0] - start_q[0]))
+    dj1_strong = abs(float(best_strong.q[0] - start_q[0]))
+    assert dj1_strong <= dj1_no + 1e-6
+
+
+def test_plan_to_pose_skips_colliding_candidate(planner, start_q, monkeypatch):
+    """If the best-cost candidate collides, plan_to_pose falls to the next one."""
+    calls = {"n": 0}
+
+    def fake_check(traj, n_samples):
+        calls["n"] += 1
+        return (True, 0) if calls["n"] == 1 else (False, -1)
+
+    monkeypatch.setattr(planner, "_check_collisions", fake_check)
+    plan = planner.plan_to_pose(
+        target_xyz=np.array([0.3, 0.0, 0.6]),
+        target_yaw=0.0,
+        start_q=start_q,
+    )
+    assert plan is not None
+    assert plan.collision_safe
+    assert plan.metadata["ik_candidate_index"] >= 1
+    assert plan.metadata["ik_candidates_ranked"] >= 2
+
+
 def test_planner_ik_joint_order_validation(sim_share):
     """Mismatched IK joint order vs robot model should fail at Planner init."""
     urdf = sim_share / "urdf" / "robot.urdf"
