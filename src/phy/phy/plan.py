@@ -54,7 +54,7 @@ class PlannerConfig:
     collision_samples_min: int = 10
     collision_samples_max: int = 50
     # Biased random restarts (G6): J2*J3>0 constrained, J5=sign(J2)*pi/2.
-    ik_random_restarts: int = 12
+    ik_random_restarts: int = 4
     # Candidate selection: cost = w_dist*||Δq|| + w_manip/manipulability + w_j1*|Δj1|
     w_dist: float = 1.0
     w_manip: float = 0.5
@@ -65,19 +65,26 @@ class PlannerConfig:
     # j2*j3 > 0 → elbow-up, no penalty; j2*j3 < 0 → elbow-down, penalised.
     # Soft penalty avoids IK failure for compact/close poses unlike hard filter.
     w_elbow: float = 5.0
+    # Prefer wrist bend j4 to follow elbow j3's sign. Opposite signs are allowed
+    # but penalised so collision-free / high-manipulability solutions can still win.
+    w_j3_j4_sign: float = 2.0
     # Reject IK solutions with manipulability below this (near-singularity).
     w_min_manipulability: float = 0.02
     # IK residual acceptance bound (m).
     ik_residual_accept_m: float = 0.005
-    # Hybrid mode selection: |Δj1| above this picks fold-and-rotate over direct.
-    j1_flip_threshold_rad: float = math.pi / 4  # ~45 deg
     # Top-down folded "tuck" pose (tuck_A); tuck_B = these four negated.
     tuck_j2: float = 0.337
     tuck_j3: float = -0.323
     tuck_j4: float = -0.934
     tuck_j5: float = -math.pi / 2
-    # Multi-candidate trajectory selection: max IK candidates to collision-check.
-    ik_max_traj_checks: int = 5
+    # Per-joint dist weight for j4 — lower than other joints so large-j4 solutions
+    # are not unfairly buried in ranking, but still penalised enough that small-j4
+    # solutions win when both are available.
+    w_j4: float = 0.35
+    # Max IK candidates to collision-check per plan attempt.  Unlimited was too
+    # slow for hard targets; 8 catches j4-heavy solutions (now ranked higher with
+    # w_j4=0.35) without burning seconds on every feasible candidate.
+    ik_max_traj_checks: int = 8
 
 
 @dataclass(frozen=True)
@@ -137,17 +144,16 @@ class Planner:
         target_xyz: np.ndarray,
         target_yaw: float,
         start_q: np.ndarray,
-        v_max: float | None = None,
-        a_max: float | None = None,
+        v_max: "float | np.ndarray | None" = None,
+        a_max: "float | np.ndarray | None" = None,
         min_duration: float | None = None,
     ) -> Plan | None:
         """Plan a quintic trajectory from ``start_q`` to a top-down grasp pose.
 
         Returns ``None`` if IK fails to find a reachable configuration. Otherwise
         ranks feasible IK candidates by cost and returns the first whose trajectory
-        is collision-free; if every checked candidate self-collides, returns the
-        best-cost candidate's :class:`Plan` with ``collision_safe=False`` (caller
-        decides whether to accept or fall back to another mode).
+        is collision-free; if every candidate self-collides, returns the best-cost
+        candidate's :class:`Plan` with ``collision_safe=False``.
         """
         target_xyz_arr = np.asarray(target_xyz, dtype=float)
         start_q_arr = np.asarray(start_q, dtype=float)
@@ -155,14 +161,35 @@ class Planner:
             raise ValueError(
                 f"start_q shape {start_q_arr.shape} != expected ({self._n_dof},)"
             )
-
         R = top_down_R(target_yaw)
         cands = self._rank_ik_candidates(target_xyz_arr, R, start_q_arr)
-        if not cands[0].success:
-            return None
+        return self._plan_from_candidates(
+            cands, start_q_arr, target_xyz_arr, target_yaw, v_max, a_max, min_duration
+        )
 
+    def _plan_from_candidates(
+        self,
+        cands: "list[IKResult]",
+        start_q: np.ndarray,
+        target_xyz: np.ndarray,
+        target_yaw: float,
+        v_max: "float | np.ndarray | None",
+        a_max: "float | np.ndarray | None",
+        min_duration: float | None,
+    ) -> Plan | None:
+        """Build collision-checked plan from pre-ranked IK candidates.
+
+        Tries every feasible candidate (no cutoff) until a collision-free trajectory
+        is found.  Returns the first safe plan, or the best-cost unsafe plan if all
+        candidates collide, or ``None`` if no candidate passes the IK feasibility check.
+        """
+        tol = self.cfg.ik_residual_accept_m
+        start_q_arr = np.asarray(start_q, dtype=float)
+        target_xyz_arr = np.asarray(target_xyz, dtype=float)
         best_plan: Plan | None = None
-        for idx, ik_res in enumerate(cands[: self.cfg.ik_max_traj_checks]):
+        for idx, ik_res in enumerate(cands[:self.cfg.ik_max_traj_checks]):
+            if not (ik_res.success or ik_res.residual_norm <= tol):
+                continue
             q_goal = np.asarray(ik_res.q, dtype=float)
             traj, n_samples = self._build_trajectory(
                 start_q_arr, q_goal, v_max=v_max, a_max=a_max, min_duration=min_duration
@@ -203,8 +230,8 @@ class Planner:
     ) -> Plan | None:
         """Plan a quintic trajectory to a known joint configuration (no IK).
 
-        Used for via-point motions (e.g. safe transit through a known-safe q)
-        where the target joint config is already determined.  Returns None if
+        Used for intermediate motions where the target joint config is already
+        determined. Returns None if
         the trajectory collides.
         """
         target_q_arr = np.asarray(target_q, dtype=float)
@@ -239,39 +266,6 @@ class Planner:
             },
         )
 
-    def plan_via(
-        self,
-        via_q: np.ndarray,
-        target_xyz: np.ndarray,
-        target_yaw: float,
-        start_q: np.ndarray,
-        v_max: "float | np.ndarray | None" = None,
-        a_max: "float | np.ndarray | None" = None,
-        min_duration_leg2: float | None = None,
-    ) -> tuple[Plan, Plan] | None:
-        """Plan two segments: start_q → via_q → target.
-
-        Used for cage-safe trajectories: transit through a known-safe
-        configuration before moving to the final target.  Returns None if
-        either leg collides or IK fails.
-        """
-        leg1 = self.plan_to_q(via_q, start_q, v_max=v_max, a_max=a_max)
-        if leg1 is None or not leg1.collision_safe:
-            return None
-
-        leg2 = self.plan_to_pose(
-            target_xyz=target_xyz,
-            target_yaw=target_yaw,
-            start_q=np.asarray(via_q, dtype=float),
-            v_max=v_max,
-            a_max=a_max,
-            min_duration=min_duration_leg2,
-        )
-        if leg2 is None or not leg2.collision_safe:
-            return None
-
-        return leg1, leg2
-
     def plan_motion(
         self,
         target_xyz: np.ndarray,
@@ -280,14 +274,15 @@ class Planner:
         v_max: "float | np.ndarray | None" = None,
         a_max: "float | np.ndarray | None" = None,
         min_duration: float | None = None,
-    ) -> Plan | tuple[Plan, Plan] | None:
-        """Hybrid mode selection: direct (1-leg) vs fold-and-rotate (2-leg).
+    ) -> "Plan | tuple[Plan, Plan] | None":
+        """KE-cost mode selection: direct (1-leg) vs fold-and-rotate (2-leg).
 
-        Solves IK once to inspect base-joint travel ``|Δj1|``. Small travel (and a
-        collision-free direct path) → single ``plan_to_pose``. Large travel, or a
-        direct path that self-collides, → fold-and-rotate through a top-down tuck
-        pose via ``plan_via`` (leg2's IK is pre-solved so it fires the instant j1
-        arrives). Returns ``None`` if the target is unreachable / no safe plan.
+        Solves IK for the direct path AND pre-solves the fold leg-2 IK from the
+        tuck pose so both options can be compared with a peak-kinetic-energy cost
+        before any trajectory is built.  Lower KE wins; if the preferred mode
+        collides the other is tried; if both collide a j5=0 wrist-retract
+        2-leg plan is attempted as a last resort. Returns ``None`` only when
+        the target is genuinely unreachable.
         """
         target_xyz_arr = np.asarray(target_xyz, dtype=float)
         start_q_arr = np.asarray(start_q, dtype=float)
@@ -297,38 +292,86 @@ class Planner:
             )
 
         R = top_down_R(target_yaw)
-        ik_res = self._solve_ik_multistart(target_xyz_arr, R, start_q_arr)
-        if not ik_res.success:
-            return None
-        q_goal = np.asarray(ik_res.q, dtype=float)
-        dj1 = abs(float(q_goal[0] - start_q_arr[0]))
+        tol = self.cfg.ik_residual_accept_m
 
-        if dj1 <= self.cfg.j1_flip_threshold_rad:
-            direct = self.plan_to_pose(
-                target_xyz_arr,
-                target_yaw,
-                start_q_arr,
-                v_max=v_max,
-                a_max=a_max,
-                min_duration=min_duration,
+        # --- IK for direct path ---
+        direct_cands = self._rank_ik_candidates(target_xyz_arr, R, start_q_arr)
+        if not (direct_cands[0].success or direct_cands[0].residual_norm <= tol):
+            return None
+        q_goal_direct = np.asarray(direct_cands[0].q, dtype=float)
+
+        # --- Pre-solve fold IK from tuck seed ---
+        tuck_q = self._tuck_pose(float(q_goal_direct[0]), start_q_arr)
+        fold_cands = self._rank_ik_candidates(target_xyz_arr, R, tuck_q)
+        fold_reachable = fold_cands[0].success or fold_cands[0].residual_norm <= tol
+
+        # --- KE cost comparison ---
+        v_vec = self._to_v_vec(v_max)
+        ke_direct = self._ke_cost(start_q_arr, q_goal_direct, v_vec)
+        ke_fold = float("inf")
+        if fold_reachable:
+            q_goal_fold = np.asarray(fold_cands[0].q, dtype=float)
+            ke_fold = max(
+                self._ke_cost(start_q_arr, tuck_q, v_vec),
+                self._ke_cost(tuck_q, q_goal_fold, v_vec),
             )
+        prefer_fold = ke_fold < ke_direct
+
+        # --- Build both plans ---
+        def _direct_plan() -> "Plan | None":
+            return self._plan_from_candidates(
+                direct_cands, start_q_arr, target_xyz_arr, target_yaw,
+                v_max, a_max, min_duration,
+            )
+
+        def _fold_plan() -> "tuple[Plan, Plan] | None":
+            if not fold_reachable:
+                return None
+            leg1 = self.plan_to_q(tuck_q, start_q_arr, v_max=v_max, a_max=a_max)
+            if leg1 is None or not leg1.collision_safe:
+                return None
+            leg2 = self._plan_from_candidates(
+                fold_cands, tuck_q, target_xyz_arr, target_yaw,
+                v_max, a_max, min_duration,
+            )
+            if leg2 is None or not leg2.collision_safe:
+                return None
+            return leg1, leg2
+
+        def _retract_fallbacks(direct: "Plan | None") -> "tuple[Plan, Plan] | None":
+            # Only useful when direct IK succeeded but trajectory collides.
+            # If direct is None (IK failed) or both direct+fold failed, retract
+            # won't help (fundamental reachability issue, not a wrist/floor issue).
+            if direct is None or direct.collision_safe:
+                return None
+            return self._plan_j5_retract(direct, v_max, a_max)
+
+        if prefer_fold:
+            fold = _fold_plan()
+            if fold is not None:
+                return fold
+            direct = _direct_plan()
             if direct is not None and direct.collision_safe:
                 return direct
-            # direct missing or self-colliding → fall through to fold-and-rotate
-
-        tuck_q = self._tuck_pose(float(q_goal[0]), start_q_arr)
-        return self.plan_via(
-            via_q=tuck_q,
-            target_xyz=target_xyz_arr,
-            target_yaw=target_yaw,
-            start_q=start_q_arr,
-            v_max=v_max,
-            a_max=a_max,
-            min_duration_leg2=min_duration,
-        )
+            # Both fold and direct failed — only try retract if direct had a collision
+            retract = _retract_fallbacks(direct)
+            if retract is not None:
+                return retract
+            return direct  # collision-unsafe; plan_node will discard with log
+        else:
+            direct = _direct_plan()
+            if direct is not None and direct.collision_safe:
+                return direct
+            retract = _retract_fallbacks(direct)
+            if retract is not None:
+                return retract
+            fold = _fold_plan()
+            if fold is not None:
+                return fold
+            return direct  # collision-unsafe fallback
 
     def _tuck_pose(self, target_j1: float, current_q: np.ndarray) -> np.ndarray:
-        """Top-down folded via pose for fold-and-rotate.
+        """Top-down folded intermediate pose for fold-and-rotate.
 
         j1 is set to the target angle (fold + base-rotation happen in one leg),
         j6 (and any joints beyond) are kept at their current value. Two candidates
@@ -349,16 +392,89 @@ class Planner:
         tB = self.ik.clip_to_limits(tB)
         return min((tA, tB), key=lambda t: float(np.linalg.norm(t - current)))
 
-    def rewarp_start(self, plan: Plan, actual_start_q: np.ndarray) -> Plan:
+    def _to_v_vec(self, v_max: "float | np.ndarray | None") -> np.ndarray:
+        if v_max is None:
+            return np.full(self._n_dof, self.cfg.v_max)
+        if np.ndim(v_max) == 0:
+            return np.full(self._n_dof, float(v_max))
+        return np.asarray(v_max, dtype=float)
+
+    def _ke_cost(
+        self,
+        q_start: np.ndarray,
+        q_end: np.ndarray,
+        v_max_vec: np.ndarray,
+    ) -> float:
+        """Estimate peak kinetic energy for a quintic move from q_start to q_end.
+
+        Uses M(q_mid) so compactly-folded (tuck) configurations are cheaper than
+        fully-extended ones even when joint travel is similar.
+        """
+        dq = np.asarray(q_end, dtype=float) - np.asarray(q_start, dtype=float)
+        T_est = max(
+            float(np.max(np.abs(dq) / (v_max_vec + 1e-8))),
+            self.cfg.min_traj_duration,
+        )
+        qd_peak = 1.875 * dq / T_est  # quintic profile peak ≈ 1.875 Δq/T
+        q_mid = (np.asarray(q_start, dtype=float) + np.asarray(q_end, dtype=float)) * 0.5
+        q_mid_dict = {
+            m: float(q_mid[i]) for i, m in enumerate(self.robot.ordered_motor_ids)
+        }
+        try:
+            M = self.robot.mass_matrix(q_mid_dict)
+            return float(0.5 * qd_peak @ M @ qd_peak)
+        except Exception:
+            return float(np.dot(dq, dq))  # fallback: plain L2 distance
+
+    def _plan_j5_retract(
+        self,
+        colliding_plan: Plan,
+        v_max: "float | np.ndarray | None",
+        a_max: "float | np.ndarray | None",
+    ) -> "tuple[Plan, Plan] | None":
+        """Wrist-retract fallback for floor/finger collisions.
+
+        When a direct plan collides (typically finger_l/r hitting the floor),
+        route through an intermediate pose where j5=0 (wrist retracted) at the
+        FINAL arm position:
+
+          leg1: start → end_q(j5=0)  — full arm motion, wrist tucked, fingers clear
+          leg2: end_q(j5=0) → end_q  — wrist extends only, arm stays put
+
+        This keeps the fingers above the floor during the large arm swing and
+        only lowers them once the arm is already at the goal XY position.
+        """
+        J5_IDX = 4
+        end_q = colliding_plan.end_q.copy()
+        q_mid = end_q.copy()
+        q_mid[J5_IDX] = 0.0
+        q_mid = self.ik.clip_to_limits(q_mid)
+
+        mid_dict = {m: float(q_mid[i]) for i, m in enumerate(self.robot.ordered_motor_ids)}
+        if self.collision.check(mid_dict):
+            return None
+
+        leg1 = self.plan_to_q(q_mid, colliding_plan.start_q, v_max=v_max, a_max=a_max)
+        if leg1 is None or not leg1.collision_safe:
+            return None
+
+        leg2 = self.plan_to_q(end_q, q_mid, v_max=v_max, a_max=a_max)
+        if leg2 is None or not leg2.collision_safe:
+            return None
+
+        return leg1, leg2
+
+    def rewarp_start(
+        self,
+        plan: Plan,
+        actual_start_q: np.ndarray,
+        v_start: "np.ndarray | None" = None,
+    ) -> Plan:
         """Re-build trajectory from ``actual_start_q`` to the original ``plan.end_q``.
 
-        Used for Pattern B: when a pre-computed plan is about to start but the
-        actual joint state has drifted slightly from the expected start. The
-        new trajectory may have a slightly different duration than the
-        original (quintic auto-extends if delta_q is larger).
-
-        Caller should pre-verify ``‖actual_start_q − plan.start_q‖`` is small
-        (typically < 0.1 rad). Large divergence requires a full replan.
+        ``v_start`` allows passing the actual joint velocity at the rewarp
+        moment (e.g., at the leg1→leg2 handoff) so the new trajectory is
+        velocity-continuous and avoids a commanded velocity jump.
         """
         actual = np.asarray(actual_start_q, dtype=float)
         if actual.shape != plan.start_q.shape:
@@ -367,7 +483,7 @@ class Planner:
             )
 
         traj, n_samples = self._build_trajectory(
-            actual, plan.end_q, min_duration=plan.duration_s
+            actual, plan.end_q, min_duration=plan.duration_s, v_start=v_start
         )
         any_collision, first_idx = self._check_collisions(traj, n_samples)
 
@@ -394,6 +510,7 @@ class Planner:
         v_max: "float | np.ndarray | None" = None,
         a_max: "float | np.ndarray | None" = None,
         min_duration: float | None = None,
+        v_start: "np.ndarray | None" = None,
     ) -> tuple[QuinticPlan, int]:
         def _to_vec(x, default: float) -> np.ndarray:
             if x is None:
@@ -406,11 +523,12 @@ class Planner:
         a_max_vec = _to_vec(a_max, self.cfg.a_max)
         min_dur = self.cfg.min_traj_duration if min_duration is None else float(min_duration)
         zeros = np.zeros(self._n_dof)
+        v_s = np.asarray(v_start, dtype=float) if v_start is not None else zeros
 
         traj = plan_quintic(
             q_start=q_start,
             q_goal=q_goal,
-            v_start=zeros,
+            v_start=v_s,
             v_goal=zeros,
             v_max=v_max_vec,
             a_max=a_max_vec,
@@ -546,15 +664,30 @@ class Planner:
         if not feasible:
             return [best_any]  # type: ignore[list-item]
 
-        # Cost-based ranking: joint distance + inverse manipulability + j1 travel.
-        w1, w2, w3, w4 = self.cfg.w_dist, self.cfg.w_manip, self.cfg.w_j1, self.cfg.w_elbow
+        # Cost-based ranking: weighted joint distance + inverse manipulability +
+        # j1 travel + elbow-down and j3/j4 sign-mismatch penalties.
+        # j4 gets a much lower weight: large j4 travel is cheap (no self-collision
+        # risk) and blocking good solutions for j4 travel was the primary cause of
+        # "unreachable" false negatives.
+        w1 = self.cfg.w_dist
+        w2 = self.cfg.w_manip
+        w3 = self.cfg.w_j1
+        w4 = self.cfg.w_elbow
+        w5 = self.cfg.w_j3_j4_sign
+        j4_w = self.cfg.w_j4
+        n = len(seed_q)
+        dist_weights = np.ones(n)
+        if n > 3:
+            dist_weights[3] = j4_w  # j4 at index 3 (0-based: j1,j2,j3,j4,...)
 
         def _cost(r: IKResult) -> float:
             q = np.asarray(r.q)
-            dist  = float(np.linalg.norm(q - seed_q))
+            dq    = q - seed_q
+            dist  = float(np.sqrt(float(np.dot(dist_weights * dq, dq))))
             manip = self.ik.manipulability(q)
             dj1   = abs(float(q[0] - seed_q[0]))
             elbow = float(max(0.0, -q[1] * q[2]))  # 0 if elbow-up, >0 if elbow-down
-            return w1 * dist + w2 / (manip + 1e-6) + w3 * dj1 + w4 * elbow
+            j34   = float(max(0.0, -q[2] * q[3]))  # 0 if j3/j4 same sign
+            return w1 * dist + w2 / (manip + 1e-6) + w3 * dj1 + w4 * elbow + w5 * j34
 
         return sorted(feasible, key=_cost)

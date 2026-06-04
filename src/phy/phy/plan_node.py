@@ -1,16 +1,9 @@
-"""ROS wrapper for the Planner — drives /motor_cmd_array from /ee_target_pose.
+"""Control-only node — 250 Hz trajectory execution.
 
-**Phase 4b (Pattern B)**: background planning + verify/rewarp + time-warp for
-external-force handling.
-
-- on_target  → increments _plan_serial, snapshots current q, launches bg thread.
-- _bg_plan   → calls planner.plan_to_pose (IK + collision, may release GIL);
-               deposits result in _pending_plan under lock, guarded by serial.
-- on_timer   → pops _pending_plan, runs rewarp_start to absorb drift since
-               snapshot, commits as active trajectory.
-- Time warp  → _vt_elapsed_s advances at warp ∈ [0,1] derived from the
-               previous tick's max position error; qd_des is scaled by the
-               same factor so kd·(qd_des−qd_actual) stays consistent.
+Receives pre-computed plans from plan_compute_node via /computed_plan and
+executes them as quintic trajectories with time-warp and hold logic.
+No IK / collision in this process — GIL pressure from planning never
+interrupts the control loop.
 """
 
 from __future__ import annotations
@@ -22,26 +15,20 @@ from typing import Optional
 
 import numpy as np
 import rclpy
-from geometry_msgs.msg import PoseStamped
-from msgs.msg import EETarget
-from std_msgs.msg import Float64MultiArray
-from idle_common.control_tuning import control_params_for_motor
+from msgs.msg import ComputedPlan, MotorCMDArray, MotorStateArray
 from std_msgs.msg import String
-from idle_common.motor_map import (
-    DEFAULT_MOTOR_JOINT_MAP,
-    DEFAULT_TAU_LIMIT_BY_MOTOR,
-)
+from idle_common.control_tuning import control_params_for_motor
+from idle_common.motor_map import DEFAULT_MOTOR_JOINT_MAP, DEFAULT_TAU_LIMIT_BY_MOTOR
 from idle_common.paths import resolve_share_file
 from idle_common.ros_params import declare_typed
-from msgs.msg import MotorCMD, MotorCMDArray, MotorStateArray
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
-from phy.collision import CollisionChecker
-from phy.ik import IKConfig, IKSolver
-from phy.plan import Plan, Planner, PlannerConfig
+from msgs.msg import MotorCMD
+from phy.plan import Plan, PlannerConfig
 from phy.robot_model import RobotModel
+from phy.traj import QuinticPlan, plan_quintic, sample_quintic
 
 
 @dataclass
@@ -50,28 +37,17 @@ class MotorSample:
     qd: float = 0.0
     tau_measured: float = 0.0
     last_seen_s: float = float("-inf")
-    qdd_est: float = 0.0   # finite-difference acceleration estimate
+    qdd_est: float = 0.0
 
 
 @dataclass
 class _ActiveTrajectory:
     plan: Plan
-    start_time_s: float  # wall time when committed (for logging)
-
-
-def _quaternion_to_yaw(qx: float, qy: float, qz: float, qw: float) -> float:
-    """Extract yaw (rotation about world Z) from a unit quaternion."""
-    return math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+    start_time_s: float
 
 
 class PlanNode(Node):
-    """End-effector pose target → joint trajectory → motor commands (Pattern B).
-
-    Subscribes ``/ee_target_pose`` (``geometry_msgs/PoseStamped``) and
-    ``/motor_state_array``. Publishes ``/motor_cmd_array`` at the configured
-    control rate. Tuning (kp, kd, gravity_scale, gravity_bias) comes from the
-    same YAML system that ``hold_node`` uses via ``control_params_for_motor``.
-    """
+    """Trajectory execution node (ctrl). Receives plans from plan_compute_node."""
 
     def __init__(self) -> None:
         super().__init__("plan_node")
@@ -81,7 +57,6 @@ class PlanNode(Node):
         self.state_timeout_s = declare_typed(self, "state_timeout_s", 0.2)
         self.kp_max = declare_typed(self, "kp_max", 50.0)
         self.kd_max = declare_typed(self, "kd_max", 10.0)
-        self.target_frame = declare_typed(self, "target_frame", "gripper", cast=strip_str)
         v_max = declare_typed(self, "planner_v_max", 1.0)
         a_max = declare_typed(self, "planner_a_max", 1.0)
         min_traj_duration = declare_typed(self, "planner_min_traj_duration", 1.5)
@@ -89,48 +64,21 @@ class PlanNode(Node):
         self.unlimited_tau = bool(declare_typed(self, "unlimited_tau", False))
         urdf_path_text = declare_typed(self, "urdf_path", "", cast=strip_str)
 
-        # Pattern B tuning
-        # rewarp: max drift (rad) between snapshot q and actual q at commit time.
-        # Beyond this threshold rewarp_start is still called but a warning is logged.
         self.rewarp_threshold_rad = float(declare_typed(self, "rewarp_threshold_rad", 0.15))
-        # Time warp: trajectory virtual time freezes when max joint error exceeds
-        # warp_q_hi_rad; full speed below warp_q_lo_rad; linear ramp between them.
-        self.warp_q_lo_rad = float(declare_typed(self, "warp_q_lo_rad", 0.04))
-        self.warp_q_hi_rad = float(declare_typed(self, "warp_q_hi_rad", 0.30))
+        self.warp_q_lo_rad = float(declare_typed(self, "warp_q_lo_rad", 0.12))
+        self.warp_q_hi_rad = float(declare_typed(self, "warp_q_hi_rad", 0.40))
+
+        # Default v/a for rewarp (per-joint YAML overrides these)
+        self._planner_cfg = PlannerConfig(v_max=v_max, a_max=a_max, min_traj_duration=min_traj_duration)
 
         urdf_path = resolve_share_file("sim", "urdf/robot.urdf", urdf_path_text)
-        srdf_path = resolve_share_file("sim", "srdf/robot.srdf", "")
-        from ament_index_python.packages import get_package_share_directory
-
-        sim_share_parent = str(
-            __import__("pathlib").Path(get_package_share_directory("sim")).parent
-        )
-
         motor_joint_map = dict(DEFAULT_MOTOR_JOINT_MAP)
         self.robot = RobotModel(urdf_path, motor_joint_map)
         self.disable_gravity = bool(disable_gravity)
         if self.disable_gravity:
             import pinocchio as pin
             self.robot.model.gravity = pin.Motion.Zero()
-            self.get_logger().warn(
-                "disable_gravity=True — Pinocchio gravity zeroed (sim-only demo mode)"
-            )
-        self.collision = CollisionChecker(
-            self.robot, srdf_path=srdf_path, package_dirs=[sim_share_parent]
-        )
-        controlled_joints = tuple(
-            self.robot.bindings[m].joint_name for m in self.robot.ordered_motor_ids
-        )
-        self.ik = IKSolver(
-            urdf_path,
-            IKConfig(target_frame=self.target_frame, controlled_joints=controlled_joints),
-        )
-        self.planner = Planner(
-            self.robot,
-            self.collision,
-            self.ik,
-            PlannerConfig(v_max=v_max, a_max=a_max, min_traj_duration=min_traj_duration),
-        )
+            self.get_logger().warn("disable_gravity=True — gravity zeroed")
 
         self.motor_ids = self.robot.ordered_motor_ids
         self.tau_limit_by_motor = {
@@ -141,24 +89,26 @@ class PlanNode(Node):
         self.q_max_by_motor = {m: float(_q_hi[i]) for i, m in enumerate(self.motor_ids)}
         self.state_by_motor = {m: MotorSample() for m in self.motor_ids}
         self.active: Optional[_ActiveTrajectory] = None
-        self._hold_q: Optional[dict[int, float]] = None
+        self._hold_q: Optional[dict[int, float]] = None       # 명령용 (actual_q 기반)
+        self._hold_target_q: Optional[dict[int, float]] = None  # 로그용 (q_final 기반)
 
-        # Background planning state (lock protects _pending_plan + _plan_serial read)
         self._plan_lock = threading.Lock()
         self._pending_plan: Optional[Plan] = None
-        self._plan_serial: int = 0
+        self._queued_leg2: Optional[Plan] = None
 
-        # Virtual trajectory time for time-warp
         self._vt_elapsed_s: float = 0.0
         self._vt_last_wall_s: float = float("-inf")
-        self._prev_max_err: float = 0.0  # max joint error from previous tick
+        self._prev_max_err: float = 0.0
 
-        # Stall detector: warp≈0이 이 시간(초) 이상 지속되면 궤적 폐기.
         self.traj_stall_timeout_s = float(declare_typed(self, "traj_stall_timeout_s", 10.0))
-        self._warp_stall_s: float = 0.0  # warp가 거의 0인 누적 시간
+        self._warp_stall_s: float = 0.0
 
-        # throttled warn 용 타임스탬프 (key → last_warn_s)
         self._warn_times: dict[str, float] = {}
+
+        self._duration_override_s: float = 0.0
+
+        self._hold_log_start_s: float = 0.0
+        self._hold_log_count: int = 3
 
         qos_cmd = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -170,48 +120,23 @@ class PlanNode(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=5,
         )
-        self._duration_override_s: float = 0.0
-        self._use_safe_transit: bool = False
-
-        # Safe transit joint config [rad] — arm pose that clears the cage.
-        # Set via ROS parameter safe_transit_q (JSON array of 6 floats).
-        # Falls back to all-zeros (arm at neutral) if not set.
-        safe_q_json = declare_typed(self, "safe_transit_q", "[]", cast=strip_str)
-        try:
-            import json
-            _sq = json.loads(safe_q_json) if safe_q_json.strip() not in ("", "[]") else []
-            self._safe_transit_q: np.ndarray | None = (
-                np.array(_sq, dtype=float) if len(_sq) == len(self.motor_ids) else None
-            )
-        except Exception:
-            self._safe_transit_q = None
-        if self._safe_transit_q is None:
-            self.get_logger().info("safe_transit_q not set — via-point mode disabled")
-
-        # Via-point plan: two-leg trajectory (leg1 active, leg2 pending)
-        self._via_leg2: Optional[Plan] = None
 
         self.state_sub = self.create_subscription(
             MotorStateArray, "/motor_state_array", self.on_state_array, qos_state
         )
+        self.computed_plan_sub = self.create_subscription(
+            ComputedPlan, "/computed_plan", self.on_computed_plan, 10
+        )
         self.cmd_pub = self.create_publisher(MotorCMDArray, "/motor_cmd_array", qos_cmd)
         self.status_pub = self.create_publisher(String, "/plan/status", 10)
-        self.target_sub = self.create_subscription(
-            PoseStamped, "/ee_target_pose", self.on_target, 10
-        )
-        self.ee_target_sub = self.create_subscription(
-            EETarget, "/ee_target", self.on_ee_target, 10
-        )
 
         period_s = max(1.0 / self.control_hz, 1.0e-4)
         self.control_timer = self.create_timer(period_s, self.on_timer)
 
         self.get_logger().info(
-            "plan_node initialized (Pattern B): "
-            f"hz={self.control_hz:.1f} target_frame={self.target_frame} "
-            f"v_max={v_max} a_max={a_max} motors={list(self.motor_ids)} "
-            f"warp_lo={self.warp_q_lo_rad:.3f} warp_hi={self.warp_q_hi_rad:.3f} rad "
-            f"stall_timeout={self.traj_stall_timeout_s:.1f}s"
+            f"plan_node (ctrl) initialized: hz={self.control_hz:.1f} "
+            f"motors={list(self.motor_ids)} "
+            f"warp_lo={self.warp_q_lo_rad:.3f} warp_hi={self.warp_q_hi_rad:.3f} rad"
         )
 
     # ------------------------------------------------------------------
@@ -236,158 +161,62 @@ class PlanNode(Node):
                 qdd_est=qdd_est,
             )
 
-    def on_target(self, msg: PoseStamped) -> None:
-        target_xyz = np.array(
-            [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z], dtype=float
+    def on_computed_plan(self, msg: ComputedPlan) -> None:
+        """Deserialize ComputedPlan and deposit into pending slot."""
+        n = int(msg.n_dof)
+        start_q = np.array(msg.start_q, dtype=float)
+        coeffs = np.array(msg.coeffs, dtype=float).reshape(n, 6)
+        end_q = np.array(msg.end_q, dtype=float)
+        target_xyz = np.array(msg.target_xyz, dtype=float)
+
+        traj = QuinticPlan(
+            duration=float(msg.duration),
+            coeffs=coeffs,
+            q_start=start_q,
+            q_goal=end_q,
         )
-        yaw = _quaternion_to_yaw(
-            msg.pose.orientation.x,
-            msg.pose.orientation.y,
-            msg.pose.orientation.z,
-            msg.pose.orientation.w,
-        )
-        self._start_planning(target_xyz, yaw, duration_override_s=0.0)
-
-    def on_ee_target(self, msg: EETarget) -> None:
-        target_xyz = np.array(
-            [msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z],
-            dtype=float,
-        )
-        yaw = _quaternion_to_yaw(
-            msg.pose.pose.orientation.x,
-            msg.pose.pose.orientation.y,
-            msg.pose.pose.orientation.z,
-            msg.pose.pose.orientation.w,
-        )
-        self._use_safe_transit = bool(msg.use_safe_transit)
-        self._start_planning(target_xyz, yaw, duration_override_s=float(msg.duration_override_s))
-
-    def _start_planning(
-        self, target_xyz: np.ndarray, yaw: float, duration_override_s: float
-    ) -> None:
-        start_q = self._current_q()
-        if start_q is None:
-            self.get_logger().warn("target received before fresh state — ignoring")
-            return
-
-        with self._plan_lock:
-            self._plan_serial += 1
-            my_serial = self._plan_serial
-            self._duration_override_s = duration_override_s
-
-        self._publish_status("PLANNING")
-        self.get_logger().info(
-            f"planning [{my_serial}]: xyz={target_xyz.tolist()} yaw={math.degrees(yaw):+.1f}°"
-            + (f" min_dur={duration_override_s:.1f}s" if duration_override_s > 0 else "")
-        )
-        t = threading.Thread(
-            target=self._bg_plan,
-            args=(target_xyz, yaw, start_q, my_serial, duration_override_s),
-            daemon=True,
-        )
-        t.start()
-
-    # ------------------------------------------------------------------
-    # Background planning
-    # ------------------------------------------------------------------
-
-    def _bg_plan(
-        self,
-        target_xyz: np.ndarray,
-        target_yaw: float,
-        start_q: np.ndarray,
-        my_serial: int,
-        duration_override_s: float = 0.0,
-    ) -> None:
-        min_dur = duration_override_s if duration_override_s > 0.0 else None
-        cfg = self.planner.cfg
-
-        # Per-joint v_max / a_max from YAML (fall back to PlannerConfig defaults).
-        v_max_arr = np.array([
-            float(control_params_for_motor(m).get("v_max", cfg.v_max))
-            for m in self.motor_ids
-        ])
-        a_max_arr = np.array([
-            float(control_params_for_motor(m).get("a_max", cfg.a_max))
-            for m in self.motor_ids
-        ])
-
-        use_via = self._use_safe_transit and self._safe_transit_q is not None
-
-        if use_via:
-            result = self.planner.plan_via(
-                via_q=self._safe_transit_q,
-                target_xyz=target_xyz,
-                target_yaw=target_yaw,
-                start_q=start_q,
-                v_max=v_max_arr,
-                a_max=a_max_arr,
-                min_duration_leg2=min_dur,
-            )
-            if result is None:
-                self.get_logger().warn(
-                    f"[{my_serial}] via-point plan failed — falling back to direct"
-                )
-                use_via = False
-            else:
-                leg1, leg2 = result
-                with self._plan_lock:
-                    if self._plan_serial != my_serial:
-                        self.get_logger().info(f"[{my_serial}] stale via plan discarded")
-                        return
-                    self._pending_plan = leg1
-                    self._via_leg2 = leg2
-                self.get_logger().info(
-                    f"[{my_serial}] via-point plan committed: "
-                    f"leg1={leg1.duration_s:.2f}s leg2={leg2.duration_s:.2f}s"
-                )
-                return
-
-        result = self.planner.plan_motion(
-            target_xyz=target_xyz,
-            target_yaw=target_yaw,
+        plan = Plan(
+            trajectory=traj,
             start_q=start_q,
-            v_max=v_max_arr,
-            a_max=a_max_arr,
-            min_duration=min_dur,
+            end_q=end_q,
+            duration_s=float(msg.duration),
+            collision_safe=True,
+            collision_first_sample=-1,
+            target_xyz=target_xyz,
+            target_yaw=float(msg.target_yaw),
+            metadata={"serial": int(msg.serial)},
         )
-        if result is None:
-            self.get_logger().warn(
-                f"[{my_serial}] IK unreachable / no safe plan xyz={target_xyz.tolist()} — discarded"
-            )
-            self._publish_status("FAIL")
-            return
 
-        # Fold-and-rotate: two-leg plan (both legs pre-solved & collision-safe).
-        if isinstance(result, tuple):
-            leg1, leg2 = result
-            with self._plan_lock:
-                if self._plan_serial != my_serial:
-                    self.get_logger().info(f"[{my_serial}] stale plan discarded (newer target)")
-                    return
-                self._pending_plan = leg1
-                self._via_leg2 = leg2
-            self.get_logger().info(
-                f"[{my_serial}] fold-and-rotate plan committed: "
-                f"leg1={leg1.duration_s:.2f}s leg2={leg2.duration_s:.2f}s"
+        leg2: Optional[Plan] = None
+        if msg.has_leg2:
+            leg2_coeffs = np.array(msg.leg2_coeffs, dtype=float).reshape(n, 6)
+            leg2_end_q = np.array(msg.leg2_end_q, dtype=float)
+            leg2_traj = QuinticPlan(
+                duration=float(msg.leg2_duration),
+                coeffs=leg2_coeffs,
+                q_start=end_q,
+                q_goal=leg2_end_q,
             )
-            return
-
-        # Direct: single-leg plan.
-        plan = result
-        if not plan.collision_safe:
-            self.get_logger().warn(
-                f"[{my_serial}] collision at sample {plan.collision_first_sample} — discarded"
+            leg2 = Plan(
+                trajectory=leg2_traj,
+                start_q=end_q,
+                end_q=leg2_end_q,
+                duration_s=float(msg.leg2_duration),
+                collision_safe=True,
+                collision_first_sample=-1,
+                target_xyz=np.array(msg.leg2_target_xyz, dtype=float),
+                target_yaw=float(msg.leg2_target_yaw),
+                metadata={"serial": int(msg.serial), "leg": 2},
             )
-            self._publish_status("FAIL")
-            return
 
         with self._plan_lock:
-            if self._plan_serial != my_serial:
-                self.get_logger().info(f"[{my_serial}] stale plan discarded (newer target)")
-                return
             self._pending_plan = plan
-            self._via_leg2 = None
+            self._queued_leg2 = leg2
+
+        self.get_logger().info(
+            f"[{msg.serial}] plan received: duration={msg.duration:.2f}s"
+            + (f" + leg2={msg.leg2_duration:.2f}s" if msg.has_leg2 else "")
+        )
 
     # ------------------------------------------------------------------
     # Control timer
@@ -405,7 +234,6 @@ class PlanNode(Node):
             self.get_logger().warn(f"gravity computation failed: {exc}; skipping tick")
             return
 
-        # Commit any plan that just finished in the background.
         pending: Optional[Plan] = None
         with self._plan_lock:
             if self._pending_plan is not None:
@@ -415,20 +243,16 @@ class PlanNode(Node):
             self._commit_plan(pending, now_s)
 
         if self.active is not None:
-            # Advance virtual time with warp factor derived from previous tick's error.
-            dt_wall = now_s - self._vt_last_wall_s
-            self._vt_last_wall_s = now_s
+            dt_wall = self._now_s() - self._vt_last_wall_s
+            self._vt_last_wall_s = self._now_s()
             warp = self._compute_warp(self._prev_max_err)
             self._vt_elapsed_s += dt_wall * warp
 
-            # Stall detector: warp≈0이 traj_stall_timeout_s 이상 지속되면 궤적 폐기.
             if warp < 0.05:
                 self._warp_stall_s += dt_wall
                 if self._warp_stall_s >= self.traj_stall_timeout_s:
                     self.get_logger().warn(
-                        f"[SAFETY] trajectory stalled {self._warp_stall_s:.1f}s "
-                        f"(warp≈0, max_err={self._prev_max_err:.3f} rad > "
-                        f"{self.warp_q_hi_rad:.3f}) — discarding, holding last pose"
+                        f"[SAFETY] trajectory stalled {self._warp_stall_s:.1f}s — discarding"
                     )
                     q_stall, _, _ = self.active.plan.sample(self._vt_elapsed_s)
                     self._hold_q = {m: float(q_stall[i]) for i, m in enumerate(self.motor_ids)}
@@ -436,30 +260,36 @@ class PlanNode(Node):
                     self._prev_max_err = 0.0
                     self._warp_stall_s = 0.0
                     self._publish_status("FAIL")
-                    cmd_values = self._hold_cmds(tau_g_by_motor)
-                    self._publish(cmd_values)
+                    self._publish(self._hold_cmds(tau_g_by_motor))
                     return
             else:
                 self._warp_stall_s = 0.0
 
             if self._vt_elapsed_s >= self.active.plan.duration_s:
                 q_final, _, _ = self.active.plan.sample(self.active.plan.duration_s)
-                self._hold_q = {m: float(q_final[i]) for i, m in enumerate(self.motor_ids)}
+                # _hold_q는 actual_q로 설정해 다음 궤적 시작 시 q_des 점프를 방지.
+                # _hold_target_q는 q_final로 설정해 hold 오차 로그에 사용.
+                self._hold_q = {m: self.state_by_motor[m].q for m in self.motor_ids}
+                self._hold_target_q = {m: float(q_final[i]) for i, m in enumerate(self.motor_ids)}
                 self.active = None
                 self._prev_max_err = 0.0
                 self._warp_stall_s = 0.0
 
-                # Via-point: leg1 done → immediately commit leg2
                 with self._plan_lock:
-                    leg2 = self._via_leg2
-                    self._via_leg2 = None
+                    leg2 = self._queued_leg2
+                    self._queued_leg2 = None
                 if leg2 is not None:
-                    self.get_logger().info("via-point leg1 done — starting leg2")
-                    self._commit_plan(leg2, now_s)
+                    self.get_logger().info("two-leg plan leg1 done — starting leg2")
+                    actual_qd = np.array(
+                        [self.state_by_motor[m].qd for m in self.motor_ids], dtype=float
+                    )
+                    self._commit_plan(leg2, now_s, start_qd=actual_qd)
                     cmd_values, _ = self._trajectory_cmds(0.0, 1.0, tau_g_by_motor)
                 else:
                     self.get_logger().info("trajectory complete — holding final pose")
                     self._publish_status("DONE")
+                    self._hold_log_start_s = now_s
+                    self._hold_log_count = 0
                     cmd_values = self._hold_cmds(tau_g_by_motor)
             else:
                 cmd_values, max_err = self._trajectory_cmds(
@@ -469,15 +299,34 @@ class PlanNode(Node):
         else:
             self._warp_stall_s = 0.0
             cmd_values = self._hold_cmds(tau_g_by_motor)
+            if self._hold_target_q is not None and self._hold_log_count < 3:
+                elapsed = now_s - self._hold_log_start_s
+                if elapsed >= (self._hold_log_count + 1) * 1.0:
+                    errs = [
+                        self.state_by_motor[m].q - self._hold_target_q[m]
+                        for m in self.motor_ids
+                    ]
+                    parts = "  ".join(
+                        f"j{i+1}={errs[i]:+.4f}" for i in range(len(self.motor_ids))
+                    )
+                    self.get_logger().info(
+                        f"[hold {self._hold_log_count + 1}/3 +{elapsed:.1f}s] "
+                        f"err(rad): {parts}  max={max(abs(e) for e in errs):.4f}"
+                    )
+                    self._hold_log_count += 1
 
         self._publish(cmd_values)
 
     # ------------------------------------------------------------------
-    # Plan commit (verify + rewarp)
+    # Plan commit — simplified rewarp without collision check
     # ------------------------------------------------------------------
 
-    def _commit_plan(self, pending: Plan, now_s: float) -> None:
-        """Verify drift since snapshot, rewarp, and activate the plan."""
+    def _commit_plan(
+        self,
+        pending: Plan,
+        now_s: float,
+        start_qd: Optional[np.ndarray] = None,
+    ) -> None:
         actual_q = np.array([self.state_by_motor[m].q for m in self.motor_ids], dtype=float)
         drift = float(np.linalg.norm(actual_q - pending.start_q))
 
@@ -487,30 +336,61 @@ class PlanNode(Node):
             )
 
         if drift > 1e-4:
-            try:
-                plan = self.planner.rewarp_start(pending, actual_q)
-            except Exception as exc:
-                self.get_logger().warn(f"rewarp_start failed: {exc} — plan discarded")
-                return
-            if not plan.collision_safe:
-                self.get_logger().warn(
-                    f"rewarped plan collides at sample {plan.collision_first_sample} — discarded"
-                )
-                return
+            plan = self._rewarp(pending, actual_q, v_start=start_qd)
         else:
             plan = pending
 
         self.active = _ActiveTrajectory(plan=plan, start_time_s=now_s)
         self._vt_elapsed_s = 0.0
-        self._vt_last_wall_s = now_s  # dt_wall = 0 on first tick → vt stays at 0
+        self._vt_last_wall_s = self._now_s()
         self._prev_max_err = 0.0
         self._hold_q = None
+        self._hold_target_q = None
         self._publish_status("EXECUTING")
         self.get_logger().info(
             f"plan committed: xyz={plan.target_xyz.tolist()} "
             f"yaw={math.degrees(plan.target_yaw):+.1f}° "
-            f"duration={plan.duration_s:.2f}s drift={drift:.4f}rad "
-            f"ik_iters={plan.metadata.get('ik_iterations')}"
+            f"duration={plan.duration_s:.2f}s drift={drift:.4f}rad"
+        )
+
+    def _rewarp(
+        self,
+        pending: Plan,
+        actual_q: np.ndarray,
+        v_start: Optional[np.ndarray] = None,
+    ) -> Plan:
+        """Rebuild quintic from actual_q to end_q (no collision check)."""
+        cfg = self._planner_cfg
+        n = len(actual_q)
+        zeros = np.zeros(n)
+        v_s = np.asarray(v_start, dtype=float) if v_start is not None else zeros
+        v_max_arr = np.array([
+            float(control_params_for_motor(m).get("v_max", cfg.v_max))
+            for m in self.motor_ids
+        ])
+        a_max_arr = np.array([
+            float(control_params_for_motor(m).get("a_max", cfg.a_max))
+            for m in self.motor_ids
+        ])
+        traj = plan_quintic(
+            q_start=actual_q,
+            q_goal=pending.end_q,
+            v_start=v_s,
+            v_goal=zeros,
+            v_max=v_max_arr,
+            a_max=a_max_arr,
+            min_duration=pending.duration_s,
+        )
+        return Plan(
+            trajectory=traj,
+            start_q=actual_q.copy(),
+            end_q=pending.end_q.copy(),
+            duration_s=traj.duration,
+            collision_safe=True,
+            collision_first_sample=-1,
+            target_xyz=pending.target_xyz.copy(),
+            target_yaw=pending.target_yaw,
+            metadata={**pending.metadata, "rewarped_ctrl": True},
         )
 
     # ------------------------------------------------------------------
@@ -523,42 +403,37 @@ class PlanNode(Node):
         warp: float,
         tau_g_by_motor: dict[int, float],
     ) -> tuple[dict[int, dict[str, float]], float]:
-        """Sample trajectory at virtual time vt_s; returns cmd dict and max joint error."""
         assert self.active is not None
         traj = self.active.plan.trajectory
         q_des_vec, qd_des_vec, _ = self.active.plan.sample(vt_s)
 
-        # qdd from quintic coefficients (analytical derivative)
         t = float(np.clip(vt_s, 0.0, traj.duration))
         t2, t3 = t * t, t * t * t
-        c = traj.coeffs  # [dof, 6]
-        qdd_des_vec = (2.0 * c[:, 2]
-                       + 6.0  * c[:, 3] * t
-                       + 12.0 * c[:, 4] * t2
-                       + 20.0 * c[:, 5] * t3)
+        c = traj.coeffs
+        qdd_des_vec = (
+            2.0 * c[:, 2]
+            + 6.0 * c[:, 3] * t
+            + 12.0 * c[:, 4] * t2
+            + 20.0 * c[:, 5] * t3
+        )
 
-        # Per-motor tuning (read once per tick)
         tuning_list = [control_params_for_motor(m) for m in self.motor_ids]
-        goal_modes  = [bool(tuning_list[i].get("goal_mode", 0)) for i in range(len(self.motor_ids))]
+        goal_modes = [bool(tuning_list[i].get("goal_mode", 0)) for i in range(len(self.motor_ids))]
 
-        # Build RNEA inputs: trajectory joints use desired state, goal_mode joints
-        # use actual measured state (q_actual, qd_actual, qdd_est) so they still
-        # receive inertia+Coriolis compensation during large-angle moves.
-        q_rnea   = {}
-        qd_rnea  = {}
-        qdd_rnea = {}
+        q_rnea: dict[int, float] = {}
+        qd_rnea: dict[int, float] = {}
+        qdd_rnea: dict[int, float] = {}
         for i, m in enumerate(self.motor_ids):
             if goal_modes[i]:
                 s = self.state_by_motor[m]
-                q_rnea[m]   = float(s.q)
-                qd_rnea[m]  = float(s.qd)
-                qdd_rnea[m] = float(s.qdd_est)
+                q_rnea[m] = float(s.q)
+                qd_rnea[m] = float(s.qd)
+                qdd_rnea[m] = 0.0
             else:
-                q_rnea[m]   = float(q_des_vec[i])
-                qd_rnea[m]  = float(qd_des_vec[i])
+                q_rnea[m] = float(q_des_vec[i])
+                qd_rnea[m] = float(qd_des_vec[i])
                 qdd_rnea[m] = float(qdd_des_vec[i])
 
-        # inertia+Coriolis feedforward (warp=0 → trajectory frozen → skip)
         tau_iff: dict[int, float] = {}
         if warp > 0.05:
             try:
@@ -570,11 +445,11 @@ class PlanNode(Node):
         out: dict[int, dict[str, float]] = {}
         end_q = self.active.plan.end_q
         for idx, motor_id in enumerate(self.motor_ids):
-            tuning    = tuning_list[idx]
-            kp        = float(tuning.get("kp",            0.0))
-            kd        = float(tuning.get("kd",            0.0))
-            gscale    = float(tuning.get("gravity_scale", 1.0))
-            gbias     = float(tuning.get("gravity_bias",  0.0))
+            tuning = tuning_list[idx]
+            kp = float(tuning.get("kp", 0.0))
+            kd = float(tuning.get("kd", 0.0))
+            gscale = float(tuning.get("gravity_scale", 1.0))
+            gbias = float(tuning.get("gravity_bias", 0.0))
             iff_scale = float(tuning.get("inertia_ff_scale", 0.0))
 
             tau_ff = gscale * tau_g_by_motor[motor_id] + gbias
@@ -582,30 +457,25 @@ class PlanNode(Node):
                 tau_ff += iff_scale * tau_iff[motor_id]
 
             if goal_modes[idx]:
-                # goal_mode: drive directly to end_q, ignore trajectory timing.
-                # Does not contribute to warp error (not a trajectory-tracking joint).
-                q_cmd  = float(end_q[idx])
+                q_cmd = float(end_q[idx])
                 qd_cmd = 0.0
             else:
-                q_cmd  = float(q_des_vec[idx])
+                q_cmd = float(q_des_vec[idx])
                 qd_cmd = float(qd_des_vec[idx]) * warp
-                q_err  = abs(self.state_by_motor[motor_id].q - q_cmd)
+                q_err = abs(self.state_by_motor[motor_id].q - q_cmd)
                 if q_err > max_err:
                     max_err = q_err
 
             out[motor_id] = {
-                "q_des":  q_cmd,
+                "q_des": q_cmd,
                 "qd_des": qd_cmd,
-                "kp":     kp,
-                "kd":     kd,
+                "kp": kp,
+                "kd": kd,
                 "tau_ff": tau_ff,
             }
         return out, max_err
 
-    def _hold_cmds(
-        self, tau_g_by_motor: dict[int, float]
-    ) -> dict[int, dict[str, float]]:
-        """No active trajectory — hold last commanded pose with PD + gravity feedforward."""
+    def _hold_cmds(self, tau_g_by_motor: dict[int, float]) -> dict[int, dict[str, float]]:
         out: dict[int, dict[str, float]] = {}
         for motor_id in self.motor_ids:
             tuning = control_params_for_motor(motor_id)
@@ -620,16 +490,12 @@ class PlanNode(Node):
                 else self.state_by_motor[motor_id].q
             )
             out[motor_id] = {
-                "q_des": q_des,
-                "qd_des": 0.0,
-                "kp": kp,
-                "kd": kd,
-                "tau_ff": tau_ff,
+                "q_des": q_des, "qd_des": 0.0,
+                "kp": kp, "kd": kd, "tau_ff": tau_ff,
             }
         return out
 
     def _compute_warp(self, max_err: float) -> float:
-        """Linear warp factor: 1.0 below lo, ramps to 0.0 at hi."""
         lo, hi = self.warp_q_lo_rad, self.warp_q_hi_rad
         if hi <= lo or max_err <= lo:
             return 1.0
@@ -687,8 +553,7 @@ class PlanNode(Node):
             if abs(q_des - q_des_raw) > 1e-4:
                 self._warn_throttle(
                     f"q_clamp_{motor_id}",
-                    f"[SAFETY] motor {motor_id} q_des clamped: "
-                    f"{q_des_raw:.4f} → {q_des:.4f} rad",
+                    f"[SAFETY] motor {motor_id} q_des clamped: {q_des_raw:.4f} → {q_des:.4f} rad",
                 )
             cmd.q_des = float(q_des)
             cmd.qd_des = float(v["qd_des"])
@@ -703,12 +568,6 @@ class PlanNode(Node):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _current_q(self) -> Optional[np.ndarray]:
-        now_s = self._now_s()
-        if not self._state_fresh(now_s):
-            return None
-        return np.array([self.state_by_motor[m].q for m in self.motor_ids], dtype=float)
-
     def _state_fresh(self, now_s: float) -> bool:
         for sample in self.state_by_motor.values():
             if (
@@ -719,8 +578,7 @@ class PlanNode(Node):
         return True
 
     def _now_s(self) -> float:
-        nsec = self.get_clock().now().nanoseconds
-        return nsec * 1.0e-9
+        return self.get_clock().now().nanoseconds * 1.0e-9
 
 
 def main(args: Optional[list[str]] = None) -> None:

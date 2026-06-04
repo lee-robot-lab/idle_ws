@@ -50,7 +50,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     unlimited_tau_arg = DeclareLaunchArgument(
         "unlimited_tau",
-        default_value="true",
+        default_value="false",
         description="Bypass tau_ff clipping in plan_node (sim with dummy inertials)",
     )
 
@@ -73,6 +73,18 @@ def generate_launch_description() -> LaunchDescription:
                         "viewer": LaunchConfiguration("viewer"),
                         "viewer_left_ui": LaunchConfiguration("viewer_left_ui"),
                         "viewer_right_ui": LaunchConfiguration("viewer_right_ui"),
+                    }
+                ],
+            ),
+            Node(
+                package="phy",
+                executable="plan_compute_node",
+                name="plan_compute_node",
+                output="screen",
+                parameters=[
+                    {
+                        "planner_v_max": LaunchConfiguration("planner_v_max"),
+                        "planner_a_max": LaunchConfiguration("planner_a_max"),
                     }
                 ],
             ),

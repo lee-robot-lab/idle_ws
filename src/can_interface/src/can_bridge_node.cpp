@@ -121,10 +121,10 @@ struct MotorHomeConfig
 };
 
 const std::unordered_map<int, MotorHomeConfig> kMotorHomeByMotor {
-  {1, {0.0,                        10.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
-  {2, {0.0,                        40.0, 2.0, -1.78,                     1.78}},
+  {1, {0.0,                        20.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {2, {0.0,                        70.0, 5.0, -1.78,                     1.78}},
   {3, {0.0,                        20.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
-  {4, {0.0,                        10.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
+  {4, {0.0,                        20.0, 1.0, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
   {5, {0.0,                        5.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
   {6, {0.0,                        5.0, 0.5, -static_cast<double>(M_PI), static_cast<double>(M_PI)}},
   {7, {0.0,                         2.0, 0.5, 0.0,                       1.3599}},
@@ -1042,14 +1042,25 @@ private:
       return;
     }
 
-    const float q_home = home_q_des_for_motor(motor_id);
-    const float abs_dq = std::fabs(q_home - current_q);
-
     cached.cmd = make_home_command(motor_id);
     cached.cmd.stamp = to_builtin_time(now());
     cached.valid = true;
     cached.has_sent = false;
     cached.timeout_home_active = false;
+
+    // 그리퍼(모터7)는 홈 궤적 없이 현재 위치 홀드.
+    if (motor_id == 7U) {
+      cached.cmd.q_des = current_q;
+      cached.home_traj_active = false;
+      cached.home_traj_start_q = current_q;
+      cached.home_traj_goal_q = current_q;
+      RCLCPP_INFO(get_logger(), "motor_id=7 gripper: holding in place (q=%.4f, no home traj)",
+        static_cast<double>(current_q));
+      return;
+    }
+
+    const float q_home = home_q_des_for_motor(motor_id);
+    const float abs_dq = std::fabs(q_home - current_q);
 
     if (abs_dq <= kHomeNearThreshold) {
       // 이미 홈 근처: 실제 위치를 유지하고 궤적 없이 홀드.
@@ -1177,14 +1188,6 @@ private:
       cached.last_received_cmd = now_tp;
       cached.timeout_home_active = false;
       cached.home_traj_active = false;
-      if (cmd.motor_id == kJ2MotorId || cmd.motor_id == kJ3MotorId) {
-        if (j2j3_seq_.phase != 0 || j2j3_seq_.done) {
-          j2j3_seq_.phase = 0;
-          j2j3_seq_.done = false;
-          RCLCPP_INFO(
-            get_logger(), "j2/j3 home seq cancelled: external cmd on motor %u", cmd.motor_id);
-        }
-      }
     }
   }
 
@@ -1192,7 +1195,6 @@ private:
   void dispatch_cached_commands()
   {
     const auto now_tp = std::chrono::steady_clock::now();
-    advance_j2j3_phase(now_tp);
     for (auto & kv : latest_cmd_by_motor_) {
       const uint8_t motor_id = kv.first;
       CachedCommand & cached = kv.second;
@@ -1294,37 +1296,6 @@ private:
           motor_id,
           static_cast<double>(cached.home_traj_goal_q),
           static_cast<double>(cached.home_traj_duration_sec));
-      }
-
-      // j2/j3 순서 홈 복귀 오버라이드: pre-home 또는 home_requested 중에 적용
-      const bool in_home_mode = is_pre_home_stream || home_requested;
-      if (in_home_mode && (motor_id == kJ2MotorId || motor_id == kJ3MotorId)) {
-        if (j2j3_seq_.phase == 0 && !j2j3_seq_.done) {
-          // j2, j3 모두 홈 근처이면 시퀀스 건너뜀 (이미 안전한 위치).
-          const MotorRuntime & rt2 = runtime_by_motor_[kJ2MotorId];
-          const MotorRuntime & rt3 = runtime_by_motor_[kJ3MotorId];
-          const bool j2_near = rt2.has_state &&
-            std::fabs(rt2.last_state.q - home_q_des_for_motor(kJ2MotorId)) <= kHomeNearThreshold;
-          const bool j3_near = rt3.has_state &&
-            std::fabs(rt3.last_state.q - home_q_des_for_motor(kJ3MotorId)) <= kHomeNearThreshold;
-          if (j2_near && j3_near) {
-            j2j3_seq_.done = true;
-            RCLCPP_INFO_ONCE(
-              get_logger(), "j2/j3 home seq skipped: both already near home");
-          } else {
-            start_j2j3_sequence(now_tp);
-          }
-        }
-        if (j2j3_seq_.phase != 0) {
-          outgoing = make_home_command(motor_id);
-          outgoing.q_des = j2j3_seq_q_des(motor_id, now_tp);
-          outgoing.stamp = to_builtin_time(now());
-        } else if (j2j3_seq_.done) {
-          // 완료 후 per-motor 궤적으로 복귀하지 않고 0에서 홀드
-          outgoing = make_home_command(motor_id);
-          outgoing.q_des = 0.0F;
-          outgoing.stamp = to_builtin_time(now());
-        }
       }
 
       // q_des 슬루레이트 클램프: 모든 경로(홈/타임아웃/외부 명령)에 적용.

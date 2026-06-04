@@ -12,6 +12,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/ComputedPlan.msg"
   "msg/MotorCMD.msg"
   "msg/MotorState.msg"
   "msg/MotorError.msg"

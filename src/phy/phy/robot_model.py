@@ -8,6 +8,7 @@ joint-configuration buffer to avoid per-tick numpy allocations.
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -87,6 +88,7 @@ class RobotModel:
 
         self._q_neutral = pin.neutral(self.model)
         self._q_buf = self._q_neutral.copy()
+        self._lock = threading.Lock()
 
     def _fill_q_buf(self, q_by_motor: Mapping[int, float]) -> None:
         self._q_buf[:] = self._q_neutral
@@ -103,12 +105,13 @@ class RobotModel:
 
     def gravity_torque(self, q_by_motor: Mapping[int, float]) -> dict[int, float]:
         """Gravity-compensation torques keyed by motor_id."""
-        self._fill_q_buf(q_by_motor)
-        tau = pin.computeGeneralizedGravity(self.model, self.data, self._q_buf)
-        return {
-            motor_id: float(tau[self.bindings[motor_id].v_index])
-            for motor_id in self.ordered_motor_ids
-        }
+        with self._lock:
+            self._fill_q_buf(q_by_motor)
+            tau = pin.computeGeneralizedGravity(self.model, self.data, self._q_buf)
+            return {
+                motor_id: float(tau[self.bindings[motor_id].v_index])
+                for motor_id in self.ordered_motor_ids
+            }
 
     def inertia_ff_torque(
         self,
@@ -116,59 +119,56 @@ class RobotModel:
         qd_by_motor: Mapping[int, float],
         qdd_by_motor: Mapping[int, float],
     ) -> dict[int, float]:
-        """Inertia + Coriolis feedforward: RNEA(q,qd,qdd) − gravity(q).
-
-        Computed at desired trajectory state so gravity comp (q_actual) and
-        this term can be summed without double-counting gravity.
-        """
+        """Inertia + Coriolis feedforward: RNEA(q,qd,qdd) − gravity(q)."""
         nv = self.model.nv
-        self._fill_q_buf(q_by_motor)
         qd_model = np.zeros(nv)
         qdd_model = np.zeros(nv)
         for motor_id in self.ordered_motor_ids:
             vi = self.bindings[motor_id].v_index
             qd_model[vi]  = float(qd_by_motor[motor_id])
             qdd_model[vi] = float(qdd_by_motor[motor_id])
-        tau_rnea = pin.rnea(self.model, self.data, self._q_buf, qd_model, qdd_model)
-        tau_g    = pin.computeGeneralizedGravity(self.model, self.data, self._q_buf)
-        return {
-            motor_id: float(tau_rnea[self.bindings[motor_id].v_index]
-                            - tau_g[self.bindings[motor_id].v_index])
-            for motor_id in self.ordered_motor_ids
-        }
+        with self._lock:
+            self._fill_q_buf(q_by_motor)
+            tau_rnea = pin.rnea(self.model, self.data, self._q_buf, qd_model, qdd_model)
+            tau_g    = pin.computeGeneralizedGravity(self.model, self.data, self._q_buf)
+            return {
+                motor_id: float(tau_rnea[self.bindings[motor_id].v_index]
+                                - tau_g[self.bindings[motor_id].v_index])
+                for motor_id in self.ordered_motor_ids
+            }
 
     def forward_kinematics(
         self, q_by_motor: Mapping[int, float], frame_name: str
     ) -> pin.SE3:
         """World-frame placement (``SE3``) of the named frame."""
         frame_id = self._resolve_frame_id(frame_name)
-        self._fill_q_buf(q_by_motor)
-        pin.forwardKinematics(self.model, self.data, self._q_buf)
-        pin.updateFramePlacement(self.model, self.data, frame_id)
-        return self.data.oMf[frame_id]
+        with self._lock:
+            self._fill_q_buf(q_by_motor)
+            pin.forwardKinematics(self.model, self.data, self._q_buf)
+            pin.updateFramePlacement(self.model, self.data, frame_id)
+            return self.data.oMf[frame_id].copy()
 
     def jacobian(
         self, q_by_motor: Mapping[int, float], frame_name: str
     ) -> np.ndarray:
         """6×N Jacobian (LOCAL_WORLD_ALIGNED) with columns ordered by ``ordered_motor_ids``."""
         frame_id = self._resolve_frame_id(frame_name)
-        self._fill_q_buf(q_by_motor)
-        pin.computeJointJacobians(self.model, self.data, self._q_buf)
-        pin.updateFramePlacements(self.model, self.data)
-        J_full = pin.getFrameJacobian(
-            self.model, self.data, frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
-        )
-        return np.asarray(J_full)[:, self._v_indices]
+        with self._lock:
+            self._fill_q_buf(q_by_motor)
+            pin.computeJointJacobians(self.model, self.data, self._q_buf)
+            pin.updateFramePlacements(self.model, self.data)
+            J_full = pin.getFrameJacobian(
+                self.model, self.data, frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
+            )
+            return np.asarray(J_full)[:, self._v_indices].copy()
 
     def mass_matrix(self, q_by_motor: Mapping[int, float]) -> np.ndarray:
-        """N×N joint-space mass matrix for controlled motors.
-
-        Reserved for future gain-scheduling work; currently no caller uses it.
-        """
-        self._fill_q_buf(q_by_motor)
-        pin.crba(self.model, self.data, self._q_buf)
-        M_full = np.asarray(self.data.M)
-        return M_full[np.ix_(self._v_indices, self._v_indices)]
+        """N×N joint-space mass matrix for controlled motors."""
+        with self._lock:
+            self._fill_q_buf(q_by_motor)
+            pin.crba(self.model, self.data, self._q_buf)
+            M_full = np.asarray(self.data.M)
+            return M_full[np.ix_(self._v_indices, self._v_indices)].copy()
 
     def joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         """``(lower, upper)`` joint position limits ordered by ``ordered_motor_ids``.
