@@ -20,8 +20,7 @@ class IKConfig:
     max_iterations: int = 100
     tolerance: float = 1.0e-4
     # DLS regularisation coefficient (added to J J^T diagonal).
-    # Equivalent to λ²≈0.01 in paper notation (LAMBDA≈0.1).
-    # Adaptive damping in plan.py further increases this near singularities.
+    # Equivalent to λ²≈0.01 in paper notation (LAMBDA≈0.1). Constant — no adaptive scaling.
     damping: float = 0.01
     # Step scale on dq update; 0.5 prevents overshoot near singularities.
     step_scale: float = 0.5

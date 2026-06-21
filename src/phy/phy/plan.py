@@ -63,8 +63,8 @@ class PlannerConfig:
     # over solutions that sweep j1 far. Start above w_dist; tune in sim.
     w_j1: float = 2.0
     # Soft elbow-up penalty: cost += w_elbow * max(0, -j2*j3).
-    # j2*j3 > 0 → elbow-up, no penalty; j2*j3 < 0 → elbow-down, penalised.
-    # Elbow-up is critical for descent IK continuity — must dominate j34 penalty.
+    # Disabled (0.0): G6 random seeds already bias elbow-up (j2*j3>0), so the
+    # extra cost term proved unnecessary. Re-enable if elbow-down leaks through.
     w_elbow: float = 0.0
     # Prefer wrist bend j4 to follow elbow j3's sign. Opposite signs are allowed
     # but penalised so collision-free / high-manipulability solutions can still win.
@@ -78,9 +78,8 @@ class PlannerConfig:
     tuck_j3: float = -0.323
     tuck_j4: float = -0.934
     tuck_j5: float = -math.pi / 2
-    # Per-joint dist weight for j4 — lower than other joints so large-j4 solutions
-    # are not unfairly buried in ranking, but still penalised enough that small-j4
-    # solutions win when both are available.
+    # Per-joint dist weight for j4. Currently equal to other joints (1.0); kept as
+    # a separate knob so j4 travel can be down-weighted later without touching others.
     w_j4: float = 1.0
     # FK: EE_yaw = j6 - j1, so j6_ideal = j1 + target_yaw.
     # |Δj6| from seed_q double-counts |Δj1| (since Δj6 = Δj1 for fixed target_yaw).
@@ -545,14 +544,13 @@ class Planner:
         a_max: "float | np.ndarray | None" = None,
         min_duration: float | None = None,
     ) -> "Plan | tuple[Plan, Plan] | None":
-        """KE-cost mode selection: direct (1-leg) vs fold-and-rotate (2-leg).
+        """Plan a direct path, falling back to a j5-wrist-retract 2-leg plan on collision.
 
-        Solves IK for the direct path AND pre-solves the fold leg-2 IK from the
-        tuck pose so both options can be compared with a peak-kinetic-energy cost
-        before any trajectory is built.  Lower KE wins; if the preferred mode
-        collides the other is tried; if both collide a j5=0 wrist-retract
-        2-leg plan is attempted as a last resort. Returns ``None`` only when
-        the target is genuinely unreachable.
+        Solves and ranks IK for the direct path and builds the best collision-free
+        plan. If the direct plan collides, attempts a j5=0 wrist-retract route
+        (leg1: arm to goal with wrist tucked, leg2: extend wrist) that keeps the
+        fingers above the floor during the swing. Returns ``None`` only when the
+        target is genuinely unreachable.
         """
         target_xyz_arr = np.asarray(target_xyz, dtype=float)
         start_q_arr = np.asarray(start_q, dtype=float)
@@ -718,33 +716,6 @@ class Planner:
         }
         cost = sum(contrib.values())
         return float(cost), parts
-
-    def _ke_cost(
-        self,
-        q_start: np.ndarray,
-        q_end: np.ndarray,
-        v_max_vec: np.ndarray,
-    ) -> float:
-        """Estimate peak kinetic energy for a quintic move from q_start to q_end.
-
-        Uses M(q_mid) so compactly-folded (tuck) configurations are cheaper than
-        fully-extended ones even when joint travel is similar.
-        """
-        dq = np.asarray(q_end, dtype=float) - np.asarray(q_start, dtype=float)
-        T_est = max(
-            float(np.max(np.abs(dq) / (v_max_vec + 1e-8))),
-            self.cfg.min_traj_duration,
-        )
-        qd_peak = 1.875 * dq / T_est  # quintic profile peak ≈ 1.875 Δq/T
-        q_mid = (np.asarray(q_start, dtype=float) + np.asarray(q_end, dtype=float)) * 0.5
-        q_mid_dict = {
-            m: float(q_mid[i]) for i, m in enumerate(self.robot.ordered_motor_ids)
-        }
-        try:
-            M = self.robot.mass_matrix(q_mid_dict)
-            return float(0.5 * qd_peak @ M @ qd_peak)
-        except Exception:
-            return float(np.dot(dq, dq))  # fallback: plain L2 distance
 
     def _plan_j5_retract(
         self,
@@ -1051,9 +1022,9 @@ class Planner:
 
         # Cost-based ranking: weighted joint distance + inverse manipulability +
         # j1 travel + elbow-down and j3/j4 sign-mismatch penalties.
-        # j4 gets a much lower weight: large j4 travel is cheap (no self-collision
-        # risk) and blocking good solutions for j4 travel was the primary cause of
-        # "unreachable" false negatives.
+        # j4 uses dist_weights[3]=w_j4 (currently 1.0, same as other joints). The
+        # separate knob exists so j4 travel can be down-weighted without affecting
+        # the rest if "unreachable" false negatives reappear.
         w1 = self.cfg.w_dist
         w2 = self.cfg.w_manip
         w3 = self.cfg.w_j1
