@@ -91,7 +91,7 @@
 # 설명: 오프라인으로 Planner.plan_to_pose를 랜덤 grasp 타깃에 호출해
 #       선택 순위/cost 기여도/자세 품질/강건성/분기 안정성을 CSV로 덤프.
 # 사용법:
-#   python3 src/phy/scripts/cost_ablation_sweep.py --n 200 --seed 42 --perturb --out /tmp/ablation.csv
+#   python3 src/phy/scripts/cost_ablation_sweep.py --n 100 --seed 42 --perturb --out /tmp/ablation.csv
 # ================================================================
 """
 from __future__ import annotations
@@ -326,7 +326,7 @@ Expected: PASS 2 (heavy import 없이 통과 — `build_ctx` 미호출).
 
 Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 20 --out /tmp/ablation_smoke.csv`
 Expected: 에러 없이 요약 출력 + `/tmp/ablation_smoke.csv` 생성. `cost 기여도:` 줄에 `duration` 포함 7항 표시(아직 정규화 전).
-**ms/타깃을 확인해 게이트 N을 확정한다(기본 200).** 20타깃이 ~1s 이내면 200이 ~10s 내외로 적절. 현저히 느리면 150으로 낮춘다.
+**측정 실측: ~797ms/타깃.** 게이트 N=100(≈80s, --perturb 시 ≈160s)으로 확정.
 
 - [ ] **Step 6: 커밋**
 
@@ -351,7 +351,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 1: 베이스라인 CSV 저장**
 
-Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 200 --seed 42 --perturb --out /tmp/ablation_s0_before.csv`
+Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 100 --seed 42 --perturb --out /tmp/ablation_s0_before.csv`
 Expected: 요약 출력(분기 flip% 포함), CSV 저장. 이 파일이 S0 baseline. flip% 기준값을 기록(최종 S2b와 비교용). `--perturb`는 별도 rng라 CSV 행에는 영향 없음.
 
 - [ ] **Step 2: ik.py damping 거짓 주석 삭제**
@@ -467,7 +467,7 @@ Expected: 기존 테스트 전부 PASS(동작 불변).
 
 - [ ] **Step 10: 정리 후 CSV로 동작 불변 게이트 검증**
 
-Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 200 --seed 42 --out /tmp/ablation_s0_after.csv`
+Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 100 --seed 42 --out /tmp/ablation_s0_after.csv`
 
 Run (선택 결정 컬럼만 비교 — 동일해야 함):
 ```bash
@@ -561,7 +561,7 @@ Expected: 신규 2개 + 기존 전부 PASS.
 
 - [ ] **Step 5: 하니스로 선택 불변 + 효율 향상 게이트 검증**
 
-Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 200 --seed 42 --out /tmp/ablation_s1.csv`
+Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 100 --seed 42 --out /tmp/ablation_s1.csv`
 
 Run (선택 동일 + 후보수/시간 비교):
 ```bash
@@ -716,7 +716,7 @@ Expected: 신규 + 기존 전부 PASS.
 
 - [ ] **Step 7: 하니스로 강건성/균형 게이트 검증**
 
-Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 200 --seed 42 --out /tmp/ablation_s2a.csv`
+Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 100 --seed 42 --out /tmp/ablation_s2a.csv`
 
 Run (강건성 미회귀 + 기여도 균형 + motor3 토크 미악화):
 ```bash
@@ -830,7 +830,7 @@ Expected: 전부 PASS.
 
 - [ ] **Step 5: 하니스로 강건성 게이트 검증**
 
-Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 200 --seed 42 --perturb --out /tmp/ablation_s2b.csv`
+Run: `cd ~/idle_ws && python3 src/phy/scripts/cost_ablation_sweep.py --n 100 --seed 42 --perturb --out /tmp/ablation_s2b.csv`
 (최종 단계 — `--perturb`로 분기 flip%를 S0 baseline과 비교한다.)
 
 Run:
