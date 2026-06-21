@@ -697,6 +697,15 @@ class Planner:
                     - np.asarray(start_q, dtype=float)[5]
                 )
             )
+        contrib = {
+            "qd": self.cfg.w_traj_max_qd * max_norm_qd,
+            "qdd": self.cfg.w_traj_max_qdd * max_norm_qdd,
+            "j4_dq": self.cfg.w_traj_j4_dq * j4_abs_dq,
+            "j4_tail": self.cfg.w_traj_j4_tail_qd * j4_tail_qd,
+            "j6_dq": self.cfg.w_traj_j6_dq * j6_abs_dq,
+            "duration": self.cfg.w_traj_duration * float(traj.duration),
+            "j3_grav": self.cfg.w_traj_j3_gravity * max_abs_j3_gravity,
+        }
         parts = {
             "duration_s": float(traj.duration),
             "max_norm_qd": max_norm_qd,
@@ -705,16 +714,9 @@ class Planner:
             "j4_tail_qd": j4_tail_qd,
             "j6_abs_dq": j6_abs_dq,
             "max_abs_j3_gravity": max_abs_j3_gravity,
+            "contrib": contrib,
         }
-        cost = (
-            self.cfg.w_traj_max_qd * max_norm_qd
-            + self.cfg.w_traj_max_qdd * max_norm_qdd
-            + self.cfg.w_traj_j4_dq * j4_abs_dq
-            + self.cfg.w_traj_j4_tail_qd * j4_tail_qd
-            + self.cfg.w_traj_j6_dq * j6_abs_dq
-            + self.cfg.w_traj_duration * float(traj.duration)
-            + self.cfg.w_traj_j3_gravity * max_abs_j3_gravity
-        )
+        cost = sum(contrib.values())
         return float(cost), parts
 
     def _ke_cost(
