@@ -71,16 +71,28 @@ class CollisionChecker:
             for i, obj in enumerate(self.geom_model.geometryObjects)
             if "cage" in obj.name.lower()
         )
-        # Collision pair indices that involve at least one cage geometry object
         self._cage_pair_indices: list[int] = [
             k
             for k, pair in enumerate(self.geom_model.collisionPairs)
             if pair.first in self._cage_geom_ids or pair.second in self._cage_geom_ids
         ]
 
+        # Floor geometry object indices (by name)
+        self._floor_geom_ids: frozenset[int] = frozenset(
+            i
+            for i, obj in enumerate(self.geom_model.geometryObjects)
+            if "floor" in obj.name.lower()
+        )
+        self._floor_pair_indices: list[int] = [
+            k
+            for k, pair in enumerate(self.geom_model.collisionPairs)
+            if pair.first in self._floor_geom_ids or pair.second in self._floor_geom_ids
+        ]
+
         self.geom_data = pin.GeometryData(self.geom_model)
         self._cage_enabled = False
         self.set_cage_enabled(cage_enabled)
+        self._floor_enabled = False
 
     def set_cage_enabled(self, enabled: bool) -> None:
         """Toggle cage collision pairs on or off (thread-safe)."""
@@ -92,6 +104,17 @@ class CollisionChecker:
     @property
     def cage_enabled(self) -> bool:
         return self._cage_enabled
+
+    def set_floor_enabled(self, enabled: bool) -> None:
+        """Toggle floor collision pairs on or off (thread-safe)."""
+        with self._lock:
+            self._floor_enabled = enabled
+            for k in self._floor_pair_indices:
+                self.geom_data.activeCollisionPairs[k] = enabled
+
+    @property
+    def floor_enabled(self) -> bool:
+        return self._floor_enabled
 
     @property
     def n_pairs_total(self) -> int:

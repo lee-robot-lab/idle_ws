@@ -8,7 +8,7 @@ import pytest
 from ament_index_python.packages import get_package_share_directory
 
 from phy.collision import CollisionChecker
-from phy.ik import IKConfig, IKSolver
+from phy.ik import IKConfig, IKResult, IKSolver
 from phy.plan import Plan, Planner, PlannerConfig, top_down_R
 from phy.robot_model import RobotModel
 from idle_common.motor_map import DEFAULT_MOTOR_JOINT_MAP
@@ -100,6 +100,51 @@ def test_plan_sample_at_end_equals_end_q(planner, start_q):
     q_end, _, done = plan.sample(plan.duration_s)
     assert done
     assert np.allclose(q_end, plan.end_q, atol=1e-6)
+
+
+def test_cartesian_line_preserves_endpoints_and_path(planner, start_q):
+    start_xyz = np.array([0.3, 0.0, 0.4])
+    end_xyz = np.array([0.3, 0.0, 0.15])
+    start_plan = planner.plan_to_pose(
+        target_xyz=start_xyz,
+        target_yaw=0.0,
+        start_q=start_q,
+    )
+    assert start_plan is not None
+
+    plan = planner.plan_cartesian_line(
+        start_xyz=start_xyz,
+        end_xyz=end_xyz,
+        target_yaw=0.0,
+        start_q=start_plan.end_q,
+        duration=2.0,
+        n_samples=20,
+    )
+    assert plan is not None
+
+    q0, qd0, _ = plan.sample(0.0)
+    qf, qdf, done = plan.sample(plan.duration_s)
+    assert done
+    assert np.allclose(q0, start_plan.end_q, atol=1e-9)
+    assert np.allclose(qf, plan.end_q, atol=1e-9)
+    assert np.allclose(qd0, 0.0, atol=1e-8)
+    assert np.allclose(qdf, 0.0, atol=1e-8)
+    assert plan.metadata["max_waypoint_jump_rad"] < 0.5
+
+    max_position_error = 0.0
+    for t in np.linspace(0.0, plan.duration_s, 41):
+        phase = t / plan.duration_s
+        alpha = 10.0 * phase**3 - 15.0 * phase**4 + 6.0 * phase**5
+        expected_xyz = start_xyz + alpha * (end_xyz - start_xyz)
+        q, _, _ = plan.sample(t)
+        actual_xyz = planner.ik.forward_position(q)
+        max_position_error = max(
+            max_position_error,
+            float(np.linalg.norm(actual_xyz - expected_xyz)),
+        )
+
+    assert max_position_error < 0.01
+    assert np.linalg.norm(planner.ik.forward_position(qf) - end_xyz) < 0.001
 
 
 def test_metadata_records_ik_and_collision_info(planner, start_q):
@@ -249,6 +294,185 @@ def test_plan_to_pose_skips_colliding_candidate(planner, start_q, monkeypatch):
     assert plan.collision_safe
     assert plan.metadata["ik_candidate_index"] >= 1
     assert plan.metadata["ik_candidates_ranked"] >= 2
+
+
+def test_trajectory_selection_cost_penalizes_j4_motion(planner):
+    """Trajectory ranking should prefer candidates that do not swing j4 hard."""
+    start = np.zeros(6)
+    small_j4 = np.array([1.0, 0.0, -1.2, -0.02, -1.57, 0.0])
+    large_j4 = np.array([1.0, 0.0, -1.2, -0.35, -1.57, 0.0])
+
+    small_traj, _ = planner._build_trajectory(start, small_j4)
+    large_traj, _ = planner._build_trajectory(start, large_j4)
+
+    small_cost, small_parts = planner._trajectory_selection_cost(
+        small_traj,
+        start,
+        small_j4,
+        planner._to_v_vec(None),
+        planner._to_a_vec(None),
+    )
+    large_cost, large_parts = planner._trajectory_selection_cost(
+        large_traj,
+        start,
+        large_j4,
+        planner._to_v_vec(None),
+        planner._to_a_vec(None),
+    )
+
+    assert large_parts["j4_abs_dq"] > small_parts["j4_abs_dq"]
+    assert large_parts["j4_tail_qd"] > small_parts["j4_tail_qd"]
+    assert large_cost > small_cost
+
+
+def test_trajectory_selection_cost_penalizes_long_j6_wrap(planner):
+    """Yaw-symmetric candidates should prefer the nearest j6 equivalent."""
+    start = np.array([-0.766, 0.116, 1.541, 0.146, 1.571, -2.667])
+    near_j6 = np.array([-0.753, 0.797, 2.508, -0.139, 1.571, -3.089])
+    far_j6 = np.array([-0.753, 0.797, 2.508, -0.139, 1.571, 1.623])
+
+    near_traj, _ = planner._build_trajectory(start, near_j6)
+    far_traj, _ = planner._build_trajectory(start, far_j6)
+
+    near_cost, near_parts = planner._trajectory_selection_cost(
+        near_traj,
+        start,
+        near_j6,
+        planner._to_v_vec(None),
+        planner._to_a_vec(None),
+    )
+    far_cost, far_parts = planner._trajectory_selection_cost(
+        far_traj,
+        start,
+        far_j6,
+        planner._to_v_vec(None),
+        planner._to_a_vec(None),
+    )
+
+    assert abs(far_j6[5] - start[5]) > abs(near_j6[5] - start[5])
+    assert far_parts["j6_abs_dq"] > near_parts["j6_abs_dq"]
+    assert far_cost > near_cost
+
+
+def test_assign_j6_yaw_variants_returns_only_nearest_equivalent(planner):
+    """Each IK seed should contribute one nearest j6 value, not all yaw variants."""
+    res = IKResult(
+        True,
+        np.array([1.229, -0.04, -1.45, -0.16, -1.57, 0.0]),
+        iterations=1,
+        residual_norm=0.0,
+    )
+    seed_q = np.zeros(6)
+
+    variants = planner._assign_j6_yaw_variants(res, top_down_R(0.0), seed_q)
+
+    assert len(variants) == 1
+    assert abs(float(variants[0].q[5])) < 0.5
+
+
+def test_rank_ik_candidates_is_deterministic_for_same_query(planner):
+    """Random restarts should be deterministic for identical target/start inputs."""
+    target = np.array([0.0, 0.5, 0.4])
+    start = np.zeros(6)
+    R = top_down_R(0.0)
+
+    first = planner._rank_ik_candidates(target, R, start)
+    second = planner._rank_ik_candidates(target, R, start)
+
+    assert len(first) == len(second)
+    assert [np.round(r.q, 6).tolist() for r in first] == [
+        np.round(r.q, 6).tolist() for r in second
+    ]
+
+
+def test_plan_from_candidates_selects_lower_trajectory_cost(planner, monkeypatch):
+    """Top-k trajectory ranking can choose a later safe candidate."""
+    start = np.zeros(6)
+    large_j4 = np.array([1.0, 0.0, -1.2, -0.35, -1.57, 0.0])
+    small_j4 = np.array([1.0, 0.0, -1.2, -0.02, -1.57, 0.0])
+    cands = [
+        IKResult(True, large_j4, iterations=1, residual_norm=0.0),
+        IKResult(True, small_j4, iterations=1, residual_norm=0.0),
+    ]
+
+    monkeypatch.setattr(planner, "_check_collisions", lambda traj, n: (False, -1))
+
+    plan = planner._plan_from_candidates(
+        cands,
+        start,
+        np.array([0.0, 0.5, 0.4]),
+        0.0,
+        None,
+        None,
+        None,
+    )
+
+    assert plan is not None
+    assert plan.collision_safe
+    assert plan.metadata["ik_candidate_index"] == 1
+    assert np.allclose(plan.end_q, small_j4)
+
+
+def test_plan_from_candidates_deduplicates_j6_variants_before_top_k(planner, monkeypatch):
+    """Yaw-symmetric j6 variants should not fill the whole top-k window."""
+    start = np.zeros(6)
+    large_j4_base = np.array([1.0, -0.7, -2.5, -2.9, 1.57, 0.0])
+    small_j4 = np.array([1.0, -0.04, -1.45, -0.16, -1.57, 0.0])
+    cands = [
+        IKResult(
+            True,
+            large_j4_base + np.array([0.0, 0.0, 0.0, 0.0, 0.0, j6]),
+            iterations=1,
+            residual_norm=0.0,
+        )
+        for j6 in (0.0, 1.57, 3.14, -1.57)
+    ]
+    cands.append(IKResult(True, small_j4, iterations=1, residual_norm=0.0))
+
+    monkeypatch.setattr(planner, "_check_collisions", lambda traj, n: (False, -1))
+
+    plan = planner._plan_from_candidates(
+        cands,
+        start,
+        np.array([0.0, 0.5, 0.4]),
+        0.0,
+        None,
+        None,
+        None,
+    )
+
+    assert plan is not None
+    assert plan.collision_safe
+    assert plan.metadata["ik_candidate_index"] == 4
+    assert plan.metadata["trajectory_select_duplicate_arm_skips"] == 3
+    assert np.allclose(plan.end_q, small_j4)
+
+
+def test_plan_from_candidates_deduplicates_identical_candidates(planner, monkeypatch):
+    """Exact duplicate IK candidates should be ignored after the first one."""
+    start = np.zeros(6)
+    q = np.array([1.0, -0.2, -1.4, -0.1, -1.57, -0.3])
+    cands = [
+        IKResult(True, q, iterations=1, residual_norm=0.0),
+        IKResult(True, q.copy(), iterations=1, residual_norm=0.0),
+    ]
+
+    monkeypatch.setattr(planner, "_check_collisions", lambda traj, n: (False, -1))
+
+    plan = planner._plan_from_candidates(
+        cands,
+        start,
+        np.array([0.0, 0.5, 0.4]),
+        0.0,
+        None,
+        None,
+        None,
+    )
+
+    assert plan is not None
+    assert plan.metadata["duplicate_reject_count"] == 1
+    assert plan.metadata["timing_candidates_checked"] == 1
+    assert np.allclose(plan.end_q, q)
 
 
 def test_planner_ik_joint_order_validation(sim_share):

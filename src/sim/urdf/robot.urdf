@@ -376,6 +376,7 @@
       </geometry>
     </collision>
   </link>
+
   <joint name="cage_to_base" type="fixed">
     <parent link="cage" />
     <child link="base" />

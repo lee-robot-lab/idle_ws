@@ -16,6 +16,7 @@
   <disable_collisions link1="cage"     link2="base"     reason="Adjacent"/>
   <disable_collisions link1="cage"     link2="rs02_1"   reason="Never"/>
 
+
   <!-- Adjacent kinematic chain (parent -> child in URDF tree) -->
   <disable_collisions link1="base"     link2="rs02_1"   reason="Adjacent"/>
   <disable_collisions link1="rs02_1"   link2="joint1"   reason="Adjacent"/>

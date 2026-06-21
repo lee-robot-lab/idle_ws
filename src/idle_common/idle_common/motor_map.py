@@ -18,7 +18,7 @@ DEFAULT_MOTOR_JOINT_MAP: dict[int, str] = {
 DEFAULT_TAU_LIMIT_BY_MOTOR: dict[int, float] = {
     1: 6.0,
     2: 28.0,
-    3: 10.0,
+    3: 11.0,
     4: 6.0,
     5: 5.0,
     6: 5.0,

@@ -1,7 +1,7 @@
 """Motor 7 gripper controller with grasp-success and drop detection.
 
 Grasp detection logic:
-  - Closing command: q_des = q_closed_min - delta (tries to over-close).
+  - Closing command: q_des = q_closed_min + delta (tries to over-close past fully-closed).
   - Block present:   gripper stops between q_open and q_closed_min → grasped.
   - Empty grasp:     gripper reaches q_closed_min - delta → no block.
   - Drop detection:  during GRASPED state, q_actual moves toward q_closed_min
@@ -60,13 +60,14 @@ class GripperNode(Node):
 
         # Parameters — tune via YAML or CLI
         self.q_open = float(declare_typed(self, "q_open", 0.0))
-        self.q_closed_min = float(declare_typed(self, "q_closed_min", 0.5))
+        self.q_closed_min = float(declare_typed(self, "q_closed_min", 0.80))
         self.delta_overclose = float(declare_typed(self, "delta_overclose", 0.05))
         self.tau_drop_threshold = float(declare_typed(self, "tau_drop_threshold", 0.1))
-        self.grasp_settle_ticks = int(declare_typed(self, "grasp_settle_ticks", 15))
-        self.control_hz = float(declare_typed(self, "control_hz", 100.0))
+        self.grasp_settle_ticks = int(declare_typed(self, "grasp_settle_ticks", 200))
+        self.q_min_grasp = float(declare_typed(self, "q_min_grasp", 0.4))
+        self.control_hz = float(declare_typed(self, "control_hz", 250.0))
         self.state_timeout_s = float(declare_typed(self, "state_timeout_s", 0.5))
-        self.kp = float(declare_typed(self, "kp", 2.0))
+        self.kp = float(declare_typed(self, "kp", 1.0))
         self.kd = float(declare_typed(self, "kd", 0.1))
         self.tau_limit = 1.6  # Motor 7 hardware limit [Nm]
 
@@ -114,8 +115,12 @@ class GripperNode(Node):
             # Wait for gripper to settle, then check grasp
             self._settle_count += 1
             if self._settle_count >= self.grasp_settle_ticks:
-                q_cmd = self.q_closed_min - self.delta_overclose
-                if q > (self.q_closed_min - 0.01):
+                if q < self.q_min_grasp:
+                    # Motor barely moved — not connected or jammed at open
+                    self._state = GripperState.FAIL
+                    self.get_logger().warn(f"grasp failed: motor did not move (q={q:.4f})")
+                    self._publish_grasp(False)
+                elif q > (self.q_closed_min - 0.01):
                     # Fully closed → no block
                     self._state = GripperState.FAIL
                     self.get_logger().warn("grasp failed: gripper closed on air")
@@ -128,8 +133,8 @@ class GripperNode(Node):
 
         elif self._state == GripperState.GRASPED and not stale:
             # Drop detection: resistance gone → q moves toward q_cmd
-            q_cmd = self.q_closed_min - self.delta_overclose
-            block_gone = (q < q_cmd + 0.01) or (abs(tau) < self.tau_drop_threshold)
+            q_cmd = self.q_closed_min + self.delta_overclose
+            block_gone = (q > q_cmd - 0.01) or (abs(tau) < self.tau_drop_threshold)
             if block_gone:
                 self._state = GripperState.OPEN
                 self.get_logger().warn("drop detected")
@@ -170,7 +175,7 @@ class GripperNode(Node):
         return res
 
     def _srv_close(self, _req: Trigger.Request, res: Trigger.Response) -> Trigger.Response:
-        self._q_des = self.q_closed_min - self.delta_overclose
+        self._q_des = self.q_closed_min + self.delta_overclose
         self._state = GripperState.CLOSING
         self._settle_count = 0
         self.get_logger().info("gripper: close commanded")

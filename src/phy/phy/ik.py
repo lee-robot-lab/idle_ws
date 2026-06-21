@@ -508,6 +508,68 @@ class IKSolver:
 
         return IKResult(False, q.copy(), iters, residual)
 
+    def solve_pose_yaw_free(
+        self,
+        goal_xyz: np.ndarray,
+        goal_R: np.ndarray,
+        q_seed: np.ndarray,
+    ) -> IKResult:
+        """5D IK: target position + tool z-axis, leaving yaw unconstrained.
+
+        This fits top-down grasping where j6 is a pure tool-yaw joint. The arm
+        first solves the position and approach direction with j1-j5, then the
+        planner assigns j6 analytically from the requested yaw.
+        """
+        q = self.clip_to_limits(q_seed)
+        goal_p = np.asarray(goal_xyz, dtype=float)
+        goal_z = np.asarray(goal_R[:, 2], dtype=float)
+        goal_z /= max(float(np.linalg.norm(goal_z)), 1e-12)
+        iters = 0
+        residual = float("inf")
+
+        for iters in range(1, self.config.max_iterations + 1):
+            q_model = self._ordered_to_model_q(q)
+            pin.forwardKinematics(self.model, self.data, q_model)
+            pin.updateFramePlacements(self.model, self.data)
+
+            R_curr = np.asarray(self.data.oMf[self.frame_id].rotation, dtype=float)
+            p_eff = (
+                np.asarray(self.data.oMf[self.frame_id].translation, dtype=float)
+                + R_curr @ self.target_offset_local
+            )
+            z_curr = R_curr[:, 2]
+            z_curr = z_curr / max(float(np.linalg.norm(z_curr)), 1e-12)
+
+            pos_err = goal_p - p_eff
+            axis_err = goal_z - z_curr
+            err = np.concatenate([pos_err, axis_err])
+            residual = float(np.linalg.norm(err))
+            if residual <= self.config.tolerance:
+                return IKResult(True, q.copy(), iters, residual)
+
+            J_full = pin.computeFrameJacobian(
+                self.model,
+                self.data,
+                q_model,
+                self.frame_id,
+                pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
+            )
+            J_pos = np.asarray(J_full[:3, :], dtype=float)
+            J_ang = np.asarray(J_full[3:, :], dtype=float)
+            r_world = R_curr @ self.target_offset_local
+            J_pt = J_pos - pin.skew(r_world) @ J_ang
+
+            # z_dot = omega x z = -skew(z) * omega. This constrains only the
+            # tool z-axis direction, leaving rotation about z for j6.
+            J_axis = -pin.skew(z_curr) @ J_ang
+            J_ctrl = np.vstack([J_pt[:, self.v_indices], J_axis[:, self.v_indices]])
+
+            JJt = J_ctrl @ J_ctrl.T + self.config.damping * np.eye(6)
+            dq = J_ctrl.T @ np.linalg.solve(JJt, err)
+            q = self.clip_to_limits(q + self.config.step_scale * dq)
+
+        return IKResult(False, q.copy(), iters, residual)
+
     def forward_pose(self, q_ordered: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Return ``(position, rotation_matrix)`` at the target frame."""
         q_model = self._ordered_to_model_q(self.clip_to_limits(q_ordered))

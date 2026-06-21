@@ -16,6 +16,7 @@ def main():
     ap.add_argument("--can_id", type=lambda x: int(x, 0), nargs="+", required=True)
     ap.add_argument("--kp", type=float, default=None)
     ap.add_argument("--kd", type=float, default=None)
+    ap.add_argument("--ki", type=float, default=None)
     ap.add_argument("--q_des", type=float, default=None)
     ap.add_argument("--qd_des", type=float, default=None)
     ap.add_argument("--tau_ff", type=float, default=None)
@@ -27,6 +28,7 @@ def main():
     for key in (
         "kp",
         "kd",
+        "ki",
         "q_des",
         "qd_des",
         "tau_ff",

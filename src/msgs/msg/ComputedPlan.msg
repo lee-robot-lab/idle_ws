@@ -2,6 +2,7 @@
 # Arrays are ordered by motor_ids (ascending).
 
 uint32 serial
+builtin_interfaces/Time stamp
 int32 n_dof
 
 float64[] start_q       # q snapshot at planning time (for rewarp drift)
@@ -10,6 +11,7 @@ float64 duration        # leg1 duration (s)
 float64[] end_q         # leg1 final positions
 float64[] target_xyz    # 3 elements
 float64 target_yaw
+bool cartesian_path     # preserve fitted Cartesian path; do not joint-space rewarp
 
 bool has_leg2
 float64[] leg2_coeffs

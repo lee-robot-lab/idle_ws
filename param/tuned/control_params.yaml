@@ -1,41 +1,48 @@
 motors:
   '1':
-    kp: 25.0
-    kd: 3.0
-    inertia_ff_scale: 1.0
-    v_max: 0.6
     a_max: 1.2
+    friction_ff: 1.6
+    inertia_ff_scale: 1.0
+    kd: 5.0
+    ki: 0.0
+    kp: 35.0
+    v_max: 0.6
   '2':
-    gravity_bias: 0.0
-    gravity_scale: 0.88
-    kp: 25.0
-    kd: 4.0
-    inertia_ff_scale: 0.7
-    v_max: 1.0
     a_max: 2.0
+    friction_ff: 1.25
+    gravity_bias: 0.0
+    gravity_scale: 0.92
+    inertia_ff_scale: 0.7
+    kd: 5.8
+    kp: 25.0
+    v_max: 1.0
   '3':
-    gravity_scale: 1.0
-    kp: 22.0
-    kd: 4.0
-    inertia_ff_scale: 0.0
-    v_max: 0.8
     a_max: 1.5
+    friction_ff: 0.55
+    gravity_scale: 1.0
+    inertia_ff_scale: 0.7
+    kd: 4.83
+    kp: 40.0
+    v_max: 0.8
   '4':
-    kp: 22.0
+    a_max: 1.6
+    friction_ff: 0.75
+    inertia_ff_scale: 0.7
     kd: 2.5
-    inertia_ff_scale: 0.7
+    kp: 30.0
     v_max: 0.8
-    a_max: 1.6
   '5':
-    kp: 15.0
+    a_max: 1.6
+    friction_ff: 0.15
+    inertia_ff_scale: 0.7
     kd: 1.5
-    inertia_ff_scale: 0.7
+    kp: 15.0
     v_max: 0.8
-    a_max: 1.6
   '6':
-    kp: 12.0
-    kd: 1.0
-    inertia_ff_scale: 0.7
-    v_max: 0.8
     a_max: 1.6
+    friction_ff: 0.3
+    inertia_ff_scale: 0.7
+    kd: 1.0
+    kp: 12.0
+    v_max: 0.8
 version: 1

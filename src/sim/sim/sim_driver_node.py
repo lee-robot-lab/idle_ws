@@ -5,9 +5,9 @@ runs physics integration, and publishes ``/motor_state_array``. Designed to
 plug into the same control stack as ``can_bridge_node`` so that ``plan_node``
 and friends can run unchanged against simulation.
 
-Gripper is excluded from actuation (finger joints forcibly held at 0) — see
-the new architecture plan: ``DEFAULT_MOTOR_JOINT_MAP`` is the 6-motor arm
-mapping; gripper integration is deferred to Phase 6.
+Motor 7 (gripper) is handled separately: commands are accepted and translated
+to prismatic finger forces via motor_q → finger_q linear mapping.
+Motor 7 state is published using finger_r position back-converted to motor angle.
 """
 
 from __future__ import annotations
@@ -28,6 +28,12 @@ from sim.viewer_node import load_model_with_workaround
 
 
 _GRIPPER_JOINT_NAMES = ("finger_r", "finger_l")
+_GRIPPER_MOTOR_ID = 7
+# motor7_q [rad] → finger prismatic [m]
+# motor7 q=0 → fingers open (joint=0), motor7 q=0.8 → fingers closed (joint=0.0447m)
+_GRIPPER_SCALE = 0.0447 / 0.8
+_FINGER_KP = 200.0   # N/m — stiff enough to grip block
+_FINGER_KD = 5.0     # N·s/m
 
 
 class SimDriverNode(Node):
@@ -49,7 +55,14 @@ class SimDriverNode(Node):
 
         model_xml = resolve_share_file("sim", "robot.xml", model_xml_text)
         self.model, used_workaround = load_model_with_workaround(str(model_xml))
+        disable_scene_contacts = declare_typed(self, "disable_scene_contacts", False)
+        if disable_scene_contacts:
+            n_disabled = self._disable_scene_contacts()
+            self.get_logger().warn(
+                f"disable_scene_contacts=True — disabled contacts on {n_disabled} scene geoms"
+            )
         self.data = mujoco.MjData(self.model)
+        mujoco.mj_forward(self.model, self.data)  # qfrc_bias가 첫 tick 전에 유효해야 gravity comp가 동작
 
         self.motor_ids = tuple(sorted(DEFAULT_MOTOR_JOINT_MAP.keys()))
         self.qpos_idx_by_motor: dict[int, int] = {}
@@ -75,6 +88,7 @@ class SimDriverNode(Node):
         # distorting inertia FF and PD convergence in simulation.
 
         self.latest_cmd: dict[int, dict[str, float]] = {}
+        self.latest_gripper_cmd: Optional[dict[str, float]] = None
 
         tick_period = 1.0 / max(self.control_hz, 1.0)
         physics_dt = float(self.model.opt.timestep)
@@ -123,12 +137,44 @@ class SimDriverNode(Node):
             "sim_driver_node initialized: "
             f"model={model_xml} control_hz={self.control_hz:.1f} "
             f"physics_dt={physics_dt:.4f} steps/tick={self.physics_steps_per_tick} "
-            f"motors={list(self.motor_ids)}"
+            f"motors={list(self.motor_ids)} gripper_joints={len(self.gripper_qpos_idxs)}"
         )
+
+    def _disable_scene_contacts(self) -> int:
+        """Disable basket/block contacts for pure arm reachability sweeps."""
+        n_disabled = 0
+        for geom_id in range(self.model.ngeom):
+            geom_name = (
+                mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
+                or ""
+            )
+            body_id = int(self.model.geom_bodyid[geom_id])
+            body_name = (
+                mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                or ""
+            )
+            is_scene_geom = (
+                geom_name.startswith("basket_")
+                or body_name == "basket"
+                or body_name.startswith("block_")
+            )
+            if not is_scene_geom:
+                continue
+            self.model.geom_contype[geom_id] = 0
+            self.model.geom_conaffinity[geom_id] = 0
+            n_disabled += 1
+        return n_disabled
 
     def on_cmd_array(self, msg: MotorCMDArray) -> None:
         for cmd in msg.commands:
             motor_id = int(cmd.motor_id)
+            if motor_id == _GRIPPER_MOTOR_ID:
+                self.latest_gripper_cmd = {
+                    "q_des": float(cmd.q_des),
+                    "kp": float(cmd.kp),
+                    "kd": float(cmd.kd),
+                }
+                continue
             if motor_id not in self.qpos_idx_by_motor:
                 continue
             self.latest_cmd[motor_id] = {
@@ -141,7 +187,7 @@ class SimDriverNode(Node):
 
     def on_timer(self) -> None:
         self._apply_mit_torques()
-        self._hold_gripper_closed()
+        self._update_gripper()
         for _ in range(self.physics_steps_per_tick):
             mujoco.mj_step(self.model, self.data)
         self._publish_state()
@@ -176,12 +222,28 @@ class SimDriverNode(Node):
                 )
             self.data.qfrc_applied[v_idx] = tau
 
-    def _hold_gripper_closed(self) -> None:
-        for qi in self.gripper_qpos_idxs:
-            self.data.qpos[qi] = 0.0
-        for vi in self.gripper_qvel_idxs:
-            self.data.qvel[vi] = 0.0
-            self.data.qfrc_applied[vi] = 0.0
+    def _update_gripper(self) -> None:
+        """Motor 7 명령을 finger prismatic 관절 PD 힘으로 변환."""
+        if not self.gripper_qpos_idxs:
+            return
+
+        if self.latest_gripper_cmd is None:
+            # 명령 없으면 현재 위치 유지 (댐핑만)
+            for vi in self.gripper_qvel_idxs:
+                qd = float(self.data.qvel[vi])
+                self.data.qfrc_applied[vi] = _FINGER_KD * (-qd)
+            return
+
+        # motor7 q_des → finger target [m]
+        m7_q_des = float(self.latest_gripper_cmd["q_des"])
+        target = max(0.0, min(m7_q_des * _GRIPPER_SCALE, 0.0447))
+
+        for qi, vi in zip(self.gripper_qpos_idxs, self.gripper_qvel_idxs):
+            q = float(self.data.qpos[qi])
+            qd = float(self.data.qvel[vi])
+            f = _FINGER_KP * (target - q) + _FINGER_KD * (-qd)
+            f = max(-20.0, min(20.0, f))
+            self.data.qfrc_applied[vi] = f
 
     def _publish_state(self) -> None:
         stamp = self.get_clock().now().to_msg()
@@ -197,6 +259,20 @@ class SimDriverNode(Node):
             state.q = float(self.data.qpos[q_idx])
             state.qd = float(self.data.qvel[v_idx])
             state.tau = float(self.data.qfrc_applied[v_idx])
+            state.temp_c = 25.0
+            states.append(state)
+        # Motor 7 (gripper): finger_r 위치를 motor angle로 역변환해서 publish
+        if self.gripper_qpos_idxs:
+            qi = self.gripper_qpos_idxs[0]
+            vi = self.gripper_qvel_idxs[0]
+            finger_q = float(self.data.qpos[qi])
+            finger_qd = float(self.data.qvel[vi])
+            state = MotorState()
+            state.stamp = stamp
+            state.motor_id = _GRIPPER_MOTOR_ID
+            state.q = finger_q / _GRIPPER_SCALE
+            state.qd = finger_qd / _GRIPPER_SCALE
+            state.tau = float(self.data.qfrc_applied[vi])
             state.temp_c = 25.0
             states.append(state)
         msg.states = states
