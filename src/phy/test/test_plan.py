@@ -233,19 +233,6 @@ def test_plan_motion_fold_for_180_target(planner, start_q):
         assert abs(leg1.end_q[0] - leg2.end_q[0]) < 0.3
 
 
-def test_tuck_pose_picks_closer_elbow(planner):
-    cfg = planner.cfg
-    cur_a = np.array([0.0, cfg.tuck_j2, cfg.tuck_j3, cfg.tuck_j4, cfg.tuck_j5, 0.0])
-    tuck_a = planner._tuck_pose(0.5, cur_a)
-    assert tuck_a[1] > 0, "near tuck_A → positive j2 elbow side"
-    assert np.isclose(tuck_a[0], 0.5), "j1 set to target angle"
-    assert np.isclose(tuck_a[5], 0.0), "j6 kept at current"
-
-    cur_b = np.array([0.0, -cfg.tuck_j2, -cfg.tuck_j3, -cfg.tuck_j4, -cfg.tuck_j5, 0.0])
-    tuck_b = planner._tuck_pose(0.5, cur_b)
-    assert tuck_b[1] < 0, "near tuck_B → negative j2 elbow side"
-
-
 def test_cost_prefers_near_j1(planner, start_q):
     """A stronger w_j1 penalty must not increase the chosen base-joint travel.
 

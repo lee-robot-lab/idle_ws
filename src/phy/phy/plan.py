@@ -588,28 +588,6 @@ class Planner:
                 return retract
         return direct  # collision-unsafe; plan_node will discard with log
 
-    def _tuck_pose(self, target_j1: float, current_q: np.ndarray) -> np.ndarray:
-        """Top-down folded intermediate pose for fold-and-rotate.
-
-        j1 is set to the target angle (fold + base-rotation happen in one leg),
-        j6 (and any joints beyond) are kept at their current value. Two candidates
-        differ by elbow side (tuck_B = tuck_A's four mid angles negated); returns
-        whichever is closer to ``current_q`` by joint distance.
-        """
-        current = np.asarray(current_q, dtype=float)
-        mid = (self.cfg.tuck_j2, self.cfg.tuck_j3, self.cfg.tuck_j4, self.cfg.tuck_j5)
-
-        tA = current.copy()
-        tA[0] = target_j1
-        tA[1:5] = mid
-        tB = current.copy()
-        tB[0] = target_j1
-        tB[1:5] = [-v for v in mid]
-
-        tA = self.ik.clip_to_limits(tA)
-        tB = self.ik.clip_to_limits(tB)
-        return min((tA, tB), key=lambda t: float(np.linalg.norm(t - current)))
-
     def _to_v_vec(self, v_max: "float | np.ndarray | None") -> np.ndarray:
         if v_max is None:
             return np.full(self._n_dof, self.cfg.v_max)
