@@ -10,6 +10,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -63,6 +64,36 @@ def generate_launch_description() -> LaunchDescription:
         default_value="1.0",
         description="j1 virtual time fraction (<1.0): j1 reaches goal early, excluded from warp",
     )
+    settle_kp_scale_by_motor_arg = DeclareLaunchArgument(
+        "settle_kp_scale_by_motor_json",
+        default_value='{"1": 1.8}',
+        description="Per-motor kp scale used only while settling to q_final",
+    )
+    settle_kd_scale_by_motor_arg = DeclareLaunchArgument(
+        "settle_kd_scale_by_motor_json",
+        default_value='{"1": 1.35}',
+        description="Per-motor kd scale used only while settling to q_final",
+    )
+    settle_blend_before_end_arg = DeclareLaunchArgument(
+        "settle_blend_before_end_s",
+        default_value="1.5",
+        description="Blend settle gain/friction into the final trajectory segment",
+    )
+    kd_max_arg = DeclareLaunchArgument(
+        "kd_max",
+        default_value="15.0",
+        description="Software clamp for outgoing motor kd",
+    )
+    plan_diag_csv_path_arg = DeclareLaunchArgument(
+        "plan_diag_csv_path",
+        default_value="",
+        description="Optional plan_node joint diagnostic CSV path",
+    )
+    plan_diag_hz_arg = DeclareLaunchArgument(
+        "plan_diag_hz",
+        default_value="100.0",
+        description="plan_node joint diagnostic CSV sample rate",
+    )
     disable_scene_contacts_arg = DeclareLaunchArgument(
         "disable_scene_contacts",
         default_value="false",
@@ -82,6 +113,12 @@ def generate_launch_description() -> LaunchDescription:
             warp_q_lo_arg,
             warp_q_hi_arg,
             j1_traj_fraction_arg,
+            settle_kp_scale_by_motor_arg,
+            settle_kd_scale_by_motor_arg,
+            settle_blend_before_end_arg,
+            kd_max_arg,
+            plan_diag_csv_path_arg,
+            plan_diag_hz_arg,
             disable_scene_contacts_arg,
             Node(
                 package="sim",
@@ -93,6 +130,7 @@ def generate_launch_description() -> LaunchDescription:
                         "viewer": LaunchConfiguration("viewer"),
                         "viewer_left_ui": LaunchConfiguration("viewer_left_ui"),
                         "viewer_right_ui": LaunchConfiguration("viewer_right_ui"),
+                        "model_xml": "/home/su/idle_ws/src/sim/robot.xml",
                         "disable_scene_contacts": LaunchConfiguration("disable_scene_contacts"),
                     }
                 ],
@@ -123,8 +161,25 @@ def generate_launch_description() -> LaunchDescription:
                         "warp_q_lo_rad": LaunchConfiguration("warp_q_lo_rad"),
                         "warp_q_hi_rad": LaunchConfiguration("warp_q_hi_rad"),
                         "j1_traj_fraction": LaunchConfiguration("j1_traj_fraction"),
+                        "settle_kp_scale_by_motor_json": ParameterValue(
+                            LaunchConfiguration("settle_kp_scale_by_motor_json"),
+                            value_type=str,
+                        ),
+                        "settle_kd_scale_by_motor_json": ParameterValue(
+                            LaunchConfiguration("settle_kd_scale_by_motor_json"),
+                            value_type=str,
+                        ),
+                        "settle_blend_before_end_s": LaunchConfiguration(
+                            "settle_blend_before_end_s"
+                        ),
                         "settle_timeout_s": 5.0,
                         "kp_max": 60.0,
+                        "kd_max": LaunchConfiguration("kd_max"),
+                        "plan_diag_csv_path": LaunchConfiguration("plan_diag_csv_path"),
+                        "plan_diag_hz": ParameterValue(
+                            LaunchConfiguration("plan_diag_hz"),
+                            value_type=float,
+                        ),
                     }
                 ],
             ),
@@ -133,6 +188,12 @@ def generate_launch_description() -> LaunchDescription:
                 executable="gripper_node",
                 name="gripper_node",
                 output="screen",
+                parameters=[{
+                    "q_closed_min": 0.55,
+                    "delta_overclose": 0.01,
+                    "q_min_grasp": 0.30,
+                    "tau_drop_threshold": 0.0,
+                }],
             ),
             Node(
                 package="phy",
@@ -141,7 +202,7 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[{
                     "z_pregrasp": 0.40,
-                    "z_grasp": 0.12,
+                    "z_grasp": 0.10,
                     "z_place": 0.25,
                     "x_min": -0.5,
                     "x_max": 0.5,

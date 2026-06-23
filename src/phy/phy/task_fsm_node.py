@@ -14,7 +14,7 @@ Z constants (tunable via ROS params, used as defaults when task="" or "default")
     z_grasp     = 0.12  -- grasp descent
     z_place     = 0.20  -- place descent
 
-State machine:
+State machine: -- 0.3 0.0 0.6 45
     IDLE -> PRE_GRASP -> GRASP_DESCEND -> GRASP_CLOSE
          -> LIFT -> TRANSIT -> PLACE_DESCEND
          -> GRASP_OPEN -> RETRACT -> HOME -> DONE -> IDLE

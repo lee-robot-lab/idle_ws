@@ -9,6 +9,7 @@ log/
 .colcon_ignore
 compile_commands.json
 
+
 # ROS bags / logs
 rosbag2_*/
 *.db3
@@ -63,7 +64,7 @@ Makefile
 .vscode/
 .idea/
 *.code-workspace
-
+.understand-anything
 # =========================
 # OS / Misc
 # =========================
@@ -77,3 +78,9 @@ Thumbs.db
 # .env
 # **/secrets.*
 # **/*token*
+
+# =========================
+# 실험 데이터 / 임시 파일
+# =========================
+plan_diag*.csv
+*_backup.py

@@ -1,0 +1,13 @@
+task_presets:
+  stack:
+    z_pregrasp: 0.40
+    z_grasp: 0.12
+    z_place: 0.05
+    grasp_descend_duration_s: 2.0
+    place_descend_duration_s: 2.0
+  place:
+    z_pregrasp: 0.40
+    z_grasp: 0.12
+    z_place: 0.30
+    grasp_descend_duration_s: 2.5
+    place_descend_duration_s: 2.5

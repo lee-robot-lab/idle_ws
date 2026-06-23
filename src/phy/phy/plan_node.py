@@ -8,10 +8,12 @@ interrupts the control loop.
 
 from __future__ import annotations
 
+import csv
 import json
 import math
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -79,6 +81,126 @@ def _settle_blend_for_remaining(remaining_s: float, window_s: float) -> float:
     if window <= 1.0e-9:
         return 0.0
     return float(np.clip(1.0 - float(remaining_s) / window, 0.0, 1.0))
+
+
+def _settle_velocity_brake_scale(
+    *,
+    q_err: float,
+    qd: float,
+    start_err_rad: float,
+    vel_target_rad_s: float,
+    vel_full_rad_s: float,
+    max_scale: float,
+) -> float:
+    if abs(float(q_err)) > max(0.0, float(start_err_rad)):
+        return 1.0
+    target = max(0.0, float(vel_target_rad_s))
+    speed = abs(float(qd))
+    if speed <= target:
+        return 1.0
+    top = max(target + 1.0e-6, float(vel_full_rad_s))
+    alpha = float(np.clip((speed - target) / (top - target), 0.0, 1.0))
+    return _ramped_scale(max_scale, alpha)
+
+
+def _diag_csv_header() -> list[str]:
+    return [
+        "stamp_s",
+        "phase",
+        "vt_s",
+        "warp",
+        "settle_blend",
+        "motor_id",
+        "q",
+        "q_des",
+        "err",
+        "qd",
+        "qd_des",
+        "qd_err",
+        "kp",
+        "kd",
+        "tau_ff",
+        "tau_meas",
+        "pd_tau",
+        "total_tau",
+        "hold_ref_source",
+        "q_final",
+        "q_final_err",
+        "settle_vel_brake",
+    ]
+
+
+def _diag_csv_rows(
+    *,
+    now_s: float,
+    phase: str,
+    vt_s: float,
+    warp: float,
+    settle_blend: float,
+    motor_ids: list[int],
+    state_by_motor: dict[int, MotorSample],
+    cmd_values: dict[int, dict[str, float]],
+    hold_ref_source: str = "q_final",
+    q_final_by_motor: dict[int, float] | None = None,
+) -> list[list[object]]:
+    rows: list[list[object]] = []
+    for motor_id in motor_ids:
+        if motor_id not in cmd_values:
+            continue
+        state = state_by_motor[motor_id]
+        cmd = cmd_values[motor_id]
+        q = float(state.q)
+        q_des = float(cmd["q_des"])
+        qd = float(state.qd)
+        qd_des = float(cmd["qd_des"])
+        kp = float(cmd["kp"])
+        kd = float(cmd["kd"])
+        tau_ff = float(cmd["tau_ff"])
+        tau_meas = float(state.tau_measured)
+        settle_vel_brake = float(cmd.get("settle_vel_brake", 1.0))
+        err = q_des - q
+        qd_err = qd_des - qd
+        pd_tau = kp * err + kd * qd_err
+        q_final = None if q_final_by_motor is None else q_final_by_motor.get(motor_id)
+        q_final_err = None if q_final is None else float(q_final) - q
+        rows.append([
+            f"{now_s:.6f}",
+            str(phase),
+            f"{vt_s:.6f}",
+            f"{warp:.6f}",
+            f"{settle_blend:.6f}",
+            int(motor_id),
+            f"{q:.9f}",
+            f"{q_des:.9f}",
+            f"{err:.9f}",
+            f"{qd:.9f}",
+            f"{qd_des:.9f}",
+            f"{qd_err:.9f}",
+            f"{kp:.6f}",
+            f"{kd:.6f}",
+            f"{tau_ff:.9f}",
+            f"{tau_meas:.9f}",
+            f"{pd_tau:.9f}",
+            f"{pd_tau + tau_ff:.9f}",
+            str(hold_ref_source),
+            "" if q_final is None else f"{float(q_final):.9f}",
+            "" if q_final_err is None else f"{q_final_err:.9f}",
+            f"{settle_vel_brake:.6f}",
+        ])
+    return rows
+
+
+def _select_hold_reference(
+    actual_q_by_motor: dict[int, float],
+    q_final_by_motor: dict[int, float],
+    *,
+    enabled: bool,
+    max_err: float,
+    threshold: float,
+) -> tuple[dict[int, float], str, bool]:
+    if enabled and float(max_err) <= max(0.0, float(threshold)):
+        return dict(actual_q_by_motor), "actual_latch", True
+    return dict(q_final_by_motor), "q_final", False
 
 
 @dataclass
@@ -164,7 +286,13 @@ class PlanNode(Node):
         self.settle_timeout_s = float(declare_typed(self, "settle_timeout_s", 2.5))
         self.settle_gain_ramp_s = float(declare_typed(self, "settle_gain_ramp_s", 0.4))
         self.settle_blend_before_end_s = float(
-            declare_typed(self, "settle_blend_before_end_s", 1.0)
+            declare_typed(self, "settle_blend_before_end_s", 1.5)
+        )
+        self.settle_velocity_brake_kd_scale = float(
+            declare_typed(self, "settle_velocity_brake_kd_scale", 2.0)
+        )
+        self.settle_velocity_brake_full_vel_rad_s = float(
+            declare_typed(self, "settle_velocity_brake_full_vel_rad_s", 0.15)
         )
         self.hold_friction_deadband_rad = float(
             declare_typed(self, "hold_friction_deadband_rad", 0.005)
@@ -175,6 +303,19 @@ class PlanNode(Node):
         self.settle_kd_scale = float(declare_typed(self, "settle_kd_scale", 1.0))
         self.hold_kp_scale = float(declare_typed(self, "hold_kp_scale", 1.0))
         self.hold_kd_scale = float(declare_typed(self, "hold_kd_scale", 1.0))
+        self.hold_qd_lpf_alpha = float(declare_typed(self, "hold_qd_lpf_alpha", 0.85))
+        self.settle_qd_lpf_alpha = float(declare_typed(self, "settle_qd_lpf_alpha", 0.0))
+        self._hold_qd_lpf: dict[int, float] = {}
+        self.hold_latch_actual_q_after_settle = bool(
+            declare_typed(self, "hold_latch_actual_q_after_settle", True)
+        )
+        self.hold_latch_max_err_rad = float(
+            declare_typed(self, "hold_latch_max_err_rad", 0.008)
+        )
+        self.plan_diag_hz = float(declare_typed(self, "plan_diag_hz", 100.0))
+        self.plan_diag_csv_path_text = declare_typed(
+            self, "plan_diag_csv_path", "", cast=strip_str
+        )
         try:
             self.settle_kp_scale_by_motor = _parse_float_map_json(
                 declare_typed(self, "settle_kp_scale_by_motor_json", "", cast=strip_str),
@@ -209,6 +350,12 @@ class PlanNode(Node):
 
         self._hold_log_start_s: float = 0.0
         self._hold_log_count: int = 3
+        self._hold_ref_source: str = "q_final"
+        self._diag_last_log_s: float = float("-inf")
+        self._diag_csv_file: Optional[object] = None
+        self._diag_csv_writer: Optional[csv.writer] = None
+        self._diag_csv_path: Optional[Path] = None
+        self._open_diag_csv_logger(self.plan_diag_csv_path_text)
 
         qos_cmd = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -242,7 +389,8 @@ class PlanNode(Node):
         self.get_logger().info(
             f"plan_node (ctrl) initialized: hz={self.control_hz:.1f} "
             f"motors={list(self.motor_ids)} "
-            f"warp_lo={self.warp_q_lo_rad:.3f} warp_hi={self.warp_q_hi_rad:.3f} rad"
+            f"warp_lo={self.warp_q_lo_rad:.3f} warp_hi={self.warp_q_hi_rad:.3f} rad "
+            f"diag_csv={self._diag_csv_path if self._diag_csv_path is not None else 'disabled'}"
         )
 
     # ------------------------------------------------------------------
@@ -406,6 +554,7 @@ class PlanNode(Node):
                 # EE가 q_final 대신 actual_q에 수렴하는 버그를 유발.
                 self._hold_q = {m: float(q_final[i]) for i, m in enumerate(self.motor_ids)}
                 self._hold_target_q = self._hold_q.copy()
+                self._hold_ref_source = "q_final"
                 actual_parts = "  ".join(
                     f"j{i+1}={self.state_by_motor[m].q:+.4f}"
                     for i, m in enumerate(self.motor_ids)
@@ -435,6 +584,10 @@ class PlanNode(Node):
                     )
                     self._commit_plan(leg2, now_s, start_qd=actual_qd)
                     cmd_values, _ = self._trajectory_cmds(0.0, 1.0, tau_g_by_motor)
+                    diag_phase = "trajectory"
+                    diag_vt_s = 0.0
+                    diag_warp = 1.0
+                    diag_blend = 0.0
                 else:
                     self.get_logger().info("trajectory complete — settling toward q_final")
                     self._settling = True
@@ -444,11 +597,22 @@ class PlanNode(Node):
                         self._settle_start_s = now_s
                     self._settle_ok_count = 0
                     cmd_values = self._hold_cmds(tau_g_by_motor)
+                    diag_phase = "settle"
+                    diag_vt_s = self._vt_elapsed_s
+                    diag_warp = warp
+                    diag_blend = 1.0
             else:
                 cmd_values, max_err = self._trajectory_cmds(
                     self._vt_elapsed_s, warp, tau_g_by_motor
                 )
                 self._prev_max_err = max_err
+                diag_phase = "trajectory"
+                diag_vt_s = self._vt_elapsed_s
+                diag_warp = warp
+                diag_blend = _settle_blend_for_remaining(
+                    self.active.plan.duration_s - float(self._vt_elapsed_s),
+                    self.settle_blend_before_end_s,
+                )
                 if warp < 0.98 and now_s - self._warp_log_last_s >= 2.0:
                     self._warp_log_last_s = now_s
                     _T = self.active.plan.duration_s
@@ -479,6 +643,14 @@ class PlanNode(Node):
         else:
             self._warp_stall_s = 0.0
             cmd_values = self._hold_cmds(tau_g_by_motor)
+            diag_phase = (
+                "settle"
+                if self._settling
+                else ("hold" if self._hold_target_q is not None else "idle")
+            )
+            diag_vt_s = self._vt_elapsed_s
+            diag_warp = 1.0
+            diag_blend = 1.0 if self._settling else 0.0
             if self._settling and self._hold_q is not None:
                 max_err = max(
                     abs(self.state_by_motor[m].q - self._hold_q[m]) for m in self.motor_ids
@@ -496,19 +668,19 @@ class PlanNode(Node):
                         f"settled in {elapsed:.2f}s: "
                         f"max_err={max_err:.4f}rad vel={max_vel:.4f}rad/s — DONE"
                     )
-                    self._settling = False
-                    self._publish_status("DONE")
-                    self._hold_log_start_s = now_s
-                    self._hold_log_count = 0
+                    self._finish_settle(now_s, max_err, max_vel, "settled")
+                    cmd_values = self._hold_cmds(tau_g_by_motor)
+                    diag_phase = "hold"
+                    diag_blend = 0.0
                 elif elapsed > self.settle_timeout_s:
                     self.get_logger().warn(
                         f"settle timeout {elapsed:.1f}s: "
                         f"max_err={max_err:.4f}rad vel={max_vel:.4f}rad/s — DONE anyway"
                     )
-                    self._settling = False
-                    self._publish_status("DONE")
-                    self._hold_log_start_s = now_s
-                    self._hold_log_count = 0
+                    self._finish_settle(now_s, max_err, max_vel, "timeout")
+                    cmd_values = self._hold_cmds(tau_g_by_motor)
+                    diag_phase = "hold"
+                    diag_blend = 0.0
             elif self._hold_target_q is not None and self._hold_log_count < 3:
                 elapsed = now_s - self._hold_log_start_s
                 if elapsed >= (self._hold_log_count + 1) * 1.0:
@@ -554,6 +726,14 @@ class PlanNode(Node):
                         )
                     self._hold_log_count += 1
 
+        self._append_diag_csv_rows(
+            now_s=now_s,
+            phase=diag_phase,
+            vt_s=diag_vt_s,
+            warp=diag_warp,
+            settle_blend=diag_blend,
+            cmd_values=cmd_values,
+        )
         self._publish(cmd_values)
 
     # ------------------------------------------------------------------
@@ -585,7 +765,11 @@ class PlanNode(Node):
         self._prev_max_err = 0.0
         self._hold_q = None
         self._hold_target_q = None
+        self._hold_ref_source = "q_final"
         self._settling = False
+        self._hold_qd_lpf = {
+            mid: float(self.state_by_motor[mid].qd) for mid in self.motor_ids
+        }
         self._publish_fail_reason("")
         self._publish_status("EXECUTING")
         serial = int(plan.metadata.get("serial", -1)) if plan.metadata else -1
@@ -641,6 +825,52 @@ class PlanNode(Node):
             target_yaw=pending.target_yaw,
             metadata={**pending.metadata, "rewarped_ctrl": True},
         )
+
+    def _finish_settle(
+        self,
+        now_s: float,
+        max_err: float,
+        max_vel: float,
+        reason: str,
+    ) -> None:
+        if self._hold_q is None:
+            return
+        q_final_by_motor = dict(self._hold_q)
+        actual_q_by_motor = {
+            motor_id: float(self.state_by_motor[motor_id].q) for motor_id in self.motor_ids
+        }
+        hold_q, source, latched = _select_hold_reference(
+            actual_q_by_motor,
+            q_final_by_motor,
+            enabled=self.hold_latch_actual_q_after_settle,
+            max_err=max_err,
+            threshold=self.hold_latch_max_err_rad,
+        )
+        self._hold_q = hold_q
+        self._hold_target_q = q_final_by_motor
+        self._hold_ref_source = source
+        if latched:
+            max_q_final_err = max(
+                abs(actual_q_by_motor[m] - q_final_by_motor[m]) for m in self.motor_ids
+            )
+            self.get_logger().info(
+                f"hold actual_q latched after {reason}: "
+                f"max_q_final_err={max_q_final_err:.4f}rad "
+                f"threshold={self.hold_latch_max_err_rad:.4f}rad "
+                f"settle_vel={max_vel:.4f}rad/s"
+            )
+        else:
+            self.get_logger().info(
+                f"hold keeps q_final after {reason}: "
+                f"max_err={max_err:.4f}rad "
+                f"threshold={self.hold_latch_max_err_rad:.4f}rad"
+            )
+        for mid in self.motor_ids:
+            self._hold_qd_lpf[mid] = float(self.state_by_motor[mid].qd)
+        self._settling = False
+        self._publish_status("DONE")
+        self._hold_log_start_s = now_s
+        self._hold_log_count = 0
 
     # ------------------------------------------------------------------
     # Command generation
@@ -758,6 +988,13 @@ class PlanNode(Node):
                     self.settle_friction_scale,
                 )
 
+            settle_alpha = self.settle_qd_lpf_alpha
+            if settle_alpha > 0.0:
+                qd_raw = float(self.state_by_motor[motor_id].qd)
+                qd_f = settle_alpha * self._hold_qd_lpf.get(motor_id, qd_raw) + (1.0 - settle_alpha) * qd_raw
+                self._hold_qd_lpf[motor_id] = qd_f
+                tau_ff += kd * (qd_raw - qd_f)
+
             out[motor_id] = {
                 "q_des": q_cmd,
                 "qd_des": qd_cmd,
@@ -773,6 +1010,15 @@ class PlanNode(Node):
             tuning = control_params_for_motor(motor_id)
             kp = float(tuning.get("kp", 0.0))
             kd = float(tuning.get("kd", 0.0))
+            q_des = (
+                self._hold_q[motor_id]
+                if self._hold_q is not None
+                else self.state_by_motor[motor_id].q
+            )
+            q_err = q_des - self.state_by_motor[motor_id].q
+            qd_des = 0.0
+            kd_tau_ff_correction = 0.0
+            settle_vel_brake = 1.0
             ramp = 1.0
             if self._settling:
                 if self.settle_gain_ramp_s > 1.0e-6:
@@ -789,23 +1035,34 @@ class PlanNode(Node):
                 )
                 kp *= _ramped_scale(kp_target_scale, ramp)
                 kd *= _ramped_scale(kd_target_scale, ramp)
+                settle_vel_brake = _settle_velocity_brake_scale(
+                    q_err=q_err,
+                    qd=self.state_by_motor[motor_id].qd,
+                    start_err_rad=self.hold_latch_max_err_rad,
+                    vel_target_rad_s=self.settle_vel_rad_s,
+                    vel_full_rad_s=self.settle_velocity_brake_full_vel_rad_s,
+                    max_scale=self.settle_velocity_brake_kd_scale,
+                )
+                kd *= settle_vel_brake
             else:
                 kp *= _gain_scale_for_motor(
                     motor_id, self.hold_kp_scale, self.hold_kp_scale_by_motor
                 )
-                kd *= _gain_scale_for_motor(
+                kd_scale = _gain_scale_for_motor(
                     motor_id, self.hold_kd_scale, self.hold_kd_scale_by_motor
                 )
+                kd *= kd_scale
+                alpha = self.hold_qd_lpf_alpha
+                if alpha > 0.0:
+                    qd_raw = float(self.state_by_motor[motor_id].qd)
+                    qd_f = alpha * self._hold_qd_lpf.get(motor_id, qd_raw) + (1.0 - alpha) * qd_raw
+                    self._hold_qd_lpf[motor_id] = qd_f
+                    # qd_lpf 기반 D term: tau_ff 보정으로 kd*(0-qd_lpf) 효과, 드라이버 kd 유지
+                    kd_tau_ff_correction = kd * (qd_raw - qd_f)
             gscale = float(tuning.get("gravity_scale", 1.0))
             gbias = float(tuning.get("gravity_bias", 0.0))
             friction = abs(float(tuning.get("friction_ff", 0.0)))
             tau_ff = gscale * tau_g_by_motor[motor_id] + gbias
-            q_des = (
-                self._hold_q[motor_id]
-                if self._hold_q is not None
-                else self.state_by_motor[motor_id].q
-            )
-            q_err = q_des - self.state_by_motor[motor_id].q
             friction_scale = self.settle_friction_scale if self._settling else self.hold_friction_scale
             tau_ff += _friction_ff_for_error(
                 q_err,
@@ -814,9 +1071,11 @@ class PlanNode(Node):
                 ramp,
                 friction_scale,
             )
+            tau_ff += kd_tau_ff_correction
             out[motor_id] = {
-                "q_des": q_des, "qd_des": 0.0,
+                "q_des": q_des, "qd_des": qd_des,
                 "kp": kp, "kd": kd, "tau_ff": tau_ff,
+                "settle_vel_brake": settle_vel_brake,
             }
         return out
 
@@ -847,6 +1106,57 @@ class PlanNode(Node):
         if now_s - self._warn_times.get(key, float("-inf")) >= interval_s:
             self._warn_times[key] = now_s
             self.get_logger().warn(msg)
+
+    def _open_diag_csv_logger(self, csv_log_path_text: str) -> None:
+        if not csv_log_path_text:
+            return
+        csv_path = Path(csv_log_path_text).expanduser()
+        if not csv_path.is_absolute():
+            csv_path = (Path.cwd() / csv_path).resolve()
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        existed_and_nonempty = csv_path.exists() and csv_path.stat().st_size > 0
+        csv_file = csv_path.open("a", encoding="utf-8", newline="")
+        writer = csv.writer(csv_file)
+        if not existed_and_nonempty:
+            writer.writerow(_diag_csv_header())
+            csv_file.flush()
+        self._diag_csv_file = csv_file
+        self._diag_csv_writer = writer
+        self._diag_csv_path = csv_path
+
+    def _append_diag_csv_rows(
+        self,
+        *,
+        now_s: float,
+        phase: str,
+        vt_s: float,
+        warp: float,
+        settle_blend: float,
+        cmd_values: dict[int, dict[str, float]],
+    ) -> None:
+        if self._diag_csv_writer is None or self._diag_csv_file is None:
+            return
+        if self.plan_diag_hz <= 0.0:
+            return
+        period_s = 1.0 / max(self.plan_diag_hz, 1.0e-6)
+        if now_s - self._diag_last_log_s < period_s:
+            return
+        self._diag_last_log_s = now_s
+        self._diag_csv_writer.writerows(
+            _diag_csv_rows(
+                now_s=now_s,
+                phase=phase,
+                vt_s=vt_s,
+                warp=warp,
+                settle_blend=settle_blend,
+                motor_ids=list(self.motor_ids),
+                state_by_motor=self.state_by_motor,
+                cmd_values=cmd_values,
+                hold_ref_source=self._hold_ref_source,
+                q_final_by_motor=self._hold_target_q,
+            )
+        )
+        self._diag_csv_file.flush()
 
     def _publish(self, cmd_values: dict[int, dict[str, float]]) -> None:
         stamp = self.get_clock().now().to_msg()
@@ -909,6 +1219,15 @@ class PlanNode(Node):
 
     def _now_s(self) -> float:
         return self.get_clock().now().nanoseconds * 1.0e-9
+
+    def destroy_node(self) -> bool:
+        if self._diag_csv_file is not None:
+            try:
+                self._diag_csv_file.close()
+            finally:
+                self._diag_csv_file = None
+                self._diag_csv_writer = None
+        return super().destroy_node()
 
 
 def main(args: Optional[list[str]] = None) -> None:

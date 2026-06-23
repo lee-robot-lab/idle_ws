@@ -32,8 +32,9 @@ _GRIPPER_MOTOR_ID = 7
 # motor7_q [rad] → finger prismatic [m]
 # motor7 q=0 → fingers open (joint=0), motor7 q=0.8 → fingers closed (joint=0.0447m)
 _GRIPPER_SCALE = 0.0447 / 0.8
-_FINGER_KP = 200.0   # N/m — stiff enough to grip block
-_FINGER_KD = 5.0     # N·s/m
+_FINGER_KP = 500.0   # N/m — sim contact needs enough normal force to hold blocks
+_FINGER_KD = 8.0     # N·s/m
+_FINGER_FORCE_LIMIT = 40.0
 
 
 class SimDriverNode(Node):
@@ -242,7 +243,7 @@ class SimDriverNode(Node):
             q = float(self.data.qpos[qi])
             qd = float(self.data.qvel[vi])
             f = _FINGER_KP * (target - q) + _FINGER_KD * (-qd)
-            f = max(-20.0, min(20.0, f))
+            f = max(-_FINGER_FORCE_LIMIT, min(_FINGER_FORCE_LIMIT, f))
             self.data.qfrc_applied[vi] = f
 
     def _publish_state(self) -> None:

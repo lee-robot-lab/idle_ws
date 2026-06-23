@@ -12,6 +12,7 @@ find_package(rclcpp REQUIRED)
 
 add_executable(can_bridge_node src/can_bridge_node.cpp)
 target_compile_features(can_bridge_node PUBLIC cxx_std_17)
+target_include_directories(can_bridge_node PRIVATE include)
 ament_target_dependencies(can_bridge_node rclcpp msgs)
 
 install(TARGETS
@@ -20,6 +21,12 @@ install(TARGETS
 )
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(test_tx_tick_budget test/test_tx_tick_budget.cpp)
+  target_compile_features(test_tx_tick_budget PUBLIC cxx_std_17)
+  target_include_directories(test_tx_tick_budget PRIVATE include)
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

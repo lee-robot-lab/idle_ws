@@ -372,6 +372,39 @@ def test_rank_ik_candidates_is_deterministic_for_same_query(planner):
     ]
 
 
+def test_fk_elbow_metric_separates_up_from_flat_branch(planner):
+    """FK elbow metric should match the visually preferred elbow-up branch."""
+    desired_up = np.array([1.139, 0.245, -1.349, 0.024, -1.571, -0.432])
+    flat_branch = np.array([1.329, -1.293, 2.371, 1.049, -1.571, -0.242])
+
+    assert planner._fk_elbow_up_signed_distance(desired_up) > 0.30
+    assert planner._fk_elbow_up_signed_distance(flat_branch) < 0.05
+
+
+def test_rank_ik_candidates_prefers_fk_elbow_up_branch(planner):
+    """The y=.70 z=.45 case should not rank the flat/down branch first."""
+    target = np.array([0.0, 0.70, 0.45])
+    start = np.zeros(6)
+    R = top_down_R(0.0)
+
+    best = planner._rank_ik_candidates(target, R, start)[0]
+
+    assert planner._fk_elbow_up_signed_distance(best.q) >= planner.cfg.fk_elbow_up_threshold_m
+    assert abs(float(best.q[3])) < 0.5
+
+
+def test_rank_ik_candidates_tiers_flat_branches_behind_elbow_up(planner):
+    """A flat branch should not outrank an available FK elbow-up branch."""
+    target = np.array([0.081066, 0.658237, 0.556190])
+    start = np.zeros(6)
+    R = top_down_R(0.0)
+
+    best = planner._rank_ik_candidates(target, R, start)[0]
+
+    assert planner._fk_elbow_up_signed_distance(best.q) >= planner.cfg.fk_elbow_up_threshold_m
+    assert abs(float(best.q[3])) < 0.7
+
+
 def test_plan_from_candidates_selects_lower_trajectory_cost(planner, monkeypatch):
     """Top-k trajectory ranking can choose a later safe candidate."""
     start = np.zeros(6)

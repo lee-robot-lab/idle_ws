@@ -93,6 +93,7 @@ class CollisionChecker:
         self._cage_enabled = False
         self.set_cage_enabled(cage_enabled)
         self._floor_enabled = False
+        self.set_floor_enabled(False)
 
     def set_cage_enabled(self, enabled: bool) -> None:
         """Toggle cage collision pairs on or off (thread-safe)."""
@@ -122,7 +123,8 @@ class CollisionChecker:
 
     @property
     def n_pairs_active(self) -> int:
-        return self._n_pairs_active
+        with self._lock:
+            return sum(bool(v) for v in self.geom_data.activeCollisionPairs)
 
     def check(
         self,
@@ -151,15 +153,25 @@ class CollisionChecker:
 
         Computes all pairs (no early-exit), so slower than ``check()``.
         """
-        self.check(q_by_motor, stop_at_first=False)
-        out: list[tuple[str, str]] = []
-        for k, result in enumerate(self.geom_data.collisionResults):
-            if result.isCollision():
-                pair = self.geom_model.collisionPairs[k]
-                obj_a = self.geom_model.geometryObjects[pair.first]
-                obj_b = self.geom_model.geometryObjects[pair.second]
-                out.append((obj_a.name, obj_b.name))
-        return out
+        with self._lock:
+            with self.robot._lock:
+                self.robot._fill_q_buf(q_by_motor)
+                pin.computeCollisions(
+                    self.robot.model,
+                    self.robot.data,
+                    self.geom_model,
+                    self.geom_data,
+                    self.robot._q_buf,
+                    stop_at_first_collision=False,
+                )
+            out: list[tuple[str, str]] = []
+            for k, result in enumerate(self.geom_data.collisionResults):
+                if result.isCollision():
+                    pair = self.geom_model.collisionPairs[k]
+                    obj_a = self.geom_model.geometryObjects[pair.first]
+                    obj_b = self.geom_model.geometryObjects[pair.second]
+                    out.append((obj_a.name, obj_b.name))
+            return out
 
     def check_trajectory(
         self,

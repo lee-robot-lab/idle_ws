@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 import numpy as np
+import pinocchio as pin
 
 from .collision import CollisionChecker
 from .ik import IKResult, IKSolver
@@ -69,6 +70,10 @@ class PlannerConfig:
     # Prefer wrist bend j4 to follow elbow j3's sign. Opposite signs are allowed
     # but penalised so collision-free / high-manipulability solutions can still win.
     w_j3_j4_sign: float = 2.0
+    # FK-based elbow-up preference.  Positive signed distance means the elbow is
+    # above the shoulder->EE line in the vertical radial work plane.
+    fk_elbow_up_threshold_m: float = 0.15
+    w_fk_elbow_up: float = 20.0
     # Reject IK solutions with manipulability below this (near-singularity).
     w_min_manipulability: float = 0.02
     # IK residual acceptance bound (m).
@@ -103,8 +108,10 @@ class PlannerConfig:
     w_traj_max_qdd: float = 0.5
     w_traj_j4_dq: float = 2.0
     w_traj_j4_tail_qd: float = 3.0
-    w_traj_j6_dq: float = 1.0
-    w_traj_duration: float = 0.10
+    # J6 is assigned analytically to the nearest yaw-symmetric equivalent during
+    # IK post-processing. Do not let it dominate branch selection again here.
+    w_traj_j6_dq: float = 0.0
+    w_traj_duration: float = 0.25
     w_traj_j3_gravity: float = 0.05
     trajectory_tail_window_s: float = 1.5
 
@@ -1008,6 +1015,8 @@ class Planner:
         w3 = self.cfg.w_j1
         w4 = self.cfg.w_elbow
         w5 = self.cfg.w_j3_j4_sign
+        w6 = self.cfg.w_fk_elbow_up
+        fk_elbow_threshold = self.cfg.fk_elbow_up_threshold_m
         j4_w = self.cfg.w_j4
         n = len(seed_q)
         dist_weights = np.ones(n)
@@ -1024,9 +1033,56 @@ class Planner:
             dj1   = abs(float(q[0] - seed_q[0]))
             elbow = float(max(0.0, -q[1] * q[2]))  # 0 if elbow-up, >0 if elbow-down
             j34   = float(max(0.0, -q[2] * q[3]))  # 0 if j3/j4 same sign
-            return w1 * dist + w2 / (manip + 1e-6) + w3 * dj1 + w4 * elbow + w5 * j34
+            fk_elbow = float(max(0.0, fk_elbow_threshold - self._fk_elbow_up_signed_distance(q)))
+            return (
+                w1 * dist
+                + w2 / (manip + 1e-6)
+                + w3 * dj1
+                + w4 * elbow
+                + w5 * j34
+                + w6 * fk_elbow
+            )
 
-        return sorted(feasible, key=_cost)
+        def _rank_key(r: IKResult) -> tuple[int, float]:
+            q = np.asarray(r.q, dtype=float)
+            # Prefer true FK elbow-up branches categorically.  Flat/down branches
+            # remain as fallbacks for targets where no elbow-up candidate exists.
+            elbow_tier = int(
+                self._fk_elbow_up_signed_distance(q) < fk_elbow_threshold
+            )
+            return elbow_tier, _cost(r)
+
+        return sorted(feasible, key=_rank_key)
+
+    def _fk_elbow_up_signed_distance(self, q: np.ndarray) -> float:
+        """Elbow signed distance from the shoulder->EE line in the radial-z plane.
+
+        Positive means the elbow is above the shoulder-to-end-effector line for
+        the current target side.  Near zero means the arm is almost flat.
+        """
+        q_model = self.ik._ordered_to_model_q(np.asarray(q, dtype=float))
+        pin.forwardKinematics(self.ik.model, self.ik.data, q_model)
+        pin.updateFramePlacements(self.ik.model, self.ik.data)
+
+        shoulder = np.asarray(self.ik.data.oMi[self.ik.joint_ids[1]].translation, dtype=float)
+        elbow = np.asarray(self.ik.data.oMi[self.ik.joint_ids[2]].translation, dtype=float)
+        ee = np.asarray(self.ik.data.oMf[self.ik.frame_id].translation, dtype=float)
+
+        xy = ee[:2] - shoulder[:2]
+        norm_xy = float(np.linalg.norm(xy))
+        if norm_xy < 1.0e-9:
+            xy = np.array([math.cos(float(q[0])), math.sin(float(q[0]))], dtype=float)
+            norm_xy = float(np.linalg.norm(xy))
+        radial = np.array([xy[0] / norm_xy, xy[1] / norm_xy, 0.0], dtype=float)
+
+        def _rz(point: np.ndarray) -> np.ndarray:
+            delta = point - shoulder
+            return np.array([float(np.dot(delta, radial)), float(delta[2])], dtype=float)
+
+        ee_rz = _rz(ee)
+        elbow_rz = _rz(elbow)
+        cross = ee_rz[0] * elbow_rz[1] - ee_rz[1] * elbow_rz[0]
+        return float(cross / max(float(np.linalg.norm(ee_rz)), 1.0e-9))
 
     def _assign_j6_yaw_variants(
         self,

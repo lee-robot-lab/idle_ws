@@ -56,6 +56,9 @@ class PlanComputeNode(Node):
         v_max = declare_typed(self, "planner_v_max", 1.0)
         a_max = declare_typed(self, "planner_a_max", 1.0)
         min_traj_duration = declare_typed(self, "planner_min_traj_duration", 1.5)
+        self.log_candidate_breakdown = bool(
+            declare_typed(self, "log_candidate_breakdown", False)
+        )
         urdf_path_text = declare_typed(self, "urdf_path", "", cast=strip_str)
 
         urdf_path = resolve_share_file("sim", "urdf/robot.urdf", urdf_path_text)
@@ -108,6 +111,7 @@ class PlanComputeNode(Node):
         }
 
         self._plan_lock = threading.Lock()
+        self._compute_lock = threading.Lock()
         self._plan_serial: int = 0
 
         qos_state = QoSProfile(
@@ -240,13 +244,20 @@ class PlanComputeNode(Node):
         duration: float,
     ) -> None:
         plan_t0 = time.perf_counter()
-        plan = self.planner.plan_cartesian_line(
-            start_xyz=start_xyz,
-            end_xyz=end_xyz,
-            target_yaw=target_yaw,
-            start_q=start_q,
-            duration=duration,
-        )
+        with self._compute_lock:
+            with self._plan_lock:
+                if self._plan_serial != my_serial:
+                    self.get_logger().info(
+                        f"[{my_serial}] stale straight-line plan skipped before compute"
+                    )
+                    return
+            plan = self.planner.plan_cartesian_line(
+                start_xyz=start_xyz,
+                end_xyz=end_xyz,
+                target_yaw=target_yaw,
+                start_q=start_q,
+                duration=duration,
+            )
         if plan is not None:
             plan.metadata["timing_plan_total_s"] = time.perf_counter() - plan_t0
 
@@ -331,11 +342,16 @@ class PlanComputeNode(Node):
             for m in self.motor_ids
         ])
 
-        result = self.planner.plan_motion(
-            target_xyz=target_xyz, target_yaw=target_yaw,
-            start_q=start_q, v_max=v_max_arr, a_max=a_max_arr,
-            min_duration=min_dur,
-        )
+        with self._compute_lock:
+            with self._plan_lock:
+                if self._plan_serial != my_serial:
+                    self.get_logger().info(f"[{my_serial}] stale plan skipped before compute")
+                    return
+            result = self.planner.plan_motion(
+                target_xyz=target_xyz, target_yaw=target_yaw,
+                start_q=start_q, v_max=v_max_arr, a_max=a_max_arr,
+                min_duration=min_dur,
+            )
 
         # Discard stale (newer target arrived)
         with self._plan_lock:
@@ -443,6 +459,8 @@ class PlanComputeNode(Node):
         self.timing_pub.publish(msg)
 
     def _log_plan_candidate_breakdown(self, serial: int, plan) -> None:
+        if not self.log_candidate_breakdown:
+            return
         text = self._format_plan_candidate_breakdown(plan)
         if text:
             self.get_logger().info(f"[{serial}] candidate costs: {text}")

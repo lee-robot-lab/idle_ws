@@ -34,6 +34,7 @@
 #include "msgs/msg/motor_state.hpp"
 #include "msgs/msg/motor_state_array.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "can_interface/tx_tick_budget.hpp"
 
 namespace
 {
@@ -71,6 +72,7 @@ constexpr int kScanMinId = 1;
 constexpr int kScanMaxId = 10;
 constexpr int kScanWaitMs = 200;
 constexpr int kRxMaxFramesPerTick = 100;
+constexpr std::size_t kMaxTxFramesPerTick = 2U;
 constexpr int kCmdTimeoutMs = 100;
 constexpr double kTxHzDefault = 250.0;
 const std::unordered_map<int, double> kTxHzByMotor {};
@@ -1244,9 +1246,29 @@ private:
   {
     const auto now_tp = std::chrono::steady_clock::now();
     const bool global_force_home = any_safe_shutdown_active();
-    for (auto & kv : latest_cmd_by_motor_) {
-      const uint8_t motor_id = kv.first;
-      CachedCommand & cached = kv.second;
+
+    std::vector<uint8_t> motor_ids;
+    motor_ids.reserve(latest_cmd_by_motor_.size());
+    for (const auto & kv : latest_cmd_by_motor_) {
+      if (kv.second.valid) {
+        motor_ids.push_back(kv.first);
+      }
+    }
+    if (motor_ids.empty()) {
+      return;
+    }
+    std::sort(motor_ids.begin(), motor_ids.end());
+
+    const auto start_it = std::lower_bound(
+      motor_ids.begin(), motor_ids.end(), next_tx_start_motor_id_);
+    const std::size_t start_index =
+      (start_it == motor_ids.end()) ? 0U : static_cast<std::size_t>(start_it - motor_ids.begin());
+
+    can_interface::TxTickBudget tx_budget(kMaxTxFramesPerTick);
+    for (std::size_t offset = 0U; offset < motor_ids.size(); ++offset) {
+      const std::size_t idx = (start_index + offset) % motor_ids.size();
+      const uint8_t motor_id = motor_ids[idx];
+      CachedCommand & cached = latest_cmd_by_motor_.at(motor_id);
       if (!cached.valid) {
         continue;
       }
@@ -1276,6 +1298,10 @@ private:
         if (elapsed < period) {
           continue;
         }
+      }
+      if (!tx_budget.try_consume()) {
+        next_tx_start_motor_id_ = motor_id;
+        return;
       }
 
       bool cmd_timed_out = false;
@@ -1415,6 +1441,7 @@ private:
       }
 
       const bool sent_ok = send_mit_command(outgoing);
+      next_tx_start_motor_id_ = motor_ids[(idx + 1U) % motor_ids.size()];
       if (!sent_ok) {
         RCLCPP_ERROR_THROTTLE(
           get_logger(),
@@ -1422,6 +1449,12 @@ private:
           "failed to send TYPE01 command frame for motor_id=%u: %s",
           motor_id,
           std::strerror(last_send_errno_));
+        if (last_send_errno_ == ENOBUFS ||
+          last_send_errno_ == EAGAIN ||
+          last_send_errno_ == EWOULDBLOCK)
+        {
+          return;
+        }
         continue;
       }
       cached.has_sent = true;
@@ -1694,6 +1727,7 @@ private:
   std::unordered_map<uint8_t, CachedCommand> latest_cmd_by_motor_;
   std::unordered_map<uint8_t, MotorRuntime> runtime_by_motor_;
   std::set<uint8_t> discovered_motor_ids_;
+  uint8_t next_tx_start_motor_id_ {0U};
   TxPolicy tx_policy_;
   HomePolicy home_policy_;
   rclcpp::Publisher<msgs::msg::MotorStateArray>::SharedPtr state_array_pub_;

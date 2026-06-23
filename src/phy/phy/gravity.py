@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 from typing import Mapping
 
 import pinocchio as pin
@@ -48,6 +49,9 @@ class GravityCompensator:
         self.urdf_path = path
         self.model = pin.buildModelFromUrdf(str(path))
         self.data = self.model.createData()
+        self._lock = threading.Lock()
+        self._q_neutral = pin.neutral(self.model)
+        self._q_buf = self._q_neutral.copy()
 
         bindings: dict[int, JointBinding] = {}
         for motor_id, joint_name in sorted(motor_joint_map.items()):
@@ -72,16 +76,17 @@ class GravityCompensator:
     def compute_gravity_by_motor(self, q_by_motor: Mapping[int, float]) -> dict[int, float]:
         """Compute gravity torques keyed by motor id."""
 
-        q_model = pin.neutral(self.model)
-        for motor_id in self.ordered_motor_ids:
-            if motor_id not in q_by_motor:
-                raise KeyError(f"missing q for motor_id={motor_id}")
-            binding = self.bindings[motor_id]
-            q_model[binding.q_index] = float(q_by_motor[motor_id])
+        with self._lock:
+            self._q_buf[:] = self._q_neutral
+            for motor_id in self.ordered_motor_ids:
+                if motor_id not in q_by_motor:
+                    raise KeyError(f"missing q for motor_id={motor_id}")
+                binding = self.bindings[motor_id]
+                self._q_buf[binding.q_index] = float(q_by_motor[motor_id])
 
-        tau_model = pin.computeGeneralizedGravity(self.model, self.data, q_model)
-        out: dict[int, float] = {}
-        for motor_id in self.ordered_motor_ids:
-            binding = self.bindings[motor_id]
-            out[motor_id] = float(tau_model[binding.v_index])
-        return out
+            tau_model = pin.computeGeneralizedGravity(self.model, self.data, self._q_buf)
+            out: dict[int, float] = {}
+            for motor_id in self.ordered_motor_ids:
+                binding = self.bindings[motor_id]
+                out[motor_id] = float(tau_model[binding.v_index])
+            return out

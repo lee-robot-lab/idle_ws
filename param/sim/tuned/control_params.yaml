@@ -1,7 +1,6 @@
 motors:
   '1':
     a_max: 1.2
-    friction_ff: 1.6
     inertia_ff_scale: 1.0
     kd: 5.0
     ki: 0.0
@@ -9,16 +8,14 @@ motors:
     v_max: 0.6
   '2':
     a_max: 2.0
-    friction_ff: 1.25
     gravity_bias: 0.0
-    gravity_scale: 0.92
+    gravity_scale: 1.0
     inertia_ff_scale: 0.7
     kd: 5.8
     kp: 25.0
     v_max: 1.0
   '3':
     a_max: 1.5
-    friction_ff: 1.0
     gravity_scale: 1.0
     inertia_ff_scale: 0.7
     kd: 4.83
@@ -26,21 +23,18 @@ motors:
     v_max: 0.8
   '4':
     a_max: 1.6
-    friction_ff: 0.75
     inertia_ff_scale: 0.7
     kd: 2.25
     kp: 24.0
     v_max: 0.8
   '5':
     a_max: 1.6
-    friction_ff: 0.15
     inertia_ff_scale: 0.7
     kd: 1.5
     kp: 15.0
     v_max: 0.8
   '6':
     a_max: 1.6
-    friction_ff: 0.3
     inertia_ff_scale: 0.7
     kd: 1.0
     kp: 12.0
