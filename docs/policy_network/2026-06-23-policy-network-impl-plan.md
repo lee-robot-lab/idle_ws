@@ -1,6 +1,6 @@
 # Policy Network 구현 계획 (v2)
 
-기준 문서: `docs/policy_network_design.md`  
+기준 문서: `docs/policy_network/policy_network_design.md`  
 인터페이스: `~/Downloads/policy_network_interface.json`  
 작성일: 2026-06-23 / 최종수정: 2026-06-24 (에이전트 리뷰 반영 — B1/B2/B3/B4/B5/B6/B7/M4/M5)
 

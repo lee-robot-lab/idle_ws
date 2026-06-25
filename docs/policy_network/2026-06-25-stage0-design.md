@@ -1,7 +1,7 @@
 # Stage 0 — 데이터 / 좌표계 gate 설계
 
 작성일: 2026-06-25
-상위 문서: `docs/superpowers/specs/2026-06-25-policy-network-staged-design-spec.md` (§4 Stage 0)
+상위 문서: `docs/policy_network/2026-06-25-policy-network-staged-design-spec.md` (§4 Stage 0)
 
 ---
 

@@ -18,7 +18,7 @@
 - **범위 제외**: z=h raycast parallax 보정(K,R,t 캘리 산출물 의존 → 후속 plan), 카메라 캡처·H 캘리브레이션(팀원), ROI crop(stage0 §9 추후).
 - 테스트는 `src/ml/`에서 `python -m pytest tests/ -v` 실행.
 
-상위 문서: `docs/superpowers/specs/2026-06-25-stage0-design.md`
+상위 문서: `docs/policy_network/2026-06-25-stage0-design.md`
 
 ---
 

@@ -3,10 +3,9 @@
 작성일: 2026-06-25
 진입점 문서. 아래 세 문서를 평가·통합한 결과이며, 단계별 상세 설계는 이 문서에서 이어서 채운다.
 
-- 설계 원본: `docs/policy_network_design.md`
-- 구현 계획 v2: `docs/superpowers/specs/2026-06-23-policy-network-impl-plan.md`
-- 에이전트 리뷰: `docs/superpowers/specs/2026-06-24-policy-network-agent-review.md`
-- 단계적 학습 개선안: `docs/superpowers/specs/2026-06-24-policy-network-staged-learning-improvements.md`
+- 설계 원본: `docs/policy_network/policy_network_design.md`
+- 구현 계획 v2: `docs/policy_network/2026-06-23-policy-network-impl-plan.md`
+- 단계적 학습 개선안: `docs/policy_network/2026-06-24-policy-network-staged-learning-improvements.md`
 
 > 이 문서는 위 3문서를 **대체하지 않는다.** 충돌하는 지점만 §2에서 명시 정정하고, 단계별 상세 설계는 §4 템플릿으로 이 문서에 누적한다.
 

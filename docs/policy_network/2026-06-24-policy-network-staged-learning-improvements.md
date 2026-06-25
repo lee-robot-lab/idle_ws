@@ -2,8 +2,7 @@
 
 작성일: 2026-06-24  
 기준 문서:
-- `docs/superpowers/specs/2026-06-23-policy-network-impl-plan.md`
-- `docs/superpowers/specs/2026-06-24-policy-network-agent-review.md`
+- `docs/policy_network/2026-06-23-policy-network-impl-plan.md`
 
 ## 1. 목적
 
