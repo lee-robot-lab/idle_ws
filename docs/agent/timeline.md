@@ -1,5 +1,31 @@
 # Agent Timeline
 
+## 2026-06-23 (오후) - Claude
+
+Agent: Claude
+
+Based on:
+- `docs/agent/pick_place_tuning_handoff.md` (오전 세션 결과)
+- 실험 CSV: plan_diag_j3friction.csv, plan_diag_lpf085.csv 등
+
+Changed:
+- `pick_place_control.launch.py` default를 모든 권장 파라미터로 업데이트 → csv 경로만 넘기면 실행 가능
+- `plan_node.py`: `_hold_qd_lpf` 초기화를 빈 dict → 현재 qd로 수정 (alpha 높을 때 초반 발산 방지)
+- `settle_vel_rad_s`=0.12, `settle_qd_lpf_alpha`=0.85를 launch default로 추가
+- `hold_friction_deadband_rad`=0.002를 launch에 추가 (j3 friction FF deadband 축소)
+- j3 `friction_ff` 0.55→1.0 (YAML)
+- j2 `settle_kp_scale`=1.8 (1.4에서 올림)
+- `.gitignore`에 `plan_diag*.csv`, `*_backup.py` 추가
+
+Evidence:
+- settle LPF 초기화 수정 후 alpha=0.85에서 settle 0.01s만에 vel_ok 종료
+- j3 hold tau_p2p: 0.916 → 0.641 (friction_ff=1.0 + deadband=0.002)
+- j3 friction_ff=1.5, kp=1.5 모두 실험했으나 tau_p2p 증가 또는 q_final_max 악화 → 채택 안 함
+
+Next:
+- 다른 pose에서 동일 파라미터로 실험해 진동 수준 확인
+- j3 gravity_scale 조정 (현재 1.0, 미실험)
+
 ## 2026-06-23 - Claude
 
 Agent: Claude
