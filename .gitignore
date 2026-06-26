@@ -84,3 +84,16 @@ Thumbs.db
 # =========================
 plan_diag*.csv
 *_backup.py
+
+# =========================
+# ML / Stage 1
+# =========================
+
+# DINO 오프라인 캐시 (팀원이 cache_dino.py로 직접 생성)
+data/dino_cache/
+
+# 학습 체크포인트 (재현 가능, 공유 시 드라이브)
+checkpoints/
+
+# 크롭·리사이즈 미리보기 (crop.py 출력)
+data/preview/

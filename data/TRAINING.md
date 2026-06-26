@@ -68,16 +68,37 @@ world_xy = apply_homography(H, uv_full)
 
 ```bash
 python src/ml/stage1/cache_dino.py \
-    --scenes  data/scenes/ \
-    --split   data/split.json \
-    --out     data/dino_cache/ \
-    --split_key train
+    --scenes     data/scenes/ \
+    --split      data/split.json \
+    --out        data/dino_cache/ \
+    --split_key  train \
+    --dino_model dinov2_vits14_reg
 ```
 
-- 모델: DINOv2 ViT-S/14 (자동 다운로드 ~330MB)
-- 입력: crop → 416×288 이미지
-- 출력: scene별 패치 feature `.pt` 파일 (train split만)
+- 모델: DINOv2 ViT-S/14 **reg** (register token 버전), dim=384 — 기본값
+- 주요 대안: `dinov2_vits14` (384d), `dinov2_vitb14` (768d), `dinov2_vitl14` (1024d)
+- 입력: crop → 448×308 이미지 (14 배수), 출력: `.pt` 파일 (train split만)
 - 각 object의 `contour_px`로 해당 영역 패치 평균 → `sem_target`
+
+**캐시 경로 구조:**  
+`--dino_model` 이름으로 하위 디렉토리가 자동 생성된다.
+```
+data/dino_cache/
+  dinov2_vits14_reg/   ← vits14_reg 캐싱 시
+    scene_000001.pt
+    ...
+  dinov2_vitb14/       ← vitb14로 바꿔 캐싱 시
+    scene_000001.pt
+    ...
+```
+
+**다른 모델로 바꿀 때:** `--dino_model`을 변경하고 캐싱을 다시 실행한다.  
+`train.py`의 `--dino_model`과 `--dino_dim`도 동일하게 맞춰야 한다.
+
+| DINO 모델 | dim | 캐싱 커맨드 추가 인자 | train 추가 인자 |
+|---|---|---|---|
+| `dinov2_vits14_reg` | 384 | (기본값) | (기본값) |
+| `dinov2_vitb14` | 768 | `--dino_model dinov2_vitb14` | `--dino_model dinov2_vitb14 --dino_dim 768` |
 
 ---
 
@@ -85,24 +106,27 @@ python src/ml/stage1/cache_dino.py \
 
 ```bash
 python src/ml/stage1/train.py \
-    --scenes    data/scenes/ \
-    --split     data/split.json \
+    --scenes     data/scenes/ \
+    --split      data/split.json \
     --dino_cache data/dino_cache/ \
-    --input_w   416 \
-    --input_h   288 \
-    --batch     8 \
-    --epochs    100 \
-    --device    cuda
+    --dino_model dinov2_vits14_reg \
+    --dino_dim   384 \
+    --input_w    416 \
+    --input_h    288 \
+    --batch      8 \
+    --epochs     100 \
+    --device     cuda
 ```
 
 주요 config (CLI로 조정):
 
 | 인자 | 기본값 | 설명 |
 |---|---|---|
+| `--dino_model` | `dinov2_vits14_reg` | 캐싱에 쓴 모델명과 반드시 일치 |
+| `--dino_dim` | 384 | `dino_model`의 feature 차원 (vits=384, vitb=768) |
 | `--batch` | 8 | GPU 메모리에 맞게 조정 |
 | `--num_queries` | 6 | slot 수 (known 4 + 여유 2) |
 | `--dec_layers` | 3 | decoder transformer 층수 |
-| `--backbone` | resnet18 | resnet18 / resnet34 / resnet50 |
 | `--lr` | 1e-4 | learning rate |
 | `--device` | cuda | cuda / cpu |
 
@@ -148,8 +172,10 @@ src/ml/
     crop.py                   # 이미지 일괄 crop 유틸
   eval/metrics.py             # xy_mae, yaw_error_deg
   stage1/
-    cache_dino.py             # DINO feature 캐싱 (구현 예정)
-    train.py                  # Stage 1 학습 루프 (구현 예정)
-    model.py                  # slot encoder 모델 (구현 예정)
+    model.py                  # SlotEncoder (ResNet18 + DETR decoder + 4 heads)
+    hungarian.py              # Hungarian 매칭
+    dataset.py                # Stage1Dataset (이미지 crop/resize + GT + DINO cache 로드)
+    cache_dino.py             # DINO teacher feature 오프라인 캐싱
+    train.py                  # 학습 루프 (Hungarian 매칭 + 4-head 손실 + val 지표)
   tests/                      # 단위 테스트 (pytest)
 ```
