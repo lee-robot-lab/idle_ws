@@ -242,4 +242,4 @@ teacher offline 캐싱(§4.1)으로 4GB에서 overfit-1-batch sanity 가능. cap
 - DINOv2 teacher feature 오프라인 추출 + 캐시 파이프라인(§4.1)을 먼저 세움.
 - backbone/teacher/N/λ를 §9 절차로 닫으며 결과를 본 문서에 누적.
 - gate(§5) — 특히 vs baseline — 통과 후 다운스트림(색 head, grounding) 단계로.
-- **follow-up:** spec §2.1/§4 Stage 1·1.5 본문을 본 slot 설계 반영해 갱신(현재 spec은 candidate-proposal 기준이라 충돌).
+- **follow-up:** spec §2.1은 slot 갱신 완료(2026-06-26). 남은 §3.1 추론 흐름·§4 Stage 1/1.5·§5 결정표 본문은 candidate-proposal 표기라 slot 기준으로 점진 갱신 필요(slot 문서가 우선).

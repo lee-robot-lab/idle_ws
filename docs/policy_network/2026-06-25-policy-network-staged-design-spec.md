@@ -52,7 +52,7 @@
 
 ## 2. 평가 결론 — 기존 문서 대비 정정
 
-### 2.1 [아키텍처] patch top-K → object-candidate proposal
+### 2.1 [아키텍처] patch top-K → object-candidate proposal → learned slot encoder
 
 개선안의 핵심은 impl-plan의 **patch-level top-K soft-argmax를 object-candidate proposal로 대체**하는 것이다. 두 문서가 같은 아키텍처를 가리키도록 이 정정을 기준으로 읽는다.
 
@@ -72,6 +72,8 @@
 단위가 **패치 → object candidate**로 올라가, 실패모드 A·B를 gate가 아니라 **구조적으로 제거**한다. 평가지표도 saliency MSE → **object recall**. unknown distractor는 objectness로 candidate화하되 known-class loss는 ignore.
 
 > impl-plan §2-1의 `TOP_K=32`, §2-4 soft-argmax 경로, §4 추론 흐름은 이 정정에 따라 candidate-proposal 경로로 대체된다. impl-plan의 cross-attn/2-pass relation 자체는 candidate token 위에서 재사용된다.
+
+> **갱신 (2026-06-26): candidate-proposal의 휴리스틱 assembly → 학습 slot encoder.** 위 채택안의 ②threshold/center-voting + ③NMS clustering(손코딩 묶기)은 **모델에서 DETR식 object-centric slot encoder로 대체**한다 — learned query + Hungarian matching이 "패치를 물체로 묶기"를 학습하고, query self-attn이 NMS 없이 중복을 억제한다. candidate-proposal 알고리즘 자체는 폐기하지 않고 **자동 라벨러 + baseline + warm-start 소스 + 데모 안전망**으로 모듈 밖에 남긴다(slot 미수렴 리스크 대비). slot은 물체별 `{present, xy, yaw, DINO-distilled sem_feat}`를 직접 출력하며, distill 단위도 패치 → slot으로 올라간다. 상세 설계·gate·fallback ladder: `docs/policy_network/2026-06-26-stage1-slot-design.md`. 이에 따라 §3.1 추론 흐름·§4 Stage 1/1.5·§5 결정표(student backbone/assembly 행)는 **slot 기준으로 읽는다**(본문 표기는 점진 갱신, slot 문서가 우선).
 
 ### 2.2 [정정] patch objectness/offset 라벨은 HSV에서 자동 생성 가능
 
