@@ -43,6 +43,9 @@ class Stage4RelationDataset(Dataset):
         return self.samples[idx]
 
 
+_TARGET_PHASES = ("TARGET_PRECOMPUTE", "DETECT_PLACE")
+
+
 class Stage4TorchDataset(Dataset):
     """Torch dataset used by Stage 4 training."""
 
@@ -62,6 +65,17 @@ class Stage4TorchDataset(Dataset):
             labels_json=labels_json,
         )
         self.scenes = Path(scenes_dir)
+        self._scene_cache: dict = {}
+        for s in self.relations.samples:
+            sid = s["scene_id"]
+            if sid not in self._scene_cache:
+                raw = json.loads((self.scenes / f"{sid}.json").read_text())
+                self._scene_cache[sid] = {
+                    "red_block": raw["red"],
+                    "green_block": raw["green"],
+                    "blue_block": raw["blue"],
+                    "basket": raw["basket"],
+                }
 
     def __len__(self):
         return len(self.relations)
@@ -69,18 +83,15 @@ class Stage4TorchDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.relations[idx]
         img, _, _, _, _ = self.stage1[self.scene_to_index[sample["scene_id"]]]
-        raw = json.loads((self.scenes / f"{sample['scene_id']}.json").read_text())
-        labels = {
-            "red_block": raw["red"],
-            "green_block": raw["green"],
-            "blue_block": raw["blue"],
-            "basket": raw["basket"],
-        }
+        labels = self._scene_cache[sample["scene_id"]]
         reference = sample["reference"]
         anchor_label = labels.get(reference) if reference not in (None, "robot") else None
         if reference == "basket":
             anchor_label = labels["basket"]
-        phase = "DETECT_PICK" if sample["query_kind"] == "OBJECT_QUERY" else "TARGET_PRECOMPUTE"
+        if sample["query_kind"] == "OBJECT_QUERY":
+            phase = "DETECT_PICK"
+        else:
+            phase = _TARGET_PHASES[idx % 2]
         return {
             "img": img,
             "relation_id": torch.tensor(RELATION_TO_ID[sample["relation"]], dtype=torch.long),
