@@ -1,4 +1,4 @@
-# Stage 1 학습 지침
+# 학습 지침 (Stage 1 + Stage 2)
 
 ## 1. 환경 준비
 
@@ -224,6 +224,84 @@ python src/ml/stage1/train.py --no_freeze_backbone --epochs 500 --patience 0 --b
 
 ---
 
+---
+
+## Stage 2 — Color Head 학습
+
+Stage 1 완료 후 진행. SlotEncoder를 완전히 frozen하고 색상 분류 head만 학습.
+
+### 선행 조건
+
+- `checkpoints/stage1/best.pt` 존재 (Stage 1 통과 기준 달성 후)
+- `data/dino_cache/` 존재 (Stage 1 캐싱 결과 재사용)
+
+### 학습 실행
+
+```bash
+cd /home/su/idle_ws/src/ml
+python -m stage2.train \
+    --scenes_dir     ../../data/scenes \
+    --split_json     ../../data/split.json \
+    --dino_cache_dir ../../data/dino_cache \
+    --stage1_ckpt    ../../checkpoints/stage1/best.pt \
+    --out_dir        ../../checkpoints/stage2 \
+    --epochs         100 \
+    --lr             1e-3 \
+    --batch_size     8
+```
+
+주요 인자:
+
+| 인자 | 기본값 | 설명 |
+|---|---|---|
+| `--epochs` | 100 | 소규모 head, 보통 20~50 epoch 내 수렴 |
+| `--lr` | 1e-3 | Adam lr |
+| `--batch_size` | 8 | GPU 메모리에 맞게 조정 |
+| `--present_thr` | 0.5 | present 슬롯 판단 threshold (`sigmoid(logit) > thr`) |
+
+체크포인트: `checkpoints/stage2/best.pt` (val color_acc 최고)
+- 포함 내용: `{"epoch", "val_acc", "color_head": state_dict, "stage1_ckpt": path}`
+
+### Stage 2 통과 기준
+
+| 항목 | 목표 |
+|---|---|
+| val color accuracy | ≥ 98% (present 슬롯 기준) |
+| per-class accuracy | 4종 각각 ≥ 95% |
+
+### 추론 시 사용법 (코드 예시)
+
+```python
+from stage1.model import SlotEncoder
+from stage2.model import ColorHead
+from stage2.grounding import direct_grounding
+import torch
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# 모델 로드
+encoder = SlotEncoder().to(device).eval()
+encoder.load_state_dict(torch.load("checkpoints/stage1/best.pt")["model"])
+
+color_head = ColorHead().to(device).eval()
+color_head.load_state_dict(torch.load("checkpoints/stage2/best.pt")["color_head"])
+
+# 추론
+with torch.no_grad():
+    out = encoder(img.unsqueeze(0).to(device))    # img: (3,H,W)
+    sem = out["sem"][0]                            # (N, 384)
+    present_mask = torch.sigmoid(out["present"][0].squeeze(-1)) > 0.5
+
+logit = color_head(sem.unsqueeze(0))[0]           # (N, 4)
+slot_to_color = color_head.assign(logit, present_mask)
+
+# JSON 명령 → xy/yaw
+step = {"object": "red_block", "object_query": None}
+xy, yaw = direct_grounding(step, out["xy"][0], out["yaw"][0], slot_to_color)
+```
+
+---
+
 ## 9. 파일 구조
 
 ```
@@ -241,5 +319,9 @@ src/ml/
     dataset.py                # Stage1Dataset (이미지 crop/resize + GT + DINO cache 로드)
     cache_dino.py             # DINO teacher feature 오프라인 캐싱
     train.py                  # 학습 루프 (Hungarian 매칭 + 4-head 손실 + val 지표)
+  stage2/
+    model.py                  # ColorHead (Linear(384,4) + Hungarian assign)
+    train.py                  # 학습 루프 (SlotEncoder freeze + CE loss)
+    grounding.py              # direct_grounding (JSON step → xy/yaw)
   tests/                      # 단위 테스트 (pytest)
 ```
