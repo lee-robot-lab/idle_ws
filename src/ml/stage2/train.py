@@ -1,6 +1,6 @@
 # ================================================================
 # stage2/train.py
-# 설명: ColorHead 학습 — SlotEncoder(frozen) + head_color(학습 대상).
+# 설명: ColorHead 학습 — gt_sem(DINO cache)으로 직접 학습, val은 enc_sem+Hungarian으로 검증.
 # 사용법:
 #   cd src/ml && python -m stage2.train   # 기본값으로 바로 실행
 #   python -m stage2.train --epochs 50    # 일부 인자만 덮어쓰기
@@ -145,7 +145,7 @@ def main():
     color_head = ColorHead().to(device)
     optimizer  = torch.optim.AdamW(color_head.parameters(),
                                    lr=args.lr, weight_decay=args.weight_decay)
-    ce_loss    = nn.CrossEntropyLoss(ignore_index=-1)
+    ce_loss    = nn.CrossEntropyLoss()
 
     # linear warmup → cosine annealing
     warmup_ep = max(1, int(args.epochs * args.warmup_frac))
@@ -169,31 +169,16 @@ def main():
         total_loss = 0.0
         n_batches  = 0
 
-        for img, gt_xy, gt_yaw, gt_sem, _ in train_loader:
-            img   = img.to(device)
-            gt_xy = gt_xy.to(device)
-
-            with torch.no_grad():
-                out     = encoder(img)
-                sem     = out["sem"]       # (B, N, 384)
-                present = out["present"]   # (B, N, 1)
-                xy      = out["xy"]        # (B, N, 2)
+        for _img, _gt_xy, _gt_yaw, gt_sem, _ in train_loader:
+            # gt_sem: (B, 4, 384) — DINO cache, augmentation 없음
+            # label[i] = i (red=0, green=1, blue=2, basket=3) 항상 고정
+            gt_sem = gt_sem.to(device)
+            B      = gt_sem.shape[0]
+            labels = torch.arange(4, device=device).unsqueeze(0).expand(B, -1)  # (B, 4)
 
             with torch.amp.autocast("cuda", enabled=use_amp):
-                logit = color_head(sem.detach())   # (B, N, 4)
-
-                B = img.shape[0]
-                all_logit  = []
-                all_labels = []
-                for b in range(B):
-                    labels = hungarian_color_labels(
-                        xy[b].detach(), gt_xy[b], present[b].detach(), args.present_thr)
-                    all_logit.append(logit[b])
-                    all_labels.append(labels)
-
-                all_logit  = torch.cat(all_logit,  dim=0)
-                all_labels = torch.cat(all_labels, dim=0)
-                loss = ce_loss(all_logit, all_labels)
+                logit = color_head(gt_sem)          # (B, 4, 4)
+                loss  = ce_loss(logit.reshape(-1, 4), labels.reshape(-1))
 
             optimizer.zero_grad(set_to_none=True)
             if scaler:
