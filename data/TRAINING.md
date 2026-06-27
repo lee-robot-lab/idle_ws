@@ -71,13 +71,12 @@ python src/ml/stage1/cache_dino.py \
     --scenes     data/scenes/ \
     --split      data/split.json \
     --out        data/dino_cache/ \
-    --split_key  train \
     --dino_model dinov2_vits14_reg
 ```
 
 - 모델: DINOv2 ViT-S/14 **reg** (register token 버전), dim=384 — 기본값
 - 주요 대안: `dinov2_vits14` (384d), `dinov2_vitb14` (768d), `dinov2_vitl14` (1024d)
-- 입력: crop → 448×308 이미지 (14 배수), 출력: `.pt` 파일 (train split만)
+- 입력: crop → 448×308 이미지 (14 배수), 출력: `.pt` 파일 (기본: all splits)
 - 각 object의 `contour_px`로 해당 영역 패치 평균 → `sem_target`
 
 **캐시 경로 구조:**  
@@ -104,19 +103,21 @@ data/dino_cache/
 
 ## 5. 학습 실행
 
+**권장 커맨드 (검증된 설정):**
+
 ```bash
 python src/ml/stage1/train.py \
-    --scenes     data/scenes/ \
-    --split      data/split.json \
-    --dino_cache data/dino_cache/ \
-    --dino_model dinov2_vits14_reg \
-    --dino_dim   384 \
-    --input_w    416 \
-    --input_h    288 \
-    --batch      8 \
-    --epochs     100 \
-    --device     cuda
+    --no_freeze_backbone \
+    --batch       8 \
+    --epochs      300 \
+    --lr          1e-4 \
+    --lam_xy      5.0 \
+    --warmup_frac 0.05 \
+    --patience    30 \
+    --device      cuda
 ```
+
+> `--lam_xy 10.0`으로 올리면 xy 정확도 강조 (val xy_mae 개선에 유리).
 
 주요 config (CLI로 조정):
 
@@ -125,10 +126,19 @@ python src/ml/stage1/train.py \
 | `--dino_model` | `dinov2_vits14_reg` | 캐싱에 쓴 모델명과 반드시 일치 |
 | `--dino_dim` | 384 | `dino_model`의 feature 차원 (vits=384, vitb=768) |
 | `--batch` | 8 | GPU 메모리에 맞게 조정 |
-| `--num_queries` | 6 | slot 수 (known 4 + 여유 2) |
-| `--dec_layers` | 3 | decoder transformer 층수 |
-| `--lr` | 1e-4 | learning rate |
+| `--lr` | 1e-4 | learning rate (backbone/head 동일) |
+| `--warmup_frac` | 0.05 | 전체 epoch 중 linear warmup 비율 |
+| `--lam_xy` | 5.0 | xy 손실 가중치 |
+| `--patience` | 20 | early stopping patience (0이면 비활성) |
+| `--freeze_backbone` | True | backbone frozen 여부; `--no_freeze_backbone`으로 해제 |
 | `--device` | cuda | cuda / cpu |
+
+**정규화 / Backbone:**
+- ResNet18 backbone: BN 내장, **기본 frozen** — `--no_freeze_backbone`으로 full fine-tune 활성화
+- 데이터 200장에서 `--no_freeze_backbone`이 val xy 개선에 핵심 (frozen: ~0.11, unfrozen: ~0.04)
+- Transformer decoder: dropout=0.1; Head dropout=0.1 (4개 head 공유)
+- LR 스케줄: linear warmup → cosine annealing (epochs에 자동 동기화)
+- AMP: CUDA 환경에서 자동 활성화 (FP16 혼합 정밀도)
 
 ---
 

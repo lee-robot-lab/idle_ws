@@ -107,7 +107,8 @@ def main():
     ap.add_argument('--scenes',    default='data/scenes/')
     ap.add_argument('--split',     default='data/split.json')
     ap.add_argument('--out',       default='data/dino_cache/')
-    ap.add_argument('--split_key',  default='train')
+    ap.add_argument('--split_key',  default='all',
+                    help="train/val/test/all (기본: all)")
     ap.add_argument('--dino_model', default='dinov2_vits14_reg',
                     choices=list(DINO_DIMS.keys()))
     ap.add_argument('--device',     default='cuda' if torch.cuda.is_available() else 'cpu')
@@ -118,8 +119,13 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     split = json.loads(Path(args.split).read_text())
-    ids   = split[args.split_key]
-    print(f"Caching {len(ids)} scenes ({args.split_key}) → {out_dir}  [{args.dino_model}]")
+    if args.split_key == 'all':
+        ids   = sum(split.values(), [])
+        label = 'all'
+    else:
+        ids   = split[args.split_key]
+        label = args.split_key
+    print(f"Caching {len(ids)} scenes ({label}) → {out_dir}  [{args.dino_model}]")
 
     dino = load_dino(args.dino_model, args.device)
 

@@ -9,6 +9,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -154,16 +155,42 @@ def train(args):
         input_w=args.input_w,
     ).to(device)
 
+    if args.freeze_backbone:
+        for p in model.backbone.parameters():
+            p.requires_grad_(False)
+        print("Backbone frozen.")
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
                                   weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs)
+
+    # AMP: CUDA에서만 활성화
+    use_amp = (device.type == 'cuda')
+    scaler  = torch.amp.GradScaler('cuda') if use_amp else None
+    print(f"AMP: {use_amp}")
+
+    # Linear warmup → cosine annealing (epochs에 자동 동기화)
+    warmup_ep = max(1, int(args.epochs * args.warmup_frac))
+    def lr_lambda(ep):
+        if ep < warmup_ep:
+            return (ep + 1) / warmup_ep
+        progress = (ep - warmup_ep) / max(1, args.epochs - warmup_ep)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     out_dir = Path(args.ckpt_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    best_xy = float('inf')
+    best_xy      = float('inf')
+    patience_cnt = 0
+    start_epoch  = 1
 
-    for epoch in range(1, args.epochs + 1):
+    if args.resume:
+        ckpt = torch.load(args.resume, map_location=device, weights_only=True)
+        model.load_state_dict(ckpt['state_dict'])
+        start_epoch = ckpt.get('epoch', 0) + 1
+        best_xy     = ckpt.get('val', {}).get('xy_mae', float('inf'))
+        print(f"Resumed from {args.resume} (epoch {start_epoch-1}, best_xy={best_xy:.4f})")
+
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         epoch_loss = {'cls': 0.0, 'xy': 0.0, 'yaw': 0.0, 'feat': 0.0}
         n_batches  = 0
@@ -174,13 +201,23 @@ def train(args):
             gt_yaw = gt_yaw.to(device)
             gt_sem = gt_sem.to(device)
 
-            pred = model(imgs)
-            loss, parts = compute_loss(pred, gt_xy, gt_yaw, gt_sem)
+            with torch.amp.autocast('cuda', enabled=use_amp):
+                pred = model(imgs)
+                loss, parts = compute_loss(pred, gt_xy, gt_yaw, gt_sem,
+                                       lam_cls=args.lam_cls, lam_xy=args.lam_xy,
+                                       lam_yaw=args.lam_yaw, lam_feat=args.lam_feat)
 
-            optimizer.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            if scaler:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
 
             for k in parts:
                 epoch_loss[k] += parts[k]
@@ -200,12 +237,18 @@ def train(args):
               f"cos={val_metrics['cosine']:.3f}")
 
         if val_metrics['xy_mae'] < best_xy:
-            best_xy = val_metrics['xy_mae']
+            best_xy      = val_metrics['xy_mae']
+            patience_cnt = 0
             torch.save({'epoch': epoch, 'state_dict': model.state_dict(),
                         'val': val_metrics},
                        out_dir / 'best.pt')
+        else:
+            patience_cnt += 1
+            if args.patience > 0 and patience_cnt >= args.patience:
+                print(f"Early stop at epoch {epoch} (patience={args.patience})")
+                break
 
-    torch.save({'epoch': args.epochs, 'state_dict': model.state_dict()},
+    torch.save({'epoch': epoch, 'state_dict': model.state_dict()},
                out_dir / 'last.pt')
     print(f"Saved → {out_dir}/best.pt  last.pt")
 
@@ -224,6 +267,21 @@ def main():
     ap.add_argument('--dec_layers',  type=int, default=3)
     ap.add_argument('--dino_model',  default='dinov2_vits14_reg')
     ap.add_argument('--dino_dim',    type=int, default=384)
+    ap.add_argument('--warmup_frac', type=float, default=0.05,
+                    help='전체 epoch 중 warmup 비율 (기본 5%%)')
+    ap.add_argument('--resume',    default=None,
+                    help='체크포인트 경로 (e.g. checkpoints/stage1/best.pt)')
+    ap.add_argument('--lam_cls',   type=float, default=1.0)
+    ap.add_argument('--lam_xy',    type=float, default=5.0)
+    ap.add_argument('--lam_yaw',   type=float, default=2.0)
+    ap.add_argument('--lam_feat',  type=float, default=1.0)
+    ap.add_argument('--patience',         type=int,  default=20,
+                    help='val xy_mae 미개선 epoch 수. 0이면 비활성')
+    ap.add_argument('--freeze_backbone',  action='store_true', default=True,
+                    help='ResNet18 backbone freeze (기본 on)')
+    ap.add_argument('--no_freeze_backbone', dest='freeze_backbone',
+                    action='store_false',
+                    help='backbone 전체 fine-tune')
     ap.add_argument('--workers',     type=int, default=4)
     ap.add_argument('--ckpt_dir',    default='checkpoints/stage1/')
     ap.add_argument('--device',

@@ -59,6 +59,7 @@ class SlotEncoder(nn.Module):
         self.decoder = nn.TransformerDecoder(dec_layer, num_layers=dec_layers)
 
         # ── heads ─────────────────────────────────────────────────
+        self.head_drop    = nn.Dropout(p=0.1)
         self.head_present = nn.Linear(d_model, 1)
         self.head_xy      = nn.Linear(d_model, 2)   # sigmoid → [0,1] normalized
         self.head_yaw     = nn.Linear(d_model, 2)   # L2-normalized → (cos4θ, sin4θ)
@@ -78,9 +79,10 @@ class SlotEncoder(nn.Module):
         slots = self.decoder(q, feat)               # (N, B, d)
         slots = slots.permute(1, 0, 2)              # (B, N, d)
 
+        s = self.head_drop(slots)
         return {
-            'present': self.head_present(slots),                      # (B,N,1)
-            'xy':      torch.sigmoid(self.head_xy(slots)),            # (B,N,2)
-            'yaw':     F.normalize(self.head_yaw(slots), dim=-1),     # (B,N,2)
-            'sem':     self.head_sem(slots),                          # (B,N,dino_dim)
+            'present': self.head_present(s),                      # (B,N,1)
+            'xy':      torch.sigmoid(self.head_xy(s)),            # (B,N,2)
+            'yaw':     F.normalize(self.head_yaw(s), dim=-1),     # (B,N,2)
+            'sem':     self.head_sem(s),                          # (B,N,dino_dim)
         }
