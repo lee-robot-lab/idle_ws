@@ -132,7 +132,7 @@ def main():
     # ── 모델 ────────────────────────────────────────────────────
     ckpt = torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)
     encoder = SlotEncoder()
-    encoder.load_state_dict(ckpt["model"])
+    encoder.load_state_dict(ckpt["state_dict"])
     encoder.to(device).eval()
     encoder.requires_grad_(False)
 
