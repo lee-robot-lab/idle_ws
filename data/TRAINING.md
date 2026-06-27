@@ -219,6 +219,7 @@ python src/ml/stage1/train.py --no_freeze_backbone --epochs 500 --patience 0 --b
 | 날짜 | 실험자 | 커맨드 핵심 | val xy_mae | val yaw° | 비고 |
 |---|---|---|---|---|---|
 | 2026-06-27 | 수 | 200장, batch=4, patience=100, ep146 | 0.0363 | 3.00° | 증강 전 최고 |
+| 2026-06-27 | 수 | 502장, 4-way aug, batch=4, lam_xy=10, ep459 | **0.00782** | **0.92°** | Stage 1 통과 (7.9mm, cosine=0.974) |
 | | | | | | |
 
 ---
