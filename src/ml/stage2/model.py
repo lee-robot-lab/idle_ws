@@ -12,8 +12,10 @@ from scipy.optimize import linear_sum_assignment
 class ColorHead(nn.Module):
     """slot_features(B,N,d_model) → color_logit(B,N,4)."""
 
-    def __init__(self, feat_dim: int = 256, num_colors: int = 4):
+    def __init__(self, feat_dim: int = 256, num_colors: int = 4, dino_dim: int | None = None):
         super().__init__()
+        if dino_dim is not None:
+            feat_dim = dino_dim
         self.fc = nn.Linear(feat_dim, num_colors)
 
     def forward(self, slot_feat: torch.Tensor) -> torch.Tensor:

@@ -226,11 +226,11 @@ DINOv2(frozen teacher)의 dense semantic feature를 경량 ResNet student가 dis
 - **입력/출력**:
   - `object_tokens = [candidate_feature, class_probs, xy_mean, xy_uncertainty]`
   - `relation_token = relation_proj(relation) + anchor_type_proj + anchor_xy_proj(anchor_xy)`
-  - `final_score = learned_score + λ_geo · geometric_relation_score`
+  - **갱신(2026-06-27):** `final_score = learned_score + λ_geo · geometric_relation_score`는 폐기. Stage 4 inference와 학습 입력에는 handcrafted geometric score를 넣지 않는다. 기하 resolver는 라벨 생성과 offline baseline 리포트에만 사용한다.
 - **라벨 출처**: resolve_relation() 기하 함수가 GT target 결정(자동, impl-plan §1-3). anchor xy = reference 라벨.
 - **적용 범위**: object_query(pick 대상)와 **target_query(place 대상) 양쪽**에 동일 로직(§1.5). reference에 **robot 포함** — robot anchor_xy는 candidate 선택이 아니라 **로봇 베이스 좌표 상수** 주입.
 - **결정해야 할 항목**:
-  - **learned vs geometric 비중 λ_geo** — 권장 시작: geometric을 강하게(λ_geo 큼) 두고 learned가 보정. 데이터 적을 때 안정.
+  - **learned vs geometric 비중 λ_geo** — 폐기. Stage 4는 pure learned score만 사용한다.
   - impl-plan 2-pass anchor 구조(Pass1 anchor localize → Pass2 conditioning)와 candidate-token relation의 관계 정리: anchor도 candidate에서 선택(단 robot은 상수 주입).
   - 초기 relation 범위: left_of/right_of/nearest_to basket, nearest_to <block>, nearest_to/farthest_from robot.
 - **통과 기준**: relation selection accuracy, hard-negative accuracy, anchor noise robustness.
@@ -279,7 +279,7 @@ DINOv2(frozen teacher)의 dense semantic feature를 경량 ResNet student가 dis
 | Stage 1.5 assembly 알고리즘 깊이 | Stage 1.5 | voting+NMS로 시작, connected-component는 recall 미달 시 |
 | Stage 2 착수 여부 | Stage 2 | Stage 1.5 coarse xy MAE 측정 → <10mm면 미착수 |
 | crop 크기 96 vs 128 | Stage 2 | 착수 시 결정 |
-| λ_geo (learned vs geometric) | Stage 4 | geometric 우세로 시작, 데이터 증가 시 learned 비중↑ |
+| λ_geo (learned vs geometric) | Stage 4 | 폐기 — 기하는 라벨 생성/offline baseline 전용, inference는 learned score only |
 
 ---
 

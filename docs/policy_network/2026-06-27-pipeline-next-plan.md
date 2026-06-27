@@ -139,19 +139,21 @@ H = [[0.0009504612, -2.1327e-06, -0.5866006127],
 
 **목표**: `object_query.relations` → 해당 조건을 만족하는 슬롯 선택
 
+> 갱신(2026-06-27): 아래 구현 순서의 정렬/거리/필터 규칙은 **런타임 inference가 아니라 Stage 4 라벨 생성 및 offline baseline 전용**이다. 실제 Stage 4 런타임은 `SlotEncoder + ColorNet` 출력으로 만든 slot token과 relation query token의 learned cross-attention score만 사용한다. `learned_score + geometric_score` fusion은 사용하지 않는다.
+
 ### 구현 순서 (우선순위)
-1. `leftmost / rightmost` — image-x 기준 정렬 (x_norm 비교)
-2. `nearest_to / farthest_from` — **world meters 기준 거리** (anisotropic 때문에 normalized 거리 부정확)
-3. `left_of / right_of` — image-x 기준 필터 + nearest 보조
-4. `front_of / behind` — 좌표 프레임 확정 후 구현
+1. `leftmost / rightmost` — world x 기준 라벨 생성
+2. `nearest_to / farthest_from` — world meter 기준 라벨 생성
+3. `left_of / right_of` — world x 및 reference boundary 기준 라벨 생성
+4. `front_of / behind` — `front_of = world y 감소`, `behind = world y 증가`
 
 ### ⚠ 좌표 계산 주의사항
 
 | 관계 | 올바른 거리 공간 | 주의 |
 |---|---|---|
-| `leftmost/rightmost` | normalized x_norm | 이미지 x와 world x 방향 일치 (H[0][0]>0) |
+| `leftmost/rightmost` | world x | image/normalized 좌표가 아니라 라벨 생성은 world 기준 |
 | `nearest_to/farthest_from` | **world meters** | x=1030px, y=715px → 비등방. normalized 거리로 계산하면 오답 |
-| `left_of/right_of` | normalized x_norm | 방향 일치 확인됨 |
+| `left_of/right_of` | world x / reference boundary | basket reference는 중심점이 아니라 OBB boundary 사용 |
 | reference=`robot` | world meters | robot anchor = (0.0, 0.0) (world=cage 원점, z 무관) |
 
 ### Multi-relation
@@ -186,10 +188,10 @@ docs/policy_network/2026-06-27-pipeline-next-plan.md  # 이 문서
   - 입력 전처리: `crop img[5:, 90:1120] → resize (416, 288)` — Stage1Dataset과 동일해야 함
   - Homography H: `src/idle_vision/launch/usb_rgb_box_pose_rqt.launch.py` 참고
 - [ ] [D] Relation Grounding — **수 담당, 다음 세션 구현 예정**
-  - 구현 위치: `src/ml/stage2/grounding.py`
+  - 구현 위치: `src/ml/stage4/`
   - 스펙: 이 문서 §6
 
 ### 미결 사항
-- `front_of / behind` 기준 방향 (world +y가 어느 쪽인지 실기체 확인 필요)
+- `front_of / behind` 기준 방향: Stage 4 v1은 `front_of = world y 감소`, `behind = world y 증가`
 - robot anchor 좌표 실측 검증 (`reference=robot` 사용 시)
 - `direct_grounding` 버그: object+object_query 동시 설정 시 None 미반환 → [D] 연동 시 수정

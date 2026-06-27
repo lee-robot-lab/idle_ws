@@ -9,9 +9,9 @@ SCENE = {
 
 
 def test_left_of_basket_picks_among_left_blocks_nearest():
-    # basket x=0.40 왼쪽 블록: red/blue/green 모두. tie-break: basket 최근접
+    # basket은 중심점이 아니라 OBB anchor. blue는 basket OBB x-range 안쪽이라 제외.
     out = resolve_relation(SCENE, [{"relation": "left_of", "reference": "basket"}])
-    assert out == "blue_block"  # basket과 가장 가까운 왼쪽 블록
+    assert out == "green_block"
 
 
 def test_leftmost_no_reference():

@@ -27,6 +27,9 @@ def direct_grounding(
     object=None 또는 object_query 있음 → None (relation grounding으로 위임).
     해당 색 슬롯이 없으면 None.
     """
+    if step.get("object_query") is not None:
+        return None
+
     obj = step.get("object")
     if obj is None or obj not in _COLOR_IDX:
         return None

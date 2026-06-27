@@ -1,4 +1,4 @@
-# 학습 지침 (Stage 1 + Stage 2)
+# 학습 지침 (Stage 1 + Stage 2 + Stage 4)
 
 ## 1. 환경 준비
 
@@ -226,9 +226,10 @@ python src/ml/stage1/train.py --no_freeze_backbone --epochs 500 --patience 0 --b
 
 ---
 
-## Stage 2 — Color Head 학습
+## Stage 2 — Color Head 학습 (legacy / 비교용)
 
-Stage 1 완료 후 진행. SlotEncoder를 완전히 frozen하고 색상 분류 head만 학습.
+Stage 1 완료 후 진행했던 초기 경로. 현재 완료된 Stage 2 런타임은 아래 **Stage 2-B ColorNet**이다.
+ColorHead는 val acc가 약 0.88에서 수렴해 비교/회귀 확인용으로만 남긴다.
 
 ### 선행 조건
 
@@ -242,7 +243,7 @@ cd /home/su/idle_ws/src/ml
 python -m stage2.train \
     --scenes_dir     ../../data/scenes \
     --split_json     ../../data/split.json \
-    --dino_cache_dir ../../data/dino_cache \
+    --dino_cache_dir ../../data/dino_cache/dinov2_vits14_reg \
     --stage1_ckpt    ../../checkpoints/stage1/best.pt \
     --out_dir        ../../checkpoints/stage2 \
     --epochs         100 \
@@ -281,7 +282,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # 모델 로드
 encoder = SlotEncoder().to(device).eval()
-encoder.load_state_dict(torch.load("checkpoints/stage1/best.pt")["model"])
+encoder.load_state_dict(torch.load("checkpoints/stage1/best.pt")["state_dict"])
 
 color_head = ColorHead().to(device).eval()
 color_head.load_state_dict(torch.load("checkpoints/stage2/best.pt")["color_head"])
@@ -289,10 +290,10 @@ color_head.load_state_dict(torch.load("checkpoints/stage2/best.pt")["color_head"
 # 추론
 with torch.no_grad():
     out = encoder(img.unsqueeze(0).to(device))    # img: (3,H,W)
-    sem = out["sem"][0]                            # (N, 384)
+    slots = out["slots"][0]                        # (N, 256)
     present_mask = torch.sigmoid(out["present"][0].squeeze(-1)) > 0.5
 
-logit = color_head(sem.unsqueeze(0))[0]           # (N, 4)
+logit = color_head(slots.unsqueeze(0))[0]         # (N, 4)
 slot_to_color = color_head.assign(logit, present_mask)
 
 # JSON 명령 → xy/yaw
@@ -304,7 +305,7 @@ xy, yaw = direct_grounding(step, out["xy"][0], out["yaw"][0], slot_to_color)
 
 ## Stage 2-B — ColorNet (이미지 직접 참조 색상 분류)
 
-Stage 2 ColorHead가 ~87%에서 수렴 한계를 보일 경우 사용. 이미지 크롭을 직접 참조해 색을 분류한다.
+현재 완료된 Stage 2 경로. 이미지 크롭을 직접 참조해 색을 분류한다.
 
 ### 선행 조건
 
@@ -337,6 +338,7 @@ python3 -m stage2.train_color_net \
 
 체크포인트: `checkpoints/color_net/best.pt`
 - 포함 내용: `{"epoch", "val_acc", "color_net": state_dict, "stage1_ckpt": path}`
+- 현재 결과: `val_acc=1.0` (checkpoint 기준)
 
 ### ColorNet 통과 기준
 
@@ -376,6 +378,168 @@ xy_t, yaw_t = direct_grounding(step, out["xy"][0], out["yaw"][0], slot_to_color)
 
 ---
 
+## Stage 4 — Pure Learned Relation Grounding
+
+Stage 4는 `object_query` / `target_query`가 있는 명령만 처리한다.  
+`object` / `target` 직접 지정은 Stage 2/3 direct grounding 경로가 처리한다.
+
+### 핵심 정책
+
+- 한 번에 object와 target을 동시에 예측하지 않는다.
+- `DETECT_PICK`: `object_query` 또는 `object`만 본다.
+- `TARGET_PRECOMPUTE` / `DETECT_PLACE`: `target_query` 또는 `target`만 본다.
+- relation field가 direct field보다 우선한다.
+  - `object + object_query` 동시 존재 → `object_query`
+  - `target + target_query` 동시 존재 → `target_query`
+- Stage 4 inference와 학습 입력에는 handcrafted geometric score를 넣지 않는다.
+- 기하 relation resolver는 라벨 생성과 offline baseline 리포트에만 사용한다.
+
+### Relation 기준
+
+| relation | 라벨 생성 기준 |
+|---|---|
+| `left_of` | candidate world x < reference boundary min x |
+| `right_of` | candidate world x > reference boundary max x |
+| `front_of` | candidate world y < reference boundary min y |
+| `behind` | candidate world y > reference boundary max y |
+| `nearest_to` | block/robot은 point distance, basket은 point-to-OBB distance |
+| `farthest_from` | 위 거리의 최대 |
+| `leftmost` | reference=null, world x 최소 |
+| `rightmost` | reference=null, world x 최대 |
+
+Robot reference 예외:
+
+- `front_of(robot)`만 방향 관계로 사용한다.
+- `front_of(robot)`은 world y 증가 방향이다.
+- `behind(robot)`, `left_of(robot)`, `right_of(robot)`은 생성하지 않는다.
+- 워크스페이스상 로봇 뒤쪽은 학습 relation 범위에서 제외한다.
+
+`left_of/right_of/front_of/behind`는 각 방향축 기준 **30도 cone 안쪽**에 들어오는 샘플만 사용한다.
+애매한 대각선 관계는 데모 명령에서도 쓰지 않으므로 학습 데이터에서 제외한다.
+방향 relation tie-break는 angle-aware 정책을 쓴다:
+
+- 1등과 2등의 angle 차이가 10도 이상이면 angle이 작은 후보 선택
+- angle 차이가 5도 이내이면 같은 줄로 보고 더 가까운 후보 선택
+- angle 차이가 5~10도 사이이면 애매하므로 샘플 제외
+- 같은 줄에서도 거리 차이가 0.02m 미만이면 샘플 제외
+
+Basket reference는 중심점이 아니라 oriented rectangle anchor로 다룬다.
+
+```python
+BASKET_OBB_SIZE_M = (0.234, 0.156)  # long, short
+```
+
+위 값은 현재 502 scene의 basket contour를 homography로 world에 투영한 median 값이다.
+
+### 모델 입력 계약
+
+Stage 1 `SlotEncoder` 출력:
+
+| field | shape | 설명 |
+|---|---|---|
+| `present` | `(B,N,1)` | raw logits |
+| `xy` | `(B,N,2)` | crop-normalized `[0,1]` |
+| `yaw` | `(B,N,2)` | `(cos4θ, sin4θ)` |
+| `slots` | `(B,N,256)` | decoder slot feature |
+
+Stage 2 `ColorNet` 출력:
+
+| field | shape | 설명 |
+|---|---|---|
+| `color_logit` | `(B,N,4)` | red/green/blue/basket |
+| `slot_to_color` | `(N,)` | `-1` absent, `0..3` color id |
+
+Stage 4 token 구성:
+
+```text
+slot_token =
+    slot feature projection
+  + color probability projection
+  + world_xy positional encoding
+  + yaw projection
+
+query_token =
+    relation embedding
+  + query_kind embedding (OBJECT_QUERY | TARGET_QUERY)
+  + phase embedding (DETECT_PICK | TARGET_PRECOMPUTE | DETECT_PLACE)
+  + anchor feature projection
+```
+
+금지:
+
+- `geometric_score`
+- `learned_score + lambda * geometric_score`
+- relation별 hard-coded inference sorting/filtering
+
+### 학습 / smoke
+
+학습 전에 relation 라벨 파일을 먼저 생성하고 검수한다.
+
+```bash
+cd /home/su/idle_ws/src/ml
+python3 -m stage4.build_labels \
+    --scenes_dir ../../data/scenes \
+    --split_json ../../data/split.json \
+    --out ../../data/stage4_relations.json \
+    --preview 16
+```
+
+현재 생성 결과:
+
+| split | samples |
+|---|---:|
+| train | 11714 |
+| val | 2540 |
+| test | 2532 |
+
+검수용 이미지 생성:
+
+```bash
+cd /home/su/idle_ws/src/ml
+python3 -m stage4.visualize_labels \
+    --scenes_dir ../../data/scenes \
+    --labels_json ../../data/stage4_relations.json \
+    --split train \
+    --out_dir ../../viz/stage4_labels \
+    --limit 40 \
+    --clean
+```
+
+검수 위치: `viz/stage4_labels/`
+
+학습 실행:
+
+```bash
+cd /home/su/idle_ws/src/ml
+python3 -m stage4.train \
+    --scenes_dir      ../../data/scenes \
+    --split_json      ../../data/split.json \
+    --stage1_ckpt     ../../checkpoints/stage1/best.pt \
+    --color_net_ckpt  ../../checkpoints/color_net/best.pt \
+    --out_dir         ../../checkpoints/stage4 \
+    --epochs          100 \
+    --batch_size      8
+```
+
+### 팀원 노트북 인수인계 파일
+
+```
+data/scenes/
+data/split.json
+data/dino_cache/dinov2_vits14_reg/
+checkpoints/stage1/best.pt
+checkpoints/color_net/best.pt
+src/ml/stage1/
+src/ml/stage2/
+src/ml/stage4/
+src/ml/geometry/
+src/ml/labeling/
+src/ml/requirements.txt
+data/TRAINING.md
+```
+
+---
+
 ## 9. 파일 구조
 
 ```
@@ -397,5 +561,10 @@ src/ml/
     model.py                  # ColorHead (Linear(384,4) + Hungarian assign)
     train.py                  # 학습 루프 (SlotEncoder freeze + CE loss)
     grounding.py              # direct_grounding (JSON step → xy/yaw)
+  stage4/
+    model.py                  # RelationScorer (pure learned cross-attention)
+    grounding.py              # phase/query routing + learned relation grounding
+    dataset.py                # relation sample generation scaffold
+    train.py                  # Stage 4 training/checkpoint scaffold
   tests/                      # 단위 테스트 (pytest)
 ```
