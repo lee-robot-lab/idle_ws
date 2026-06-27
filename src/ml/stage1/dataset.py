@@ -106,8 +106,6 @@ class Stage1Dataset(Dataset):
         t = TF.adjust_contrast(t,   1 + random.uniform(-0.3, 0.3))
         t = TF.adjust_saturation(t, 1 + random.uniform(-0.3, 0.3))
         t = TF.adjust_hue(t, random.uniform(-0.05, 0.05))
-        if random.random() < 0.1:
-            t = TF.rgb_to_grayscale(t, num_output_channels=3)
         if random.random() < 0.3:
             sigma = random.uniform(0.5, 1.5)
             t = TF.gaussian_blur(t, kernel_size=5, sigma=sigma)

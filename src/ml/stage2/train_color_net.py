@@ -89,10 +89,9 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── 데이터 ──────────────────────────────────────────────────
-    # augment=False — photometric augmentation이 색 정보를 파괴함
     train_ds = Stage1Dataset(
         args.scenes_dir, args.split_json, "train",
-        args.dino_cache_dir, augment=False)
+        args.dino_cache_dir, augment=True)
     val_ds   = Stage1Dataset(
         args.scenes_dir, args.split_json, "val",
         args.dino_cache_dir, augment=False)

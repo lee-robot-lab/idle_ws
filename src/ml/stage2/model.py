@@ -1,6 +1,7 @@
 # ================================================================
 # stage2/model.py
-# 설명: ColorHead — SlotEncoder sem_feat → 4-class 색상 분류 + Hungarian 슬롯 배정.
+# 설명: ColorHead — slot_features(d_model=256) → 4-class 색상 분류 + Hungarian 슬롯 배정.
+#       head_sem(DINO distill)을 우회해 색 정보 손실 없는 slot_features 직접 사용.
 # 사용법: from stage2.model import ColorHead
 # ================================================================
 import torch
@@ -9,15 +10,15 @@ from scipy.optimize import linear_sum_assignment
 
 
 class ColorHead(nn.Module):
-    """SlotEncoder sem_feat(B,N,D) → color_logit(B,N,4)."""
+    """slot_features(B,N,d_model) → color_logit(B,N,4)."""
 
-    def __init__(self, dino_dim: int = 384, num_colors: int = 4):
+    def __init__(self, feat_dim: int = 256, num_colors: int = 4):
         super().__init__()
-        self.fc = nn.Linear(dino_dim, num_colors)
+        self.fc = nn.Linear(feat_dim, num_colors)
 
-    def forward(self, sem_feat: torch.Tensor) -> torch.Tensor:
-        """sem_feat: (B, N, D) → (B, N, num_colors)"""
-        return self.fc(sem_feat)
+    def forward(self, slot_feat: torch.Tensor) -> torch.Tensor:
+        """slot_feat: (B, N, d_model) → (B, N, num_colors)"""
+        return self.fc(slot_feat)
 
     @torch.no_grad()
     def assign(

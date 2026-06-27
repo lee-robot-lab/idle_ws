@@ -85,4 +85,5 @@ class SlotEncoder(nn.Module):
             'xy':      torch.sigmoid(self.head_xy(s)),            # (B,N,2)
             'yaw':     F.normalize(self.head_yaw(s), dim=-1),     # (B,N,2)
             'sem':     self.head_sem(s),                          # (B,N,dino_dim)
+            'slots':   slots,                                     # (B,N,d_model) head_sem 이전
         }

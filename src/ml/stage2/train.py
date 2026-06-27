@@ -88,8 +88,8 @@ def evaluate(encoder, color_head, loader, device, present_thr):
         gt_xy  = gt_xy.to(device)
 
         out     = encoder(img)
-        sem     = out["sem"].detach()       # (B, N, 384)
-        logit   = color_head(sem)           # (B, N, 4)
+        slots   = out["slots"].detach()     # (B, N, 256)
+        logit   = color_head(slots)         # (B, N, 4)
         present = out["present"]            # (B, N, 1)
 
         B = img.shape[0]
@@ -123,9 +123,10 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── 데이터 ──────────────────────────────────────────────────
+    # Stage 2: photometric augmentation이 enc_sem의 색 정보를 파괴하므로 비활성
     train_ds = Stage1Dataset(
         args.scenes_dir, args.split_json, "train",
-        args.dino_cache_dir, augment=True)
+        args.dino_cache_dir, augment=False)
     val_ds   = Stage1Dataset(
         args.scenes_dir, args.split_json, "val",
         args.dino_cache_dir, augment=False)
@@ -140,12 +141,12 @@ def main():
     encoder = SlotEncoder()
     encoder.load_state_dict(ckpt["state_dict"])
     encoder.to(device).eval()
-    encoder.requires_grad_(False)
+    encoder.requires_grad_(False)      # 전체 frozen — slot_features는 head_sem 이전
 
-    color_head = ColorHead().to(device)
+    color_head = ColorHead().to(device)   # feat_dim=256 (d_model)
     optimizer  = torch.optim.AdamW(color_head.parameters(),
                                    lr=args.lr, weight_decay=args.weight_decay)
-    ce_loss    = nn.CrossEntropyLoss()
+    ce_loss    = nn.CrossEntropyLoss(ignore_index=-1)
 
     # linear warmup → cosine annealing
     warmup_ep = max(1, int(args.epochs * args.warmup_frac))
@@ -169,16 +170,28 @@ def main():
         total_loss = 0.0
         n_batches  = 0
 
-        for _img, _gt_xy, _gt_yaw, gt_sem, _ in train_loader:
-            # gt_sem: (B, 4, 384) — DINO cache, augmentation 없음
-            # label[i] = i (red=0, green=1, blue=2, basket=3) 항상 고정
-            gt_sem = gt_sem.to(device)
-            B      = gt_sem.shape[0]
-            labels = torch.arange(4, device=device).unsqueeze(0).expand(B, -1)  # (B, 4)
+        for img, gt_xy, gt_yaw, gt_sem, _ in train_loader:
+            img    = img.to(device)
+            gt_xy  = gt_xy.to(device)
+            gt_sem = gt_sem.to(device)   # (B, 4, 384)
+
+            with torch.no_grad():
+                out     = encoder(img)
+                slots   = out["slots"]    # (B, N, 256) — head_sem 이전, 색 정보 온전
+                present = out["present"]  # (B, N, 1)
+                xy      = out["xy"]       # (B, N, 2)
+
+                B = img.shape[0]
+                all_labels = []
+                for b in range(B):
+                    labels = hungarian_color_labels(
+                        xy[b], gt_xy[b], present[b], args.present_thr)
+                    all_labels.append(labels)
+                all_labels = torch.stack(all_labels)  # (B, N)
 
             with torch.amp.autocast("cuda", enabled=use_amp):
-                logit = color_head(gt_sem)          # (B, 4, 4)
-                loss  = ce_loss(logit.reshape(-1, 4), labels.reshape(-1))
+                logit = color_head(slots)                            # (B, N, 4)
+                loss  = ce_loss(logit.reshape(-1, 4), all_labels.reshape(-1))
 
             optimizer.zero_grad(set_to_none=True)
             if scaler:
