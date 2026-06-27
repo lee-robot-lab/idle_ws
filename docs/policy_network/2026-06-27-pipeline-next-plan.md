@@ -174,14 +174,22 @@ docs/policy_network/2026-06-26-stage1-slot-design.md  # Stage 1 설계 상세
 docs/policy_network/2026-06-27-pipeline-next-plan.md  # 이 문서
 ```
 
-### 다음 단계 착수 조건
-- [ ] 팀 내 best checkpoint 확정 (val xy < 10mm 달성 확인)
-- [ ] checkpoint가 확정되면 [A] 색 head 추가 학습 시작
-- [ ] [A] 검증 후 [B] grounding 구현
-- [ ] [C] FSM 연결 테스트 (실기체 전 MuJoCo 시뮬에서 먼저)
-- [ ] [D] relation grounding 구현 (leftmost/rightmost → nearest/farthest 순)
+### 진행 현황 (2026-06-27 기준)
+
+- [x] Stage 1: SlotEncoder — `checkpoints/stage1/best.pt` (ep459, val xy 7.9mm, yaw 0.92°)
+- [x] [A] 색 분류: ColorNet — `checkpoints/color_net/best.pt` (test 100%, +0.63ms)
+  - `src/ml/stage2/color_net.py`, `src/ml/stage2/train_color_net.py`
+  - ColorHead(slot features ~87%) 대신 image crop CNN 방식 채택
+- [x] [B] Direct Grounding — `src/ml/stage2/grounding.py`
+- [ ] [C] FSM 연결 — **팀원 담당**
+  - ML 추론 ROS2 노드: 카메라 subscribe → encoder+ColorNet → homography → PickPlaceCommand
+  - 입력 전처리: `crop img[5:, 90:1120] → resize (416, 288)` — Stage1Dataset과 동일해야 함
+  - Homography H: `src/idle_vision/launch/usb_rgb_box_pose_rqt.launch.py` 참고
+- [ ] [D] Relation Grounding — **수 담당, 다음 세션 구현 예정**
+  - 구현 위치: `src/ml/stage2/grounding.py`
+  - 스펙: 이 문서 §6
 
 ### 미결 사항
-- `front_of / behind` 기준 방향 (world +y가 어느 쪽인지 시각 확인 필요)
-- color head 학습 방법 (fine-tune vs 재학습) — best.pt 확정 후 결정
-- robot anchor 좌표 실측 검증
+- `front_of / behind` 기준 방향 (world +y가 어느 쪽인지 실기체 확인 필요)
+- robot anchor 좌표 실측 검증 (`reference=robot` 사용 시)
+- `direct_grounding` 버그: object+object_query 동시 설정 시 None 미반환 → [D] 연동 시 수정
