@@ -6,13 +6,12 @@
 #   python -m stage2.train --epochs 50    # 일부 인자만 덮어쓰기
 # ================================================================
 import argparse
-import json
+import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import numpy as np
 import torch
 import torch.nn as nn
 from scipy.optimize import linear_sum_assignment
@@ -35,11 +34,15 @@ def get_args():
     p.add_argument("--dino_cache_dir", default=str(_ROOT / "data/dino_cache/dinov2_vits14_reg"))
     p.add_argument("--stage1_ckpt",    default=str(_ROOT / "checkpoints/stage1/best.pt"))
     p.add_argument("--out_dir",        default=str(_ROOT / "checkpoints/stage2"))
-    p.add_argument("--epochs",        type=int, default=100)
-    p.add_argument("--lr",            type=float, default=1e-3)
-    p.add_argument("--batch_size",    type=int, default=8)
-    p.add_argument("--present_thr",   type=float, default=0.5,
-                   help="present 슬롯 threshold (sigmoid 적용 후)")
+    p.add_argument("--epochs",       type=int,   default=100)
+    p.add_argument("--lr",           type=float, default=1e-3)
+    p.add_argument("--weight_decay", type=float, default=1e-4)
+    p.add_argument("--warmup_frac",  type=float, default=0.05)
+    p.add_argument("--patience",     type=int,   default=20,
+                   help="val acc 미개선 epoch 수. 0이면 비활성")
+    p.add_argument("--batch_size",   type=int,   default=8)
+    p.add_argument("--workers",      type=int,   default=2)
+    p.add_argument("--present_thr",  type=float, default=0.5)
     return p.parse_args()
 
 
@@ -126,8 +129,11 @@ def main():
     val_ds   = Stage1Dataset(
         args.scenes_dir, args.split_json, "val",
         args.dino_cache_dir, augment=False)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=2)
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=2)
+    pin = (device == "cuda")
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                              num_workers=args.workers, pin_memory=pin)
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
+                              num_workers=args.workers)
 
     # ── 모델 ────────────────────────────────────────────────────
     ckpt = torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)
@@ -137,10 +143,27 @@ def main():
     encoder.requires_grad_(False)
 
     color_head = ColorHead().to(device)
-    optimizer  = torch.optim.Adam(color_head.parameters(), lr=args.lr)
+    optimizer  = torch.optim.AdamW(color_head.parameters(),
+                                   lr=args.lr, weight_decay=args.weight_decay)
     ce_loss    = nn.CrossEntropyLoss(ignore_index=-1)
 
-    best_acc = 0.0
+    # linear warmup → cosine annealing
+    warmup_ep = max(1, int(args.epochs * args.warmup_frac))
+    def lr_lambda(ep):
+        if ep < warmup_ep:
+            return (ep + 1) / warmup_ep
+        progress = (ep - warmup_ep) / max(1, args.epochs - warmup_ep)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # AMP
+    use_amp = (device == "cuda")
+    scaler  = torch.amp.GradScaler("cuda") if use_amp else None
+    print(f"device={device}  AMP={use_amp}  warmup={warmup_ep}ep")
+
+    best_acc     = 0.0
+    patience_cnt = 0
+
     for epoch in range(1, args.epochs + 1):
         color_head.train()
         total_loss = 0.0
@@ -156,43 +179,63 @@ def main():
                 present = out["present"]   # (B, N, 1)
                 xy      = out["xy"]        # (B, N, 2)
 
-            logit = color_head(sem.detach())   # (B, N, 4)
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                logit = color_head(sem.detach())   # (B, N, 4)
 
-            # Hungarian으로 GT 색상 레이블 생성
-            B = img.shape[0]
-            all_logit  = []
-            all_labels = []
-            for b in range(B):
-                labels = hungarian_color_labels(
-                    xy[b].detach(), gt_xy[b], present[b].detach(), args.present_thr)
-                all_logit.append(logit[b])    # (N, 4)
-                all_labels.append(labels)     # (N,)
+                B = img.shape[0]
+                all_logit  = []
+                all_labels = []
+                for b in range(B):
+                    labels = hungarian_color_labels(
+                        xy[b].detach(), gt_xy[b], present[b].detach(), args.present_thr)
+                    all_logit.append(logit[b])
+                    all_labels.append(labels)
 
-            all_logit  = torch.cat(all_logit,  dim=0)   # (B*N, 4)
-            all_labels = torch.cat(all_labels, dim=0)   # (B*N,)
+                all_logit  = torch.cat(all_logit,  dim=0)
+                all_labels = torch.cat(all_labels, dim=0)
+                loss = ce_loss(all_logit, all_labels)
 
-            loss = ce_loss(all_logit, all_labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            if scaler:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(color_head.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                nn.utils.clip_grad_norm_(color_head.parameters(), 1.0)
+                optimizer.step()
 
             total_loss += loss.item()
             n_batches  += 1
 
+        scheduler.step()
+
         val_acc, per_cls = evaluate(encoder, color_head, val_loader, device, args.present_thr)
         avg_loss = total_loss / max(n_batches, 1)
-        print(f"ep {epoch:03d}  loss={avg_loss:.4f}  val_acc={val_acc:.4f}  {per_cls}")
+        cur_lr   = scheduler.get_last_lr()[0]
+        print(f"ep {epoch:03d}  loss={avg_loss:.4f}  val_acc={val_acc:.4f}  "
+              f"lr={cur_lr:.2e}  {per_cls}")
 
         if val_acc > best_acc:
-            best_acc = val_acc
+            best_acc     = val_acc
+            patience_cnt = 0
             torch.save({
                 "epoch":       epoch,
                 "val_acc":     val_acc,
                 "color_head":  color_head.state_dict(),
-                "stage1_ckpt": args.stage1_ckpt,   # 어느 encoder와 쌍인지 기록
+                "stage1_ckpt": args.stage1_ckpt,
             }, out_dir / "best.pt")
             print(f"  → saved best (acc={best_acc:.4f})")
+        else:
+            patience_cnt += 1
+            if args.patience > 0 and patience_cnt >= args.patience:
+                print(f"Early stop at epoch {epoch} (patience={args.patience})")
+                break
 
+    torch.save({"epoch": epoch, "color_head": color_head.state_dict()},
+               out_dir / "last.pt")
     print(f"\n학습 완료. best val_acc={best_acc:.4f}")
 
 
