@@ -302,6 +302,80 @@ xy, yaw = direct_grounding(step, out["xy"][0], out["yaw"][0], slot_to_color)
 
 ---
 
+## Stage 2-B — ColorNet (이미지 직접 참조 색상 분류)
+
+Stage 2 ColorHead가 ~87%에서 수렴 한계를 보일 경우 사용. 이미지 크롭을 직접 참조해 색을 분류한다.
+
+### 선행 조건
+
+- `checkpoints/stage1/best.pt` 존재
+
+### 학습 실행
+
+```bash
+cd /home/su/idle_ws/src/ml
+python3 -m stage2.train_color_net \
+    --scenes_dir     ../../data/scenes \
+    --split_json     ../../data/split.json \
+    --dino_cache_dir ../../data/dino_cache/dinov2_vits14_reg \
+    --stage1_ckpt    ../../checkpoints/stage1/best.pt \
+    --out_dir        ../../checkpoints/color_net \
+    --epochs         100 \
+    --lr             1e-3 \
+    --batch_size     8
+```
+
+주요 인자:
+
+| 인자 | 기본값 | 설명 |
+|---|---|---|
+| `--epochs` | 100 | CNN은 보통 20~40 epoch 내 수렴 |
+| `--lr` | 1e-3 | AdamW lr |
+| `--batch_size` | 8 | GPU 메모리에 맞게 조정 |
+| `--patience` | 20 | early stopping |
+| `--present_thr` | 0.5 | present 슬롯 판단 threshold |
+
+체크포인트: `checkpoints/color_net/best.pt`
+- 포함 내용: `{"epoch", "val_acc", "color_net": state_dict, "stage1_ckpt": path}`
+
+### ColorNet 통과 기준
+
+| 항목 | 목표 |
+|---|---|
+| val color accuracy | ≥ 98% |
+| per-class (red, blue) | ≥ 95% |
+| green, basket | ≥ 99% |
+
+### 추론 시 사용법 (코드 예시)
+
+```python
+from stage1.model import SlotEncoder
+from stage2.color_net import ColorNet
+from stage2.grounding import direct_grounding
+import torch
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+encoder = SlotEncoder().to(device).eval()
+encoder.load_state_dict(torch.load("checkpoints/stage1/best.pt")["state_dict"])
+
+color_net = ColorNet().to(device).eval()
+color_net.load_state_dict(torch.load("checkpoints/color_net/best.pt")["color_net"])
+
+with torch.no_grad():
+    out = encoder(img.unsqueeze(0).to(device))
+    xy  = out["xy"]      # (1, N, 2)
+    present_mask = torch.sigmoid(out["present"][0].squeeze(-1)) > 0.5
+
+logit = color_net(img.unsqueeze(0).to(device), xy)[0]   # (N, 4)
+slot_to_color = color_net.assign(logit, present_mask)
+
+step = {"object": "red_block", "object_query": None}
+xy_t, yaw_t = direct_grounding(step, out["xy"][0], out["yaw"][0], slot_to_color)
+```
+
+---
+
 ## 9. 파일 구조
 
 ```
