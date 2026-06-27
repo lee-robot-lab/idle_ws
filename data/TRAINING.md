@@ -24,13 +24,22 @@ idle_ws/
     split.json           # train/val/test scene ID 목록
 ```
 
-**split.json 구조:**
-```json
-{
-  "train": ["scene_000001", "scene_000003", ...],
-  "val":   ["scene_000002", ...],
-  "test":  ["scene_000010", ...]
-}
+**현재 데이터셋 (2026-06-27 기준):** 총 502 scene  
+→ train 351 / val 75 / test 76 (7:1.5:1.5, seed=0)
+
+**split.json 생성:**
+```bash
+python3 - <<'EOF'
+import json, sys
+sys.path.insert(0, 'src/ml')
+from dataset.split import scene_level_split
+from pathlib import Path
+
+all_ids  = sorted(p.stem for p in Path('data/scenes').glob('*.jpg'))
+new_split = scene_level_split(all_ids, ratios=(0.7, 0.15, 0.15), seed=0)
+Path('data/split.json').write_text(json.dumps(new_split, indent=2))
+print(f"train={len(new_split['train'])}, val={len(new_split['val'])}, test={len(new_split['test'])}")
+EOF
 ```
 
 ---
@@ -54,12 +63,12 @@ std  = [0.229, 0.224, 0.225]
 ```
 
 **좌표 변환 (모델 출력 → world):**
-모델이 입력크기 픽셀 (u, v)를 출력하면:
+모델이 normalized [0,1] 좌표를 출력하면:
 ```python
-from geometry.homography import resized_to_orig, apply_homography
-uv_orig = resized_to_orig([[u, v]], orig_size=(1030, 715), input_size=(416, 288))
-uv_full = uv_orig + np.array([90, 5])   # crop offset 복원
-world_xy = apply_homography(H, uv_full)
+from geometry.homography import apply_homography
+u_full = x_norm * 1030 + 90     # crop 역변환 + offset
+v_full = y_norm * 715  + 5
+world_xy = apply_homography(H, [[u_full, v_full]])
 ```
 
 ---
@@ -79,22 +88,15 @@ python src/ml/stage1/cache_dino.py \
 - 입력: crop → 448×308 이미지 (14 배수), 출력: `.pt` 파일 (기본: all splits)
 - 각 object의 `contour_px`로 해당 영역 패치 평균 → `sem_target`
 
-**캐시 경로 구조:**  
-`--dino_model` 이름으로 하위 디렉토리가 자동 생성된다.
+**캐시 경로 구조:**
 ```
 data/dino_cache/
-  dinov2_vits14_reg/   ← vits14_reg 캐싱 시
-    scene_000001.pt
-    ...
-  dinov2_vitb14/       ← vitb14로 바꿔 캐싱 시
+  dinov2_vits14_reg/
     scene_000001.pt
     ...
 ```
 
-**다른 모델로 바꿀 때:** `--dino_model`을 변경하고 캐싱을 다시 실행한다.  
-`train.py`의 `--dino_model`과 `--dino_dim`도 동일하게 맞춰야 한다.
-
-| DINO 모델 | dim | 캐싱 커맨드 추가 인자 | train 추가 인자 |
+| DINO 모델 | dim | 캐싱 추가 인자 | train 추가 인자 |
 |---|---|---|---|
 | `dinov2_vits14_reg` | 384 | (기본값) | (기본값) |
 | `dinov2_vitb14` | 768 | `--dino_model dinov2_vitb14` | `--dino_model dinov2_vitb14 --dino_dim 768` |
@@ -103,7 +105,7 @@ data/dino_cache/
 
 ## 5. 학습 실행
 
-**권장 커맨드 (검증된 설정):**
+**권장 커맨드 (검증된 기본값):**
 
 ```bash
 python src/ml/stage1/train.py \
@@ -117,40 +119,48 @@ python src/ml/stage1/train.py \
     --device      cuda
 ```
 
-> `--lam_xy 10.0`으로 올리면 xy 정확도 강조 (val xy_mae 개선에 유리).
-
-주요 config (CLI로 조정):
+주요 config:
 
 | 인자 | 기본값 | 설명 |
 |---|---|---|
 | `--dino_model` | `dinov2_vits14_reg` | 캐싱에 쓴 모델명과 반드시 일치 |
-| `--dino_dim` | 384 | `dino_model`의 feature 차원 (vits=384, vitb=768) |
+| `--dino_dim` | 384 | feature 차원 (vits=384, vitb=768) |
 | `--batch` | 8 | GPU 메모리에 맞게 조정 |
 | `--lr` | 1e-4 | learning rate (backbone/head 동일) |
 | `--warmup_frac` | 0.05 | 전체 epoch 중 linear warmup 비율 |
 | `--lam_xy` | 5.0 | xy 손실 가중치 |
-| `--patience` | 20 | early stopping patience (0이면 비활성) |
-| `--freeze_backbone` | True | backbone frozen 여부; `--no_freeze_backbone`으로 해제 |
+| `--lam_yaw` | 2.0 | yaw 손실 가중치 |
+| `--lam_feat` | 1.0 | DINO distill 가중치 |
+| `--patience` | 20 | early stopping (0이면 비활성) |
+| `--freeze_backbone` | True | `--no_freeze_backbone`으로 해제 |
 | `--device` | cuda | cuda / cpu |
 
-**정규화 / Backbone:**
-- ResNet18 backbone: BN 내장, **기본 frozen** — `--no_freeze_backbone`으로 full fine-tune 활성화
-- 데이터 200장에서 `--no_freeze_backbone`이 val xy 개선에 핵심 (frozen: ~0.11, unfrozen: ~0.04)
-- Transformer decoder: dropout=0.1; Head dropout=0.1 (4개 head 공유)
+**Backbone / 정규화:**
+- ResNet18 backbone: BN 내장, **기본 frozen** — `--no_freeze_backbone`으로 full fine-tune
+- Transformer decoder: dropout=0.1; Head dropout=0.1
 - LR 스케줄: linear warmup → cosine annealing (epochs에 자동 동기화)
 - AMP: CUDA 환경에서 자동 활성화 (FP16 혼합 정밀도)
+
+**데이터 증강 (train split 자동 적용):**
+- 4-way geometric flip: 원본 / 좌우 / 상하 / 180° 회전 (25% 균등 무작위)
+  - 좌우 flip: `x_norm → 1-x_norm`, `sin_yaw → -sin_yaw`
+  - 상하 flip: `y_norm → 1-y_norm`, `sin_yaw → -sin_yaw`
+  - 180° (양축): `x,y → 1-x,1-y`, `sin_yaw` 불변
+- photometric: brightness/contrast/saturation/hue jitter + 가끔 blur/grayscale
 
 ---
 
 ## 6. 학습 모니터링
 
 ```bash
-# val 지표 확인 (학습 중 매 epoch 출력)
-# object recall / xy MAE / yaw error / distill cosine
-
 # smoke test (CPU, batch=1, shape 정합 확인)
 python src/ml/stage1/train.py --device cpu --batch 1 --epochs 1
+
+# val 지표 확인 (학습 중 매 epoch 출력)
+# [epoch/total] cls=... xy=... yaw=... feat=... | val xy=... yaw=...° cos=...
 ```
+
+체크포인트: `checkpoints/stage1/best.pt` (val xy_mae 최저), `last.pt` (최종)
 
 ---
 
@@ -160,17 +170,60 @@ python src/ml/stage1/train.py --device cpu --batch 1 --epochs 1
 |---|---|
 | object recall (4종) | ≥ 99% |
 | slot 중복도 | ≈ 0 |
-| count 정확도 | 실제 개수 = present slot 수 |
 | xy MAE | < 10mm |
 | yaw 오차 | < 10° |
 | distill cosine | 상승 후 plateau |
-| vs HSV baseline | slot ≥ baseline |
 
 미달 시 `docs/policy_network/2026-06-26-stage1-slot-design.md` §6 fallback ladder 참고.
 
 ---
 
-## 8. 파일 구조
+## 8. 학습 노하우 (팀 공유)
+
+각자 실험한 결과를 아래에 추가해주세요.
+
+### 8-1. 확인된 사실
+
+| 실험 | 결과 | 비고 |
+|---|---|---|
+| backbone frozen | val xy ≈ 0.11 | 학습 빠르지만 성능 한계 |
+| backbone unfrozen (`--no_freeze_backbone`) | val xy ≈ 0.04 | **핵심 변경점** |
+| batch=8 → 4 | 더 낮은 val xy 달성 | 데이터 부족 시 gradient noise = 정규화 |
+| patience=30 → 100 | ep146에서 val xy=0.0363 | 200장 기준 최고 기록 |
+| lam_xy=5 → 10 | xy 개선, yaw 약화 | trade-off 존재 |
+| AMP (FP16) | NaN 없음, 속도 향상 | CUDA 환경 자동 적용 |
+| 좌우/상하 flip augmentation | 수학적·실험적으로 유효 | x→1-x, y→1-y, sin_yaw→-sin_yaw |
+
+### 8-2. 시도해볼 것 (각자 탐색)
+
+```bash
+# 더 큰 lam_xy
+python src/ml/stage1/train.py --no_freeze_backbone --lam_xy 10 --epochs 300 --patience 50
+
+# 더 많은 decoder layers
+python src/ml/stage1/train.py --no_freeze_backbone --dec_layers 6 --epochs 300
+
+# 더 큰 DINO (vitb14, 768d) — 캐싱 먼저 필요
+python src/ml/stage1/cache_dino.py --dino_model dinov2_vitb14
+python src/ml/stage1/train.py --no_freeze_backbone --dino_model dinov2_vitb14 --dino_dim 768
+
+# lr 조정
+python src/ml/stage1/train.py --no_freeze_backbone --lr 3e-4 --warmup_frac 0.1
+
+# 긴 학습 (early stop 없이)
+python src/ml/stage1/train.py --no_freeze_backbone --epochs 500 --patience 0 --batch 4
+```
+
+### 8-3. 결과 기록 (실험자 추가)
+
+| 날짜 | 실험자 | 커맨드 핵심 | val xy_mae | val yaw° | 비고 |
+|---|---|---|---|---|---|
+| 2026-06-27 | 수 | 200장, batch=4, patience=100, ep146 | 0.0363 | 3.00° | 증강 전 최고 |
+| | | | | | |
+
+---
+
+## 9. 파일 구조
 
 ```
 src/ml/

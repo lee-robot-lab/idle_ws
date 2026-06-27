@@ -59,6 +59,15 @@ class Stage1Dataset(Dataset):
         img = cv2.imread(str(self.scenes / f"{sid}.jpg"))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img[CROP_Y0:, CROP_X0:CROP_X1]                    # (715, 1030, 3)
+
+        # 4-way geometric augmentation (0=none,1=H,2=V,3=HV)
+        # H-flip: x→1-x, sin→-sin  |  V-flip: y→1-y, sin→-sin  |  HV: x,y→1-x,1-y, sin unchanged
+        flip = random.randint(0, 3) if self.augment else 0
+        if flip in (1, 3):
+            img = cv2.flip(img, 1)
+        if flip in (2, 3):
+            img = cv2.flip(img, 0)
+
         img = cv2.resize(img, (self.iw, self.ih))                # (ih, iw, 3)
         if self.augment:
             img = self._photometric(img)
@@ -72,9 +81,19 @@ class Stage1Dataset(Dataset):
         for i, color in enumerate(COLORS):
             obj = label[color]
             u, v = obj['center_px']
-            gt_xy[i]  = torch.tensor([(u - CROP_X0) / CROP_W,
-                                      (v - CROP_Y0) / CROP_H])
-            gt_yaw[i] = torch.tensor([obj['cos_yaw'], obj['sin_yaw']])
+            x_n = (u - CROP_X0) / CROP_W
+            y_n = (v - CROP_Y0) / CROP_H
+            if flip in (1, 3):
+                x_n = 1.0 - x_n
+            if flip in (2, 3):
+                y_n = 1.0 - y_n
+            gt_xy[i] = torch.tensor([x_n, y_n])
+
+            cos_y, sin_y = obj['cos_yaw'], obj['sin_yaw']
+            if flip in (1, 2):   # 단일 축 flip → sin 부호 반전
+                sin_y = -sin_y
+            # flip==3 (양축): 이중 반전 → 원복
+            gt_yaw[i] = torch.tensor([cos_y, sin_y])
             gt_sem[i] = dino[color]
 
         return img, gt_xy, gt_yaw, gt_sem, sid
