@@ -7,7 +7,10 @@
 # ================================================================
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 import torch
@@ -21,14 +24,17 @@ from stage2.model import ColorHead
 
 COLORS = ["red", "green", "blue", "basket"]
 
+# 프로젝트 루트 (idle_ws/) — 어디서 실행해도 경로 고정
+_ROOT = Path(__file__).resolve().parents[3]
+
 
 def get_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--scenes_dir",     default="../../data/scenes")
-    p.add_argument("--split_json",     default="../../data/split.json")
-    p.add_argument("--dino_cache_dir", default="../../data/dino_cache/dinov2_vits14_reg")
-    p.add_argument("--stage1_ckpt",    default="../../checkpoints/stage1/best.pt")
-    p.add_argument("--out_dir",        default="../../checkpoints/stage2")
+    p.add_argument("--scenes_dir",     default=str(_ROOT / "data/scenes"))
+    p.add_argument("--split_json",     default=str(_ROOT / "data/split.json"))
+    p.add_argument("--dino_cache_dir", default=str(_ROOT / "data/dino_cache/dinov2_vits14_reg"))
+    p.add_argument("--stage1_ckpt",    default=str(_ROOT / "checkpoints/stage1/best.pt"))
+    p.add_argument("--out_dir",        default=str(_ROOT / "checkpoints/stage2"))
     p.add_argument("--epochs",        type=int, default=100)
     p.add_argument("--lr",            type=float, default=1e-3)
     p.add_argument("--batch_size",    type=int, default=8)
