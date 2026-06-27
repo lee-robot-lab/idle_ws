@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import sys
+sys.path.insert(0, "/home/su/idle_ws/src/ml")
+
 import argparse
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -32,6 +36,10 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--present_thr", type=float, default=0.5)
+    parser.add_argument("--warmup_frac", type=float, default=0.05)
+    parser.add_argument("--patience", type=int, default=20,
+                        help="val acc 미개선 epoch 수. 0이면 비활성")
+    parser.add_argument("--resume", action="store_true")
     return parser.parse_args()
 
 
@@ -70,8 +78,11 @@ def main():
         args.dino_cache_dir,
         labels_json=args.labels_json,
     )
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+    pin = (device == "cuda")
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                              num_workers=args.workers, pin_memory=pin)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+                            num_workers=args.workers)
 
     encoder = SlotEncoder().to(device).eval()
     encoder.load_state_dict(torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)["state_dict"])
@@ -83,23 +94,59 @@ def main():
 
     model = RelationScorer().to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs, eta_min=1e-5)
+
+    warmup_ep = max(1, int(args.epochs * args.warmup_frac))
+    def lr_lambda(ep):
+        if ep < warmup_ep:
+            return (ep + 1) / warmup_ep
+        progress = (ep - warmup_ep) / max(1, args.epochs - warmup_ep)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
+
+    use_amp = (device == "cuda")
+    scaler = torch.amp.GradScaler("cuda") if use_amp else None
     loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
 
+    print(f"device={device}  AMP={use_amp}  warmup={warmup_ep}ep")
+
+    start_epoch = 1
     best_acc = 0.0
-    for epoch in range(1, args.epochs + 1):
+    patience_cnt = 0
+    if args.resume:
+        ckpt_path = out_dir / "last.pt"
+        if not ckpt_path.exists():
+            ckpt_path = out_dir / "best.pt"
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model"])
+        start_epoch = ckpt["epoch"] + 1
+        best_acc = ckpt["metrics"].get("accuracy", 0.0)
+        for _ in range(ckpt["epoch"]):
+            scheduler.step()
+        print(f"resumed from epoch {ckpt['epoch']}, best_acc={best_acc:.4f}")
+
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         total_loss = 0.0
         train_correct = train_total = batches = 0
         for batch in train_loader:
-            logits, slot_to_color = _forward_batch(batch, encoder, color_net, model, args.present_thr, device)
-            targets = _target_slots(slot_to_color, batch["target_color"].to(device))
-            keep = targets >= 0
-            loss = loss_fn(logits, targets) if keep.any() else logits.sum() * 0.0
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                logits, slot_to_color = _forward_batch(batch, encoder, color_net, model, args.present_thr, device)
+                targets = _target_slots(slot_to_color, batch["target_color"].to(device))
+                keep = targets >= 0
+                loss = loss_fn(logits, targets) if keep.any() else logits.sum() * 0.0
+
             opt.zero_grad(set_to_none=True)
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
+            if scaler:
+                scaler.scale(loss).backward()
+                scaler.unscale_(opt)
+                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(opt)
+                scaler.update()
+            else:
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                opt.step()
+
             total_loss += float(loss.item())
             batches += 1
             if keep.any():
@@ -107,21 +154,28 @@ def main():
                 train_correct += int((pred[keep] == targets[keep]).sum().item())
                 train_total += int(keep.sum().item())
 
-        metrics = _evaluate(val_loader, encoder, color_net, model, args.present_thr, device)
+        metrics = _evaluate(val_loader, encoder, color_net, model, args.present_thr, device, use_amp)
         scheduler.step()
         train_acc = train_correct / max(1, train_total)
+        cur_lr = scheduler.get_last_lr()[0]
         print(
             f"ep {epoch:03d} loss={total_loss / max(1, batches):.4f} "
-            f"train_acc={train_acc:.4f} val_acc={metrics['accuracy']:.4f}"
+            f"train_acc={train_acc:.4f} val_acc={metrics['accuracy']:.4f} "
+            f"lr={cur_lr:.2e}"
         )
         per_rel_str = "  ".join(f"{k}={v:.2f}" for k, v in metrics["per_relation"].items())
         print(f"  {per_rel_str}")
 
+        save_checkpoint(out_dir / "last.pt", model, epoch, metrics, args)
         if metrics["accuracy"] >= best_acc:
             best_acc = metrics["accuracy"]
+            patience_cnt = 0
             save_checkpoint(out_dir / "best.pt", model, epoch, metrics, args)
-
-    save_checkpoint(out_dir / "last.pt", model, args.epochs, {"accuracy": best_acc}, args)
+        else:
+            patience_cnt += 1
+            if args.patience > 0 and patience_cnt >= args.patience:
+                print(f"Early stop at epoch {epoch} (patience={args.patience})")
+                break
 
 
 def _target_slots(slot_to_color, target_color):
@@ -169,13 +223,14 @@ def _forward_batch(batch, encoder, color_net, model, present_thr, device):
 
 
 @torch.no_grad()
-def _evaluate(loader, encoder, color_net, model, present_thr, device):
+def _evaluate(loader, encoder, color_net, model, present_thr, device, use_amp=False):
     model.eval()
     correct = total = 0
     per_rel: dict = defaultdict(lambda: [0, 0])
     for batch in loader:
-        logits, slot_to_color = _forward_batch(batch, encoder, color_net, model, present_thr, device)
-        targets = _target_slots(slot_to_color, batch["target_color"].to(device))
+        with torch.amp.autocast("cuda", enabled=use_amp):
+            logits, slot_to_color = _forward_batch(batch, encoder, color_net, model, present_thr, device)
+            targets = _target_slots(slot_to_color, batch["target_color"].to(device))
         keep = targets >= 0
         if keep.any():
             pred = torch.argmax(logits, dim=-1)
