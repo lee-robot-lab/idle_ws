@@ -2,12 +2,8 @@
 # stage2/train.py
 # 설명: ColorHead 학습 — SlotEncoder(frozen) + head_color(학습 대상).
 # 사용법:
-#   cd src/ml
-#   python stage2/train.py --scenes_dir ../../data/scenes \
-#       --split_json ../../data/split.json \
-#       --dino_cache_dir ../../data/dino_cache \
-#       --stage1_ckpt ../../checkpoints/stage1/best.pt \
-#       --out_dir ../../checkpoints/stage2
+#   cd src/ml && python -m stage2.train   # 기본값으로 바로 실행
+#   python -m stage2.train --epochs 50    # 일부 인자만 덮어쓰기
 # ================================================================
 import argparse
 import json
@@ -28,11 +24,11 @@ COLORS = ["red", "green", "blue", "basket"]
 
 def get_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--scenes_dir",    required=True)
-    p.add_argument("--split_json",    required=True)
-    p.add_argument("--dino_cache_dir", required=True)
-    p.add_argument("--stage1_ckpt",   required=True)
-    p.add_argument("--out_dir",       default="checkpoints/stage2")
+    p.add_argument("--scenes_dir",     default="../../data/scenes")
+    p.add_argument("--split_json",     default="../../data/split.json")
+    p.add_argument("--dino_cache_dir", default="../../data/dino_cache/dinov2_vits14_reg")
+    p.add_argument("--stage1_ckpt",    default="../../checkpoints/stage1/best.pt")
+    p.add_argument("--out_dir",        default="../../checkpoints/stage2")
     p.add_argument("--epochs",        type=int, default=100)
     p.add_argument("--lr",            type=float, default=1e-3)
     p.add_argument("--batch_size",    type=int, default=8)
