@@ -1,5 +1,4 @@
 import torch
-import pytest
 from stage2.grounding import direct_grounding
 
 N = 6

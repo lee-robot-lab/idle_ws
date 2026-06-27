@@ -184,9 +184,10 @@ def main():
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save({
-                "epoch":      epoch,
-                "val_acc":    val_acc,
-                "color_head": color_head.state_dict(),
+                "epoch":       epoch,
+                "val_acc":     val_acc,
+                "color_head":  color_head.state_dict(),
+                "stage1_ckpt": args.stage1_ckpt,   # 어느 encoder와 쌍인지 기록
             }, out_dir / "best.pt")
             print(f"  → saved best (acc={best_acc:.4f})")
 

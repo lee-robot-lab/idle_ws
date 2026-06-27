@@ -23,10 +23,11 @@ class ColorHead(nn.Module):
     def assign(
         self,
         color_logit: torch.Tensor,   # (N, 4)
-        present_mask: torch.Tensor,  # (N,) bool
+        present_mask: torch.Tensor,  # (N,) bool  — sigmoid(present_logit) > 0.5 권장
     ) -> torch.Tensor:
         """
         추론 전용. Hungarian으로 슬롯-색 1:1 매핑.
+        present_mask: torch.sigmoid(encoder_out['present'].squeeze(-1)) > 0.5 로 생성.
         반환: slot_to_color (N,) int — -1=absent, 0~3=color index.
         """
         N = color_logit.shape[0]
