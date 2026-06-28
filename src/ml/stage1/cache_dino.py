@@ -51,7 +51,8 @@ def load_dino(model_name: str, device: str):
 
 def img_to_dino_patches(img_bgr: np.ndarray, dino, device: str) -> torch.Tensor:
     """
-    img_bgr: 1280×720 BGR  →  (PATCH_H, PATCH_W, 384) patch feature map.
+    img_bgr: 1280×720 BGR  →  (PATCH_H, PATCH_W, D) patch feature map.
+    D는 모델에 따라 384(ViT-S) / 768(ViT-B) / 1024(ViT-L).
     """
     rgb  = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     crop = rgb[CROP_Y0:, CROP_X0:CROP_X1]                       # (715, 1030, 3)
@@ -60,9 +61,10 @@ def img_to_dino_patches(img_bgr: np.ndarray, dino, device: str) -> torch.Tensor:
     t    = (t - _MEAN) / _STD
     t    = t.unsqueeze(0).to(device)                             # (1, 3, H, W)
     with torch.no_grad():
-        feat = dino.get_intermediate_layers(t, n=1)[0]           # (1, n_patches, 384)
-    feat = feat.squeeze(0)                                       # (n_patches, 384)
-    return feat.reshape(PATCH_H, PATCH_W, 384).cpu()            # (22, 32, 384)
+        feat = dino.get_intermediate_layers(t, n=1)[0]           # (1, n_patches, D)
+    feat = feat.squeeze(0)                                       # (n_patches, D)
+    D = feat.shape[-1]
+    return feat.reshape(PATCH_H, PATCH_W, D).cpu()              # (22, 32, D)
 
 
 def contour_to_patch_mask(contour_px: list) -> np.ndarray:
@@ -82,12 +84,12 @@ def contour_to_patch_mask(contour_px: list) -> np.ndarray:
 
 
 def pool_object_sem(patch_feat: torch.Tensor, mask: np.ndarray) -> torch.Tensor:
-    """mask된 패치의 mean pool → (384,). mask 전부 False면 전체 mean."""
-    f = patch_feat                                               # (22, 32, 384)
+    """mask된 패치의 mean pool → (D,). mask 전부 False면 전체 mean."""
+    f = patch_feat                                               # (22, 32, D)
     m = torch.from_numpy(mask)                                  # (22, 32) bool
     if m.sum() == 0:
         return f.mean(dim=(0, 1))
-    return f[m].mean(dim=0)                                     # (384,)
+    return f[m].mean(dim=0)                                     # (D,)
 
 
 def cache_scene(sid: str, scenes_dir: Path, out_dir: Path, dino, device: str):
