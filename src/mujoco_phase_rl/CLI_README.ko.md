@@ -808,7 +808,7 @@ ros2 run phy gripper_node
 상태 확인:
 
 ```bash
-ros2 service list | grep -E 'gripper|go_home'
+ros2 service list | grep -E 'gripper|go_home|release_to_home'
 ros2 topic echo --once /motor_state_array
 ros2 topic echo --once /plan/status
 ```
@@ -836,7 +836,7 @@ ros2 run mujoco_phase_rl real_action_bridge \
   --place-z 0.19 \
   --place-xy-mode current \
   --prehome-z 0.30 \
-  --home-mode service \
+  --home-mode timeout \
   --min-command-period 5.0 \
   --command-timeout 12.0 \
   --log-period 0.5
@@ -966,13 +966,9 @@ ros2 run mujoco_phase_rl real_action_bridge \
   --place-z 0.19 \
   --place-xy-mode current \
   --prehome-z 0.30 \
-  --home-mode service \
+  --home-mode timeout \
   --min-command-period 5.0 \
   --command-timeout 12.0 \
   --log-period 0.5 \
   --armed
 ```
-
-
-이제 꽤 잘 돼서 비전이랑 ik 보완하면 되는 부분들이고 이제 파란 블럭, 초록 블럭에도 해당 되게 학습을 시키고 지금 했던 과정들 똑같이 따라오면 돼 그리고 RGB 색깔 블럭
-  여러개 있는 상황도 학습 시켜서 원하는 object와 target에 잘 보내도록 해야할 것 같아 가능하겠음? 학습 파이프라인 구축부터 가야할 듯

@@ -19,8 +19,11 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 
+_INERTIAL_ORIENTATION_ATTRS = ("quat", "euler", "axisangle", "xyaxes", "zaxis")
+
+
 def load_model_with_workaround(model_xml: str) -> tuple[mujoco.MjModel, bool]:
-    """Load model and patch inertial quat if needed for legacy fullinertia XML."""
+    """Load model and patch inertial orientation if needed for legacy fullinertia XML."""
 
     try:
         return mujoco.MjModel.from_xml_path(model_xml), False
@@ -32,11 +35,14 @@ def load_model_with_workaround(model_xml: str) -> tuple[mujoco.MjModel, bool]:
     root = tree.getroot()
     modified = False
     for inertial in root.iter("inertial"):
-        if "fullinertia" in inertial.attrib and "quat" in inertial.attrib:
-            inertial.attrib.pop("quat")
-            modified = True
+        if "fullinertia" not in inertial.attrib:
+            continue
+        for attr in _INERTIAL_ORIENTATION_ATTRS:
+            if attr in inertial.attrib:
+                inertial.attrib.pop(attr)
+                modified = True
     if not modified:
-        raise ValueError("model failed to load and workaround found no inertial quat entries")
+        raise ValueError("model failed to load and workaround found no inertial orientation entries")
 
     patched_path: str | None = None
     try:
@@ -105,7 +111,7 @@ class ViewerNode(Node):
         self.timer = self.create_timer(period_s, self.on_timer)
         self._try_launch_viewer()
         if used_workaround:
-            self.get_logger().warn("model required inertial-quat workaround for fullinertia compatibility")
+            self.get_logger().warn("model required inertial-orientation workaround for fullinertia compatibility")
         self.get_logger().info(
             f"viewer_node initialized: model={model_xml} hz={self.viewer_hz:.1f} motors={sorted(self.qpos_idx_by_motor.keys())}"
         )

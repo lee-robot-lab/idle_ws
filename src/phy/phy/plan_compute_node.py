@@ -90,7 +90,7 @@ class PlanComputeNode(Node):
         self.collision = CollisionChecker(
             self.robot, srdf_path=srdf_path, package_dirs=[sim_share_parent],
         )
-        self.declare_parameter("cage_collision", False)
+        self.declare_parameter("cage_collision", True)
         self.declare_parameter("floor_collision", False)
         self.add_on_set_parameters_callback(self._on_parameters)
 

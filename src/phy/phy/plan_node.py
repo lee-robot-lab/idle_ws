@@ -27,6 +27,7 @@ from idle_common.ros_params import declare_typed
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_srvs.srv import Trigger
 
 from msgs.msg import MotorCMD
 from phy.plan import Plan, PlannerConfig
@@ -228,8 +229,8 @@ class PlanNode(Node):
         strip_str = lambda v: str(v).strip()
         self.control_hz = declare_typed(self, "control_hz", 250.0)
         self.state_timeout_s = declare_typed(self, "state_timeout_s", 0.2)
-        self.kp_max = declare_typed(self, "kp_max", 50.0)
-        self.kd_max = declare_typed(self, "kd_max", 10.0)
+        self.kp_max = declare_typed(self, "kp_max", 70.0)
+        self.kd_max = declare_typed(self, "kd_max", 15.0)
         v_max = declare_typed(self, "planner_v_max", 1.0)
         a_max = declare_typed(self, "planner_a_max", 1.0)
         min_traj_duration = declare_typed(self, "planner_min_traj_duration", 1.5)
@@ -264,7 +265,7 @@ class PlanNode(Node):
         self.q_max_by_motor = {m: float(_q_hi[i]) for i, m in enumerate(self.motor_ids)}
         self.state_by_motor = {m: MotorSample() for m in self.motor_ids}
         self.active: Optional[_ActiveTrajectory] = None
-        self._hold_q: Optional[dict[int, float]] = {m: 0.0 for m in self.motor_ids}  # 명령용 (actual_q 기반)
+        self._hold_q: dict[int, float] = {m: 0.0 for m in self.motor_ids}  # 명령용 (actual_q 기반)
         self._hold_target_q: Optional[dict[int, float]] = None  # 로그용 (q_final 기반)
         self._last_plan_key: tuple | None = None
 
@@ -281,7 +282,7 @@ class PlanNode(Node):
         self._warp_log_last_s: float = 0.0
 
         self.settle_tol_rad = float(declare_typed(self, "settle_tol_rad", 0.025))
-        self.settle_vel_rad_s = float(declare_typed(self, "settle_vel_rad_s", 0.05))
+        self.settle_vel_rad_s = float(declare_typed(self, "settle_vel_rad_s", 0.12))
         self.settle_ok_ticks = int(declare_typed(self, "settle_ok_ticks", 5))
         self.settle_timeout_s = float(declare_typed(self, "settle_timeout_s", 2.5))
         self.settle_gain_ramp_s = float(declare_typed(self, "settle_gain_ramp_s", 0.4))
@@ -292,19 +293,19 @@ class PlanNode(Node):
             declare_typed(self, "settle_velocity_brake_kd_scale", 2.0)
         )
         self.settle_velocity_brake_full_vel_rad_s = float(
-            declare_typed(self, "settle_velocity_brake_full_vel_rad_s", 0.15)
+            declare_typed(self, "settle_velocity_brake_full_vel_rad_s", 0.12)
         )
         self.hold_friction_deadband_rad = float(
-            declare_typed(self, "hold_friction_deadband_rad", 0.005)
+            declare_typed(self, "hold_friction_deadband_rad", 0.002)
         )
         self.settle_friction_scale = float(declare_typed(self, "settle_friction_scale", 1.0))
         self.hold_friction_scale = float(declare_typed(self, "hold_friction_scale", 0.4))
         self.settle_kp_scale = float(declare_typed(self, "settle_kp_scale", 1.0))
-        self.settle_kd_scale = float(declare_typed(self, "settle_kd_scale", 1.0))
+        self.settle_kd_scale = float(declare_typed(self, "settle_kd_scale", 0.7))
         self.hold_kp_scale = float(declare_typed(self, "hold_kp_scale", 1.0))
         self.hold_kd_scale = float(declare_typed(self, "hold_kd_scale", 1.0))
-        self.hold_qd_lpf_alpha = float(declare_typed(self, "hold_qd_lpf_alpha", 0.85))
-        self.settle_qd_lpf_alpha = float(declare_typed(self, "settle_qd_lpf_alpha", 0.0))
+        self.hold_qd_lpf_alpha = float(declare_typed(self, "hold_qd_lpf_alpha", 0.95))
+        self.settle_qd_lpf_alpha = float(declare_typed(self, "settle_qd_lpf_alpha", 0.7))
         self._hold_qd_lpf: dict[int, float] = {}
         self.hold_latch_actual_q_after_settle = bool(
             declare_typed(self, "hold_latch_actual_q_after_settle", True)
@@ -318,19 +319,34 @@ class PlanNode(Node):
         )
         try:
             self.settle_kp_scale_by_motor = _parse_float_map_json(
-                declare_typed(self, "settle_kp_scale_by_motor_json", "", cast=strip_str),
+                declare_typed(
+                    self,
+                    "settle_kp_scale_by_motor_json",
+                    '{"1": 1.4, "2": 1.8, "4": 1.4}',
+                    cast=strip_str,
+                ),
                 "settle_kp_scale_by_motor_json",
             )
             self.settle_kd_scale_by_motor = _parse_float_map_json(
-                declare_typed(self, "settle_kd_scale_by_motor_json", "", cast=strip_str),
+                declare_typed(
+                    self,
+                    "settle_kd_scale_by_motor_json",
+                    '{"1": 1.35}',
+                    cast=strip_str,
+                ),
                 "settle_kd_scale_by_motor_json",
             )
             self.hold_kp_scale_by_motor = _parse_float_map_json(
-                declare_typed(self, "hold_kp_scale_by_motor_json", "", cast=strip_str),
+                declare_typed(self, "hold_kp_scale_by_motor_json", "{}", cast=strip_str),
                 "hold_kp_scale_by_motor_json",
             )
             self.hold_kd_scale_by_motor = _parse_float_map_json(
-                declare_typed(self, "hold_kd_scale_by_motor_json", "", cast=strip_str),
+                declare_typed(
+                    self,
+                    "hold_kd_scale_by_motor_json",
+                    '{"1": 0.85, "2": 0.75, "3": 0.85, "4": 0.7}',
+                    cast=strip_str,
+                ),
                 "hold_kd_scale_by_motor_json",
             )
         except ValueError as exc:
@@ -345,6 +361,9 @@ class PlanNode(Node):
         self._settle_ok_count: int = 0
 
         self._warn_times: dict[str, float] = {}
+        self.release_home_duration_s = float(declare_typed(self, "release_home_duration_s", 10.0))
+        self._release_motor_cmd_until_s: float = 0.0
+        self._release_log_last_s: float = float("-inf")
 
         self._duration_override_s: float = 0.0
 
@@ -382,6 +401,11 @@ class PlanNode(Node):
         self.cmd_pub = self.create_publisher(MotorCMDArray, "/motor_cmd_array", qos_cmd)
         self.status_pub = self.create_publisher(String, "/plan/status", 10)
         self.fail_reason_pub = self.create_publisher(String, "/plan/fail_reason", 10)
+        self.release_home_srv = self.create_service(
+            Trigger,
+            "/plan/release_to_home",
+            self._srv_release_to_home,
+        )
 
         period_s = max(1.0 / self.control_hz, 1.0e-4)
         self.control_timer = self.create_timer(period_s, self.on_timer)
@@ -417,6 +441,11 @@ class PlanNode(Node):
 
     def on_computed_plan(self, msg: ComputedPlan) -> None:
         """Deserialize ComputedPlan and deposit into pending slot."""
+        if self._now_s() < self._release_motor_cmd_until_s:
+            self.get_logger().warn(
+                f"[{int(msg.serial)}] computed plan ignored during release-to-home"
+            )
+            return
         serial = int(msg.serial)
         stamp_s = float(msg.stamp.sec) + float(msg.stamp.nanosec) * 1.0e-9
         if stamp_s <= 0.0:
@@ -505,6 +534,18 @@ class PlanNode(Node):
 
     def on_timer(self) -> None:
         now_s = self._now_s()
+        if now_s < self._release_motor_cmd_until_s:
+            if now_s - self._release_log_last_s >= 1.0:
+                remaining = self._release_motor_cmd_until_s - now_s
+                self._release_log_last_s = now_s
+                self.get_logger().warn(
+                    f"release-to-home active: suppressing /motor_cmd_array for {remaining:.1f}s"
+                )
+            return
+        if self._release_motor_cmd_until_s > 0.0:
+            self._release_motor_cmd_until_s = 0.0
+            self._release_log_last_s = float("-inf")
+            self.get_logger().info("release-to-home complete: plan_node command publishing resumed")
         if not self._state_fresh(now_s):
             return
 
@@ -875,6 +916,37 @@ class PlanNode(Node):
     # ------------------------------------------------------------------
     # Command generation
     # ------------------------------------------------------------------
+
+    def _srv_release_to_home(
+        self,
+        _req: Trigger.Request,
+        res: Trigger.Response,
+    ) -> Trigger.Response:
+        duration = max(0.2, float(self.release_home_duration_s))
+        now_s = self._now_s()
+        with self._plan_lock:
+            self._pending_plan = None
+            self._queued_leg2 = None
+        self.active = None
+        self._hold_q = None
+        self._hold_target_q = None
+        self._hold_ref_source = "release_to_home"
+        self._settling = False
+        self._settle_ok_count = 0
+        self._vt_elapsed_s = 0.0
+        self._prev_max_err = 0.0
+        self._warp_stall_s = 0.0
+        self._release_motor_cmd_until_s = now_s + duration
+        self._release_log_last_s = float("-inf")
+        self._publish_fail_reason("")
+        self._publish_status("RELEASED_HOME")
+        self.get_logger().warn(
+            "release-to-home requested: suppressing /motor_cmd_array for "
+            f"{duration:.1f}s so can_bridge timeout-home can take over"
+        )
+        res.success = True
+        res.message = f"released motor command publishing for {duration:.1f}s"
+        return res
 
     def _trajectory_cmds(
         self,

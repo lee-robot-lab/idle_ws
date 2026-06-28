@@ -88,7 +88,7 @@
                     <geom name="rs02_2_collision_0" type="mesh" mesh="RS02_0_0_0" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" />
                     <body name="link2_1" pos="0 0 0" quat="0.000000026795 1 0 0">
                       <joint name="j3" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
-                      <inertial pos="0.000243 -0.015394 -0.057030" mass="0.840115" fullinertia="1.884015e-03 1.569315e-03 1.653589e-03 1.116155e-05 3.601312e-06 -3.034802e-04" />
+                      <inertial pos="0.000243187 -0.015393751 -0.057030232" mass="0.840115" fullinertia="1.884015e-03 1.569315e-03 1.653589e-03 1.116155e-05 3.601312e-06 -3.034802e-04" />
                       <geom name="link2_1_visual_0" type="mesh" mesh="link2_1" pos="0 0 0" euler="0 0 0" contype="0" conaffinity="0" group="1" rgba="0.75 0.75 0.75 1" />
                       <geom name="link2_1_collision_0" type="mesh" mesh="link2_1" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" />
                       <body name="link2_2" pos="0 -0.05 -0.07415" quat="0.707105482511 0.707108079859 0 0">
@@ -105,7 +105,7 @@
                             <geom name="rs02_3_collision_0" type="mesh" mesh="RS02_0_0_0" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" />
                             <body name="link3_1" pos="0 0 0" quat="0.000001326795 0 0.999999999999 0">
                               <joint name="j4" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
-                              <inertial pos="-0.000000 0.022581 -0.039749" mass="0.215857" fullinertia="4.407973e-04 3.989994e-04 4.699770e-04 3.134416e-09 -2.800818e-09 8.367770e-05" />
+                              <inertial pos="-0.000000 0.022580616 -0.039748657" mass="0.215857" fullinertia="4.407973e-04 3.989994e-04 4.699770e-04 3.134416e-09 -2.800818e-09 8.367770e-05" />
                               <geom name="link3_1_visual_0" type="mesh" mesh="link3_1" pos="0 0 0" euler="0 0 0" contype="0" conaffinity="0" group="1" rgba="0.75 0.75 0.75 1" />
                               <geom name="link3_1_collision_0" type="mesh" mesh="link3_1" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" />
                               <body name="rs00_1" pos="0 0.0724 -0.053" quat="0.707105482511 -0.707108079859 0 0">
@@ -123,7 +123,7 @@
                                     <geom name="rs00_2_collision_0" type="mesh" mesh="RS00" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" />
                                     <body name="link3_3" pos="0 0 0" quat="0 1 0 0">
                                       <joint name="j6" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
-                                      <inertial pos="-0.000000 0.001336 -0.049766" mass="0.150350" fullinertia="2.273078e-04 2.585768e-04 2.507905e-04 -1.354672e-11 2.489983e-09 -6.845549e-06" />
+                                      <inertial pos="-0.000000 0.001335654 -0.049765999" mass="0.150350" fullinertia="2.273078e-04 2.585768e-04 2.507905e-04 -1.354672e-11 2.489983e-09 -6.845549e-06" />
                                       <geom name="link3_3_visual_0" type="mesh" mesh="link3_3" pos="0 0 0" euler="0 0 0" contype="0" conaffinity="0" group="1" rgba="0.75 0.75 0.75 1" />
                                       <geom name="link3_3_collision_0" type="mesh" mesh="link3_3" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" />
                                       <body name="rs05" pos="0 0 -0.093" quat="0.00000023108 -0.707104897878 0.70710866449 0.000000231078">

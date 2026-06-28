@@ -290,6 +290,14 @@ def generate_launch_description() -> LaunchDescription:
             executable="gripper_node",
             name="gripper_node",
             output="screen",
+            parameters=[{
+                "q_closed_min": 0.80,
+                "delta_overclose": 0.05,
+                "q_min_motion": 0.05,
+                "q_min_grasp": 0.30,
+                "tau_grasp_threshold": 0.25,
+                "tau_drop_threshold": 0.1,
+            }],
         ),
         Node(
             package="phy",

@@ -240,7 +240,7 @@
   <link name="link2_1">
     <inertial>
       <mass value="0.840115"/>
-      <origin xyz="0.000243 -0.015394 -0.057030" rpy="0 0 0"/>
+      <origin xyz="0.000243187 -0.015393751 -0.057030232" rpy="0 0 0"/>
       <inertia ixx="1.884015e-03" ixy="1.116155e-05" ixz="3.601312e-06" iyy="1.569315e-03" iyz="-3.034802e-04" izz="1.653589e-03"/>
     </inertial>
     <visual>
@@ -294,7 +294,7 @@
   <link name="link3_1">
     <inertial>
       <mass value="0.215857"/>
-      <origin xyz="-0.000000 0.022581 -0.039749" rpy="0 0 0"/>
+      <origin xyz="-0.000000 0.022580616 -0.039748657" rpy="0 0 0"/>
       <inertia ixx="4.407973e-04" ixy="3.134416e-09" ixz="-2.800818e-09" iyy="3.989994e-04" iyz="8.367770e-05" izz="4.699770e-04"/>
     </inertial>
     <visual>
@@ -330,7 +330,7 @@
   <link name="link3_3">
     <inertial>
       <mass value="0.150350"/>
-      <origin xyz="-0.000000 0.001336 -0.049766" rpy="0 0 0"/>
+      <origin xyz="-0.000000 0.001335654 -0.049765999" rpy="0 0 0"/>
       <inertia ixx="2.273078e-04" ixy="-1.354672e-11" ixz="2.489983e-09" iyy="2.585768e-04" iyz="-6.845549e-06" izz="2.507905e-04"/>
     </inertial>
     <visual>

@@ -133,7 +133,7 @@ class SimDriverNode(Node):
         self.timer = self.create_timer(tick_period, self.on_timer)
 
         if used_workaround:
-            self.get_logger().warn("model required inertial-quat workaround")
+            self.get_logger().warn("model required inertial-orientation workaround for fullinertia compatibility")
         self.get_logger().info(
             "sim_driver_node initialized: "
             f"model={model_xml} control_hz={self.control_hz:.1f} "

@@ -191,7 +191,9 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[{
                     "q_closed_min": 0.55,
                     "delta_overclose": 0.01,
+                    "q_min_motion": 0.05,
                     "q_min_grasp": 0.30,
+                    "tau_grasp_threshold": 0.25,
                     "tau_drop_threshold": 0.0,
                 }],
             ),

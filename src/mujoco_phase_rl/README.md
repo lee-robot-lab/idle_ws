@@ -653,7 +653,7 @@ ros2 run mujoco_phase_rl real_action_bridge \
   --place-z 0.19 \
   --place-xy-mode current \
   --prehome-z 0.30 \
-  --home-mode service \
+  --home-mode timeout \
   --log-period 0.5 \
   --armed
 ```
@@ -666,7 +666,7 @@ action bridge는 command 성공 feedback을 phase transition으로도 사용한�
 `--place-xy-mode current`는 `MOVE_TO_PLACE`가 끝난 위치에서 xy를 바꾸지 않고 수직 하강만 한다. basket 중심 xy를 다시 계산해서 하강하려면 `--place-xy-mode target`을 쓴다.
 실물 target yaw는 기본적으로 `--yaw-mode fixed --fixed-yaw-deg 0`으로 고정한다. 기존처럼 object yaw와 PPO `dyaw`를 쓰려면 `--yaw-mode object_policy`를 붙인다.
 
-`HOME` command 기본 경로: `/go_home` service. 기존 `phy`를 건드리지 않는 배포에서는 `--home-mode service` 사용. `--home-mode timeout`은 `/plan/release_to_home` service가 있는 별도 `phy` 버전에서만 사용.
+`HOME` command 권장 경로: `--home-mode timeout`. action bridge가 `/plan/release_to_home`을 호출하고, `plan_node`가 잠깐 `/motor_cmd_array` publish를 멈춰 `can_bridge` timeout-home이 홈 복귀를 맡는다. `/go_home` 직접 호출은 `--home-mode service`.
 상승/하강 동작인 `GRASP`, `LIFT`, `PLACE`, pre-home `RECOVERY`는 기본적으로 `/ee_target.straight_line=True`로 나간다. 특정 구간에서 직선 Cartesian 계획을 끄려면 `--no-straight-line-grasp`, `--no-straight-line-lift`, `--no-straight-line-place`를 붙인다.
 팔/그리퍼가 블럭을 가리는 구간은 `--object-memory-timeout` 동안 마지막 object pose를 유지한다. 로그의 `src=vision_memory` 또는 `src=vision_memory_occluded`는 detection이 잠깐 끊겼지만 최근 pose를 쓰는 상태이고, `src=grasp_fk`는 grasp 이후 EE 기준으로 물체 pose를 추정하는 상태다.
 object가 target 안에 들어간 판정은 좌표 기준으로 확인한 뒤 latch된다. `PLACE` motion이 끝나고 gripper를 열어도, object와 basket/target의 xy 거리가 `--target-radius` 안에 들어오지 않으면 `PLACE` 성공이나 `DONE`으로 닫지 않는다.
