@@ -1,0 +1,14 @@
+Loaded from checkpoints/stage1_vitb14/best.pt  (missing dn_embed: OK)
+Backbone frozen.
+AMP=True  mask_prob=0.3  dn_noise=0.05  lam_dn=1.0
+[   1/500] cls=2.7999 xy=0.0002 yaw=0.0048 feat=0.9888 dn=3.3534 | val xy=0.0094 yaw=0.89° cos=0.008
+[   2/500] cls=2.6010 xy=0.0005 yaw=0.0073 feat=0.9780 dn=3.1603 | val xy=0.0148 yaw=0.92° cos=0.033
+[   3/500] cls=1.2054 xy=0.0008 yaw=0.0108 feat=0.9469 dn=3.0397 | val xy=0.0276 yaw=1.03° cos=0.073
+[   4/500] cls=0.4424 xy=0.0015 yaw=0.0250 feat=0.8912 dn=2.6705 | val xy=0.0298 yaw=1.01° cos=0.157
+[   5/500] cls=0.2802 xy=0.0014 yaw=0.0232 feat=0.7695 dn=2.3141 | val xy=0.0319 yaw=1.03° cos=0.339
+[   6/500] cls=0.1962 xy=0.0026 yaw=0.0172 feat=0.5573 dn=1.9289 | val xy=0.0383 yaw=1.08° cos=0.594
+[   7/500] cls=0.1882 xy=0.0034 yaw=0.0109 feat=0.3569 dn=1.6523 | val xy=0.0510 yaw=1.19° cos=0.749
+[   8/500] cls=0.1524 xy=0.0028 yaw=0.0108 feat=0.2687 dn=1.3661 | val xy=0.0361 yaw=1.65° cos=0.794
+[   9/500] cls=0.1608 xy=0.0024 yaw=0.0235 feat=0.2398 dn=1.2594 | val xy=0.0295 yaw=1.41° cos=0.818
+[  10/500] cls=0.1406 xy=0.0016 yaw=0.0099 feat=0.2119 dn=1.0608 | val xy=0.0250 yaw=1.41° cos=0.839
+[  11/500] cls=0.1384 xy=0.0012 yaw=0.0178 feat=0.1907 dn=1.0404 | val xy=0.0202 yaw=1.37° cos=0.855
