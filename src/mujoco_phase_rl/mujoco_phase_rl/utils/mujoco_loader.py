@@ -81,6 +81,18 @@ def build_task_scene_xml(
         root.insert(0, compiler)
     compiler.set("meshdir", str(path.parent / "meshes"))
 
+    # 오프스크린 프레임버퍼: SlotEmbedder의 기본 렌더 해상도(1210×720)에 맞게 설정
+    visual = root.find("visual")
+    if visual is None:
+        visual = ET.SubElement(root, "visual")
+    glb = visual.find("global")
+    if glb is None:
+        glb = ET.SubElement(visual, "global")
+    if int(glb.get("offwidth", 0)) < 1210:
+        glb.set("offwidth", "1210")
+    if int(glb.get("offheight", 0)) < 720:
+        glb.set("offheight", "720")
+
     worldbody = root.find("worldbody")
     if worldbody is None:
         raise ValueError("robot.xml is missing <worldbody>")

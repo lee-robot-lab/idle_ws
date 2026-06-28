@@ -156,3 +156,47 @@ def test_observe_all_finite():
     obs = _make_observer().observe(_make_slot_state(), _make_state())
     for v in obs.values():
         assert np.all(np.isfinite(v))
+
+
+import os
+import pytest
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[3]
+_S1_CKPT = str(_ROOT / "checkpoints/stage1_v2/best.pt")
+_SD_CKPT = str(_ROOT / "checkpoints/slot_diff/best.pt")
+_CN_CKPT = str(_ROOT / "checkpoints/color_net_v2/best.pt")
+_HAS_CKPTS = (
+    Path(_S1_CKPT).exists()
+    and Path(_SD_CKPT).exists()
+    and Path(_CN_CKPT).exists()
+)
+
+
+@pytest.mark.skipif(not _HAS_CKPTS, reason="checkpoints not found")
+def test_slot_embedder_output_shape():
+    from mujoco_phase_rl.perception.image_embedding import SlotEmbedder
+    scene = load_task_scene()
+    mujoco.mj_forward(scene.model, scene.data)
+    embedder = SlotEmbedder(_S1_CKPT, _SD_CKPT, _CN_CKPT, device="cpu")
+    emb, slots = embedder.embed(scene.model, scene.data)
+    assert emb.shape == (64,)
+    assert np.all(np.isfinite(emb))
+    assert slots["present"].shape == (6, 1)
+    assert slots["xy"].shape == (6, 2)
+    assert slots["color_logit"].shape == (6, 4)
+    embedder.close()
+
+
+@pytest.mark.skipif(not _HAS_CKPTS, reason="checkpoints not found")
+def test_slot_embedder_reset_clears_prev_slots():
+    from mujoco_phase_rl.perception.image_embedding import SlotEmbedder
+    scene = load_task_scene()
+    mujoco.mj_forward(scene.model, scene.data)
+    embedder = SlotEmbedder(_S1_CKPT, _SD_CKPT, _CN_CKPT, device="cpu")
+    embedder.embed(scene.model, scene.data)
+    embedder.reset()
+    # reset 후 embed → prev_slots가 None이므로 curr와 self로 초기화 (오류 없이 동작)
+    emb2, _ = embedder.embed(scene.model, scene.data)
+    assert emb2.shape == (64,)
+    embedder.close()
