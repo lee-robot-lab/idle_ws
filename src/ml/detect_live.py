@@ -4,14 +4,15 @@
 # 사용법: python detect_live.py [--device 2] [--erode 0] [--w 1280] [--h 720]
 # ================================================================
 import argparse
-import sys
 import importlib.util
+from pathlib import Path
 import numpy as np
 import cv2
 
+_ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
     "color_segmentation",
-    "/home/su/idle_ws/src/ml/labeling/color_segmentation.py",
+    _ROOT / "src/ml/labeling/color_segmentation.py",
 )
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)

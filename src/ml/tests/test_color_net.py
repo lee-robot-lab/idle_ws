@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 from stage2.color_net import ColorNet
+from stage2.train_color_net import infer_slot_encoder_config
 
 
 def test_forward_shape():
@@ -57,3 +58,25 @@ def test_assign_all_absent():
     mask  = torch.zeros(6, dtype=torch.bool)
     result = net.assign(logit, mask)
     assert (result == -1).all()
+
+
+def test_infer_slot_encoder_config_from_vitb14_state():
+    state = {
+        "head_sem.weight": torch.zeros(768, 256),
+        "head_xy.weight": torch.zeros(2, 256),
+        "queries.weight": torch.zeros(6, 256),
+        "decoder.layers.0.norm1.weight": torch.zeros(256),
+        "decoder.layers.1.norm1.weight": torch.zeros(256),
+        "decoder.layers.2.norm1.weight": torch.zeros(256),
+    }
+
+    cfg = infer_slot_encoder_config(state)
+
+    assert cfg == {
+        "num_queries": 6,
+        "dec_layers": 3,
+        "d_model": 256,
+        "dino_dim": 768,
+        "input_h": 288,
+        "input_w": 416,
+    }

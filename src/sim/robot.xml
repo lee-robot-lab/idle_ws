@@ -42,15 +42,15 @@
     </body>
     <body name="block_red" pos="0.18 0.30 0.028">
       <freejoint/>
-      <geom type="box" size="0.025 0.025 0.025" rgba="0.9 0.2 0.2 1" mass="0.1" contype="1" conaffinity="1"/>
+      <geom type="box" size="0.025 0.025 0.025" rgba="0.9 0.2 0.2 1" mass="0.1" contype="1" conaffinity="1" friction="2.0 0.3 0.05" condim="4"/>
     </body>
     <body name="block_green" pos="-0.12 0.42 0.028">
       <freejoint/>
-      <geom type="box" size="0.025 0.025 0.025" rgba="0.2 0.8 0.2 1" mass="0.1" contype="1" conaffinity="1"/>
+      <geom type="box" size="0.025 0.025 0.025" rgba="0.2 0.8 0.2 1" mass="0.1" contype="1" conaffinity="1" friction="2.0 0.3 0.05" condim="4"/>
     </body>
     <body name="block_blue" pos="0.25 0.55 0.028">
       <freejoint/>
-      <geom type="box" size="0.025 0.025 0.025" rgba="0.2 0.4 0.9 1" mass="0.1" contype="1" conaffinity="1"/>
+      <geom type="box" size="0.025 0.025 0.025" rgba="0.2 0.4 0.9 1" mass="0.1" contype="1" conaffinity="1" friction="2.0 0.3 0.05" condim="4"/>
     </body>
     <body name="base" pos="0 0 0.03" euler="0 0 0">
       <inertial pos="-2.48163e-06 4.83416e-07 0.035385988818" mass="0.685513" fullinertia="0.002363 0.002295 0.003326 0 0 0" />
@@ -138,13 +138,15 @@
                                             <joint name="finger_r" type="slide" axis="0 1 0" range="0 0.0447" limited="true" />
                                             <inertial pos="0.000927864812 0.006622883789 -0.011071668038" mass="0.030964" fullinertia="1.1e-05 1.2e-05 6e-06 0 0 3e-06" />
                                             <geom name="finger_r_visual_0" type="mesh" mesh="finger_r" pos="0 0 0" euler="0 0 0" contype="0" conaffinity="0" group="1" rgba="0.75 0.75 0.75 1" />
-                                            <geom name="finger_r_collision_0" type="mesh" mesh="finger_r" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" />
+                                            <geom name="finger_r_collision_0" type="mesh" mesh="finger_r" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" friction="2.0 0.3 0.05" condim="4" />
+                                            <geom name="finger_r_inner_pad" type="box" pos="0 0.012 -0.002" size="0.018 0.003 0.022" contype="1" conaffinity="1" group="2" rgba="1 0.1 0.1 0.18" friction="3.0 0.5 0.08" condim="4" />
                                           </body>
                                           <body name="finger_l" pos="0 0.06475 -0.0218" quat="1 0 0 0">
                                             <joint name="finger_l" type="slide" axis="0 -1 0" range="0 0.05" limited="true" />
                                             <inertial pos="-0.000922783846 -0.006622999429 -0.011071668038" mass="0.030964" fullinertia="1.1e-05 1.2e-05 6e-06 0 0 -3e-06" />
                                             <geom name="finger_l_visual_0" type="mesh" mesh="finger_l" pos="0 0 0" euler="0 0 0" contype="0" conaffinity="0" group="1" rgba="0.75 0.75 0.75 1" />
-                                            <geom name="finger_l_collision_0" type="mesh" mesh="finger_l" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" />
+                                            <geom name="finger_l_collision_0" type="mesh" mesh="finger_l" pos="0 0 0" euler="0 0 0" contype="1" conaffinity="1" group="2" rgba="0.75 0.75 0.75 0.25" friction="2.0 0.3 0.05" condim="4" />
+                                            <geom name="finger_l_inner_pad" type="box" pos="0 -0.012 -0.002" size="0.018 0.003 0.022" contype="1" conaffinity="1" group="2" rgba="0.1 0.1 1 0.18" friction="3.0 0.5 0.08" condim="4" />
                                           </body>
                                         </body>
                                       </body>

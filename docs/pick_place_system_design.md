@@ -224,6 +224,182 @@ robot.xml에 케이지 링크 추가만으로 경로 검증에 반영됨.
 
 ## 4. 비전·언어 파이프라인 (추후 구현)
 
+### 4.0 현행 MVP 연결 구조: STT JSON → ML Bridge → FSM
+
+관계 추론 기반 grounding은 별도 팀원이 학습/구현 중이므로, 현행 MVP에서는
+직접 지정된 물체 이름만 처리한다. 즉 `object_query`, `target_query`는 브릿지에서
+해소하지 않고 “관계 모듈 필요” 상태로 거절한다.
+
+현재 연결 책임은 `ml_pickplace_bridge_node`가 담당한다.
+
+```
+STT/Qwen semantic plan JSON
+        ↓
+ml_pickplace_bridge_node
+        ↓
+Stage1 SlotEncoder + Stage2 ColorNet
+        ↓
+scene inventory
+        ↓
+PickPlaceCommand
+        ↓
+task_fsm_node
+        ↓
+/ee_target → plan/IK
+```
+
+#### Bridge 입력
+
+```text
+/semantic_plan_json   std_msgs/String
+/camera/.../image_raw sensor_msgs/Image
+```
+
+`/semantic_plan_json`은 `/home/parkshinyoung/stt/stt.py`가 생성하는 semantic plan
+형식을 따른다.
+
+예:
+
+```json
+{
+  "success": true,
+  "steps": [
+    {
+      "action": "pick_place",
+      "object": "red_block",
+      "object_query": null,
+      "target": "basket",
+      "target_query": null,
+      "depends_on": []
+    }
+  ]
+}
+```
+
+#### Bridge 출력
+
+기존 FSM 입력을 그대로 사용한다.
+
+```text
+/pickplace/command   msgs/msg/PickPlaceCommand
+```
+
+`PickPlaceCommand` 필드:
+
+```text
+string task
+float64 x_pick
+float64 y_pick
+float64 yaw_pick
+float64 x_place
+float64 y_place
+float64 yaw_place
+```
+
+#### Bridge 책임
+
+1. STT/Qwen semantic plan JSON을 받는다.
+2. 최신 카메라 프레임을 저장하고 명령 수신 시 해당 프레임을 사용한다.
+3. Stage1 SlotEncoder와 Stage2 ColorNet으로 scene inventory를 만든다.
+4. `red_block`, `blue_block`, `green_block`, `basket`처럼 직접 지정된 이름을
+   scene inventory의 물체 좌표와 매칭한다.
+5. 직접 매칭된 pick/place pose를 `PickPlaceCommand`로 변환해 `/pickplace/command`에 publish한다.
+6. `object_query` 또는 `target_query`가 있으면 현재 MVP에서는 실행하지 않고
+   `"relation_query_not_supported_in_bridge_mvp"` 상태를 낸다.
+
+#### Scene inventory
+
+Stage1/ColorNet 추론 결과는 브릿지 내부에서 다음 형태로 정규화한다.
+
+```json
+{
+  "red_block": {
+    "x": 0.31,
+    "y": 0.12,
+    "yaw": 0.4,
+    "present_score": 0.98,
+    "color_confidence": 0.99
+  },
+  "blue_block": {
+    "x": 0.42,
+    "y": 0.08,
+    "yaw": -0.2,
+    "present_score": 0.97,
+    "color_confidence": 0.98
+  },
+  "basket": {
+    "x": 0.50,
+    "y": 0.20,
+    "yaw": 0.0,
+    "present_score": 0.95,
+    "color_confidence": 0.99
+  }
+}
+```
+
+#### Action → FSM task 매핑
+
+```text
+pick_place + target=basket  → PickPlaceCommand.task = "place"
+stack                       → PickPlaceCommand.task = "stack"
+```
+
+MVP에서는 다음 직접 지정 명령부터 지원한다.
+
+```text
+red_block   → basket
+blue_block  → basket
+green_block → basket
+red_block   → blue_block / green_block
+blue_block  → red_block / green_block
+green_block → red_block / blue_block
+```
+
+`pick` 단독과 `place` 단독은 기존 FSM이 pick/place 한 쌍을 전제로 하므로 후순위로 둔다.
+
+#### 관계 모듈 삽입 지점
+
+관계 추론 모듈이 준비되면 브릿지의 object 해소 함수만 교체한다.
+
+현재 MVP:
+
+```python
+def resolve_object_ref(name, query, scene):
+    if name is not None:
+        return scene[name]
+    if query is not None:
+        raise RelationQueryNotSupported
+```
+
+관계 모듈 연결 후:
+
+```python
+def resolve_object_ref(name, query, scene):
+    if name is not None:
+        return scene[name]
+    if query is not None:
+        return relation_grounder.resolve(query, scene)
+```
+
+이렇게 하면 Stage1/ColorNet/FSM 연결과 관계 추론 학습 모듈이 서로 독립적으로 개발된다.
+
+#### Bridge 안전 조건
+
+아래 조건 중 하나라도 실패하면 `/pickplace/command`를 publish하지 않는다.
+
+```text
+semantic JSON parse 실패
+success=false
+steps가 비어 있음
+카메라 프레임 없음 또는 너무 오래됨
+필요한 object/target이 scene inventory에 없음
+present_score 또는 color_confidence가 threshold 미만
+world 좌표 변환 실패
+workspace 범위 밖
+task_fsm_node가 IDLE이 아님
+object_query 또는 target_query가 있는데 관계 모듈이 아직 연결되지 않음
+```
+
 ### 4.1 카메라 노드 (camera_node)
 
 - RealSense D435 ROS2 wrapper

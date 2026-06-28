@@ -34,6 +34,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from idle_common.ros_params import declare_typed
 from msgs.msg import EETarget, PickPlaceCommand
+from phy.task_validation import is_known_task
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
@@ -75,12 +76,14 @@ class TaskFSMNode(Node):
         self._place_descend_duration = float(
             declare_typed(self, "place_descend_duration_s", 2.0)
         )
+        self._post_grasp_hold_s = float(declare_typed(self, "post_grasp_hold_s", 0.4))
         # Defaults preserved for reset when task="" or "default"
         self._z_pregrasp_default = self._z_pregrasp
         self._z_grasp_default = self._z_grasp
         self._z_place_default = self._z_place
         self._grasp_descend_duration_default = self._grasp_descend_duration
         self._place_descend_duration_default = self._place_descend_duration
+        self._post_grasp_hold_default = self._post_grasp_hold_s
 
         task_presets_yaml_path = declare_typed(self, "task_presets_yaml_path", "", cast=str)
         self._task_presets: dict = self._load_task_presets(task_presets_yaml_path)
@@ -123,6 +126,7 @@ class TaskFSMNode(Node):
         self._home_accepted: bool = False
         self._gripper_close_accepted: bool = False
         self._gripper_open_accepted: bool = False
+        self._grasp_success_start_s: float = 0.0
 
         # Pick / place pose (set on command)
         self._pick_x = self._pick_y = self._pick_yaw = 0.0
@@ -167,6 +171,9 @@ class TaskFSMNode(Node):
             return
 
         task = (msg.task or "").strip()
+        if not is_known_task(task, self._task_presets):
+            self.get_logger().error(f"unknown task '{task}' -- rejecting command")
+            return
         self._apply_task_preset(task)
 
         self._pick_x, self._pick_y, self._pick_yaw = msg.x_pick, msg.y_pick, msg.yaw_pick
@@ -230,7 +237,13 @@ class TaskFSMNode(Node):
                 elif self._service_failed_or_timed_out():
                     self._transition(FSMState.FAIL)
             elif self._grasp_success is True:
-                self._transition(FSMState.LIFT)
+                if self._grasp_success_start_s <= 0.0:
+                    self._grasp_success_start_s = self._now_s()
+                    self.get_logger().info(
+                        f"grasp success; holding {self._post_grasp_hold_s:.2f}s before lift"
+                    )
+                elif self._now_s() - self._grasp_success_start_s >= self._post_grasp_hold_s:
+                    self._transition(FSMState.LIFT)
             elif self._grasp_success is False:
                 self.get_logger().error("grasp failed")
                 self._transition(FSMState.FAIL)
@@ -352,6 +365,7 @@ class TaskFSMNode(Node):
         self._home_accepted = False
         self._gripper_close_accepted = False
         self._gripper_open_accepted = False
+        self._grasp_success_start_s = 0.0
         self._publish_fsm_status()
 
     def _plan_done(self) -> bool:
@@ -473,8 +487,7 @@ class TaskFSMNode(Node):
 
     def _apply_task_preset(self, task: str) -> None:
         """Apply named task preset; resets to defaults if task is empty or unknown."""
-        if task and task not in self._task_presets:
-            self.get_logger().warn(f"unknown task '{task}', using default preset")
+        if task == "default":
             task = ""
 
         if task:
@@ -498,9 +511,12 @@ class TaskFSMNode(Node):
                 self._place_descend_duration = float(
                     p.get("place_descend_duration_s", self._place_descend_duration_default)
                 )
+                self._post_grasp_hold_s = float(
+                    p.get("post_grasp_hold_s", self._post_grasp_hold_default)
+                )
                 self.get_logger().info(
                     f"preset '{task}': z_pre={self._z_pregrasp} z_gr={self._z_grasp} "
-                    f"z_pl={self._z_place}"
+                    f"z_pl={self._z_place} post_grasp_hold={self._post_grasp_hold_s}"
                 )
 
         if not task:
@@ -509,6 +525,7 @@ class TaskFSMNode(Node):
             self._z_place = self._z_place_default
             self._grasp_descend_duration = self._grasp_descend_duration_default
             self._place_descend_duration = self._place_descend_duration_default
+            self._post_grasp_hold_s = self._post_grasp_hold_default
 
     def _begin_plan_wait(self) -> None:
         self._plan_status = "WAITING"

@@ -15,15 +15,17 @@ from __future__ import annotations
 from typing import Optional
 
 import mujoco
+import numpy as np
 import rclpy
 from idle_common.motor_map import DEFAULT_MOTOR_JOINT_MAP
 from idle_common.paths import resolve_share_file
 from idle_common.ros_params import declare_typed
-from msgs.msg import MotorCMDArray, MotorState, MotorStateArray
+from msgs.msg import MotorCMDArray, MotorState, MotorStateArray, PickPlaceCommand
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
+from sim.attach_utils import mat_to_quat_wxyz, nearest_body_by_xy
 from sim.viewer_node import load_model_with_workaround
 
 
@@ -35,6 +37,11 @@ _GRIPPER_SCALE = 0.0447 / 0.8
 _FINGER_KP = 500.0   # N/m — sim contact needs enough normal force to hold blocks
 _FINGER_KD = 8.0     # N·s/m
 _FINGER_FORCE_LIMIT = 40.0
+_BLOCK_BODY_NAMES = ("block_red", "block_green", "block_blue")
+_GRIPPER_BODY_NAME = "gripper"
+_ATTACH_PICK_DISTANCE_M = 0.08
+_GRIPPER_OPEN_Q_DES = 0.10
+_GRIPPER_CLOSE_Q_DES = 0.35
 
 
 class SimDriverNode(Node):
@@ -90,6 +97,17 @@ class SimDriverNode(Node):
 
         self.latest_cmd: dict[int, dict[str, float]] = {}
         self.latest_gripper_cmd: Optional[dict[str, float]] = None
+        self._pick_xy: Optional[np.ndarray] = None
+        self._block_body_ids: dict[str, int] = {}
+        self._block_qpos_adrs: dict[str, int] = {}
+        self._block_qvel_adrs: dict[str, int] = {}
+        self._gripper_body_id = int(
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, _GRIPPER_BODY_NAME)
+        )
+        self._attached_block: Optional[str] = None
+        self._attach_rel_pos: Optional[np.ndarray] = None
+        self._attach_rel_mat: Optional[np.ndarray] = None
+        self._init_attachable_blocks()
 
         tick_period = 1.0 / max(self.control_hz, 1.0)
         physics_dt = float(self.model.opt.timestep)
@@ -128,6 +146,9 @@ class SimDriverNode(Node):
         self.cmd_sub = self.create_subscription(
             MotorCMDArray, "/motor_cmd_array", self.on_cmd_array, qos_cmd
         )
+        self.pickplace_sub = self.create_subscription(
+            PickPlaceCommand, "/pickplace/command", self.on_pickplace_command, 10
+        )
         self.state_pub = self.create_publisher(MotorStateArray, "/motor_state_array", qos_state)
 
         self.timer = self.create_timer(tick_period, self.on_timer)
@@ -138,8 +159,23 @@ class SimDriverNode(Node):
             "sim_driver_node initialized: "
             f"model={model_xml} control_hz={self.control_hz:.1f} "
             f"physics_dt={physics_dt:.4f} steps/tick={self.physics_steps_per_tick} "
-            f"motors={list(self.motor_ids)} gripper_joints={len(self.gripper_qpos_idxs)}"
+            f"motors={list(self.motor_ids)} gripper_joints={len(self.gripper_qpos_idxs)} "
+            f"attachable_blocks={list(self._block_body_ids)}"
         )
+
+    def _init_attachable_blocks(self) -> None:
+        for name in _BLOCK_BODY_NAMES:
+            body_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name))
+            if body_id < 0:
+                continue
+            if int(self.model.body_jntnum[body_id]) <= 0:
+                continue
+            joint_id = int(self.model.body_jntadr[body_id])
+            self._block_body_ids[name] = body_id
+            self._block_qpos_adrs[name] = int(self.model.jnt_qposadr[joint_id])
+            self._block_qvel_adrs[name] = int(self.model.jnt_dofadr[joint_id])
+        if self._gripper_body_id < 0:
+            self.get_logger().warn(f"body '{_GRIPPER_BODY_NAME}' not found; block attach disabled")
 
     def _disable_scene_contacts(self) -> int:
         """Disable basket/block contacts for pure arm reachability sweeps."""
@@ -186,11 +222,19 @@ class SimDriverNode(Node):
                 "tau_ff": float(cmd.tau_ff),
             }
 
+    def on_pickplace_command(self, msg: PickPlaceCommand) -> None:
+        self._pick_xy = np.array([float(msg.x_pick), float(msg.y_pick)], dtype=float)
+        if self._attached_block is not None:
+            self._detach_block("new pickplace command")
+
     def on_timer(self) -> None:
         self._apply_mit_torques()
         self._update_gripper()
+        self._update_block_attach_state()
         for _ in range(self.physics_steps_per_tick):
+            self._enforce_attached_block_pose()
             mujoco.mj_step(self.model, self.data)
+            self._enforce_attached_block_pose()
         self._publish_state()
         self._tick_count += 1
         if self._viewer is not None and self._tick_count % self._viewer_sync_every == 0:
@@ -245,6 +289,83 @@ class SimDriverNode(Node):
             f = _FINGER_KP * (target - q) + _FINGER_KD * (-qd)
             f = max(-_FINGER_FORCE_LIMIT, min(_FINGER_FORCE_LIMIT, f))
             self.data.qfrc_applied[vi] = f
+
+    def _update_block_attach_state(self) -> None:
+        if self.latest_gripper_cmd is None:
+            return
+        q_des = float(self.latest_gripper_cmd["q_des"])
+        if q_des <= _GRIPPER_OPEN_Q_DES:
+            if self._attached_block is not None:
+                self._detach_block("gripper opened")
+            return
+        if q_des < _GRIPPER_CLOSE_Q_DES or self._attached_block is not None:
+            return
+        if self._pick_xy is None or self._gripper_body_id < 0 or not self._block_body_ids:
+            return
+
+        positions = {
+            name: self.data.xpos[body_id].copy()
+            for name, body_id in self._block_body_ids.items()
+        }
+        name, dist = nearest_body_by_xy(positions, self._pick_xy)
+        if name is None or dist > _ATTACH_PICK_DISTANCE_M:
+            self.get_logger().warn(
+                f"block attach skipped: nearest={name} dist={dist:.3f}m "
+                f"pick=({self._pick_xy[0]:.3f}, {self._pick_xy[1]:.3f})"
+            )
+            return
+        self._attach_block(name)
+
+    def _attach_block(self, name: str) -> None:
+        body_id = self._block_body_ids.get(name)
+        if body_id is None or self._gripper_body_id < 0:
+            return
+        mujoco.mj_forward(self.model, self.data)
+        grip_pos = self.data.xpos[self._gripper_body_id].copy()
+        grip_mat = self.data.xmat[self._gripper_body_id].reshape(3, 3).copy()
+        block_pos = self.data.xpos[body_id].copy()
+        block_mat = self.data.xmat[body_id].reshape(3, 3).copy()
+
+        self._attach_rel_pos = grip_mat.T @ (block_pos - grip_pos)
+        self._attach_rel_mat = grip_mat.T @ block_mat
+        self._attached_block = name
+        self.get_logger().info(f"attached {name} to gripper")
+        self._enforce_attached_block_pose()
+
+    def _detach_block(self, reason: str) -> None:
+        name = self._attached_block
+        self._attached_block = None
+        self._attach_rel_pos = None
+        self._attach_rel_mat = None
+        if name is not None:
+            qvel_adr = self._block_qvel_adrs.get(name)
+            if qvel_adr is not None:
+                self.data.qvel[qvel_adr:qvel_adr + 6] = 0.0
+            mujoco.mj_forward(self.model, self.data)
+            self.get_logger().info(f"detached {name}: {reason}")
+
+    def _enforce_attached_block_pose(self) -> None:
+        if (
+            self._attached_block is None
+            or self._attach_rel_pos is None
+            or self._attach_rel_mat is None
+            or self._gripper_body_id < 0
+        ):
+            return
+        qpos_adr = self._block_qpos_adrs.get(self._attached_block)
+        qvel_adr = self._block_qvel_adrs.get(self._attached_block)
+        if qpos_adr is None:
+            return
+
+        grip_pos = self.data.xpos[self._gripper_body_id].copy()
+        grip_mat = self.data.xmat[self._gripper_body_id].reshape(3, 3).copy()
+        block_pos = grip_pos + grip_mat @ self._attach_rel_pos
+        block_mat = grip_mat @ self._attach_rel_mat
+        self.data.qpos[qpos_adr:qpos_adr + 3] = block_pos
+        self.data.qpos[qpos_adr + 3:qpos_adr + 7] = mat_to_quat_wxyz(block_mat)
+        if qvel_adr is not None:
+            self.data.qvel[qvel_adr:qvel_adr + 6] = 0.0
+        mujoco.mj_forward(self.model, self.data)
 
     def _publish_state(self) -> None:
         stamp = self.get_clock().now().to_msg()

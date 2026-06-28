@@ -49,13 +49,22 @@ _TARGET_PHASES = ("TARGET_PRECOMPUTE", "DETECT_PLACE")
 class Stage4TorchDataset(Dataset):
     """Torch dataset used by Stage 4 training."""
 
-    def __init__(self, scenes_dir, split_json, split_key, dino_cache_dir, labels_json=None):
+    def __init__(
+        self,
+        scenes_dir,
+        split_json,
+        split_key,
+        dino_cache_dir,
+        labels_json=None,
+        dino_dim=384,
+    ):
         self.stage1 = Stage1Dataset(
             scenes_dir,
             split_json,
             split_key,
             dino_cache_dir,
             augment=False,
+            dino_dim=dino_dim,
         )
         self.scene_to_index = {sid: i for i, sid in enumerate(self.stage1.ids)}
         self.relations = Stage4RelationDataset(

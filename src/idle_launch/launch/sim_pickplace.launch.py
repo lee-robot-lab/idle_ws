@@ -6,6 +6,8 @@ Pick-and-place 데모:
                    x_place: 0.0, y_place: 0.62, yaw_place: 0.0}'
 """
 
+from pathlib import Path
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
@@ -13,7 +15,15 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+def _workspace_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "src/sim/robot.xml").exists():
+            return parent
+    return Path.home() / "idle_ws"
+
+
 def generate_launch_description() -> LaunchDescription:
+    ws = _workspace_root()
     viewer_arg = DeclareLaunchArgument(
         "viewer",
         default_value="true",
@@ -99,10 +109,15 @@ def generate_launch_description() -> LaunchDescription:
         default_value="false",
         description="Disable basket/block MuJoCo contacts for reachability sweeps",
     )
+    model_xml_arg = DeclareLaunchArgument(
+        "model_xml",
+        default_value=str(ws / "src/sim/robot.xml"),
+        description="MuJoCo model XML path. Use generated XML to mirror detected scene poses.",
+    )
 
     return LaunchDescription(
         [
-            SetEnvironmentVariable("IDLE_PARAM_ROOT", "/home/su/idle_ws/param/sim"),
+            SetEnvironmentVariable("IDLE_PARAM_ROOT", str(ws / "param/sim")),
             viewer_arg,
             viewer_left_ui_arg,
             viewer_right_ui_arg,
@@ -120,6 +135,7 @@ def generate_launch_description() -> LaunchDescription:
             plan_diag_csv_path_arg,
             plan_diag_hz_arg,
             disable_scene_contacts_arg,
+            model_xml_arg,
             Node(
                 package="sim",
                 executable="sim_driver_node",
@@ -130,7 +146,7 @@ def generate_launch_description() -> LaunchDescription:
                         "viewer": LaunchConfiguration("viewer"),
                         "viewer_left_ui": LaunchConfiguration("viewer_left_ui"),
                         "viewer_right_ui": LaunchConfiguration("viewer_right_ui"),
-                        "model_xml": "/home/su/idle_ws/src/sim/robot.xml",
+                        "model_xml": LaunchConfiguration("model_xml"),
                         "disable_scene_contacts": LaunchConfiguration("disable_scene_contacts"),
                     }
                 ],
@@ -189,8 +205,8 @@ def generate_launch_description() -> LaunchDescription:
                 name="gripper_node",
                 output="screen",
                 parameters=[{
-                    "q_closed_min": 0.55,
-                    "delta_overclose": 0.01,
+                    "q_closed_min": 0.72,
+                    "delta_overclose": 0.06,
                     "q_min_grasp": 0.30,
                     "tau_drop_threshold": 0.0,
                 }],
@@ -208,7 +224,7 @@ def generate_launch_description() -> LaunchDescription:
                     "x_max": 0.5,
                     "y_min": -0.1,
                     "y_max": 0.9,
-                    "task_presets_yaml_path": "/home/su/idle_ws/param/tuned/task_presets.yaml",
+                    "task_presets_yaml_path": str(ws / "param/tuned/task_presets.yaml"),
                 }],
             ),
         ]

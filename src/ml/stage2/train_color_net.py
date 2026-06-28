@@ -30,8 +30,8 @@ def get_args():
     p = argparse.ArgumentParser()
     p.add_argument("--scenes_dir",     default=str(_ROOT / "data/scenes"))
     p.add_argument("--split_json",     default=str(_ROOT / "data/split.json"))
-    p.add_argument("--dino_cache_dir", default=str(_ROOT / "data/dino_cache/dinov2_vits14_reg"))
-    p.add_argument("--stage1_ckpt",    default=str(_ROOT / "checkpoints/stage1/best.pt"))
+    p.add_argument("--dino_cache_dir", default=str(_ROOT / "data/dino_cache/dinov2_vitb14"))
+    p.add_argument("--stage1_ckpt",    default=str(_ROOT / "checkpoints/stage1_vitb14_xy12_cls025_feat03_ep500/best.pt"))
     p.add_argument("--out_dir",        default=str(_ROOT / "checkpoints/color_net"))
     p.add_argument("--epochs",       type=int,   default=100)
     p.add_argument("--lr",           type=float, default=1e-3)
@@ -43,6 +43,22 @@ def get_args():
     p.add_argument("--workers",      type=int,   default=2)
     p.add_argument("--present_thr",  type=float, default=0.5)
     return p.parse_args()
+
+
+def infer_slot_encoder_config(state_dict):
+    dec_layers = {
+        int(k.split(".")[2])
+        for k in state_dict
+        if k.startswith("decoder.layers.") and k.endswith(".norm1.weight")
+    }
+    return {
+        "num_queries": state_dict["queries.weight"].shape[0],
+        "dec_layers": len(dec_layers),
+        "d_model": state_dict["head_xy.weight"].shape[1],
+        "dino_dim": state_dict["head_sem.weight"].shape[0],
+        "input_h": 288,
+        "input_w": 416,
+    }
 
 
 @torch.no_grad()
@@ -89,12 +105,16 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── 데이터 ──────────────────────────────────────────────────
+    ckpt = torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)
+    state = ckpt.get("state_dict", ckpt)
+    encoder_cfg = infer_slot_encoder_config(state)
+
     train_ds = Stage1Dataset(
         args.scenes_dir, args.split_json, "train",
-        args.dino_cache_dir, augment=True)
+        args.dino_cache_dir, augment=True, dino_dim=encoder_cfg["dino_dim"])
     val_ds   = Stage1Dataset(
         args.scenes_dir, args.split_json, "val",
-        args.dino_cache_dir, augment=False)
+        args.dino_cache_dir, augment=False, dino_dim=encoder_cfg["dino_dim"])
     pin = (device == "cuda")
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                               num_workers=args.workers, pin_memory=pin)
@@ -102,9 +122,8 @@ def main():
                               num_workers=args.workers)
 
     # ── 모델 ────────────────────────────────────────────────────
-    ckpt = torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)
-    encoder = SlotEncoder()
-    encoder.load_state_dict(ckpt["state_dict"])
+    encoder = SlotEncoder(**encoder_cfg)
+    encoder.load_state_dict(state)
     encoder.to(device).eval()
     encoder.requires_grad_(False)
 
