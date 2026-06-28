@@ -10,6 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+_ROOT = Path(__file__).resolve().parents[3]
+
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
@@ -33,8 +35,8 @@ def compute_loss(model_out: dict, batch: dict, device: str) -> tuple[torch.Tenso
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--slot_cache_dir", default="data/slot_cache")
-    p.add_argument("--out_dir",        default="checkpoints/slot_diff")
+    p.add_argument("--slot_cache_dir", default=str(_ROOT / "data/slot_cache"))
+    p.add_argument("--out_dir",        default=str(_ROOT / "checkpoints/slot_diff"))
     p.add_argument("--epochs",   type=int,   default=50)
     p.add_argument("--batch",    type=int,   default=32)
     p.add_argument("--lr",       type=float, default=1e-3)
