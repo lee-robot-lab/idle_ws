@@ -4,10 +4,38 @@
 
 ## 노드
 
+### Pick-and-Place 컨트롤 (운영 기준)
+
+| 노드 | 역할 |
+|------|------|
+| [`task_fsm_node`](phy/task_fsm_node.py) | Pick-and-place FSM 오케스트레이터. `PickPlaceCommand` 수신 → 단계별 EE 목표 발행 |
+| [`plan_compute_node`](phy/plan_compute_node.py) | 계획 전용 프로세스 (IK + 충돌 검사). GIL 경합이 250Hz 제어 루프를 방해하지 않도록 분리 |
+| [`plan_node`](phy/plan_node.py) | 제어 전용 프로세스 (250Hz). `ComputedPlan` 수신 → quintic 궤적 실행 + hold/settle |
+| [`gripper_node`](phy/gripper_node.py) | 모터 7 그리퍼 제어. 파지 성공/낙하 감지 포함 |
+
+**토픽 흐름**
+```
+PickPlaceCommand
+    → task_fsm_node → EETarget
+        → plan_compute_node (IK + 충돌) → ComputedPlan
+            → plan_node (250Hz 궤적) → MotorCMDArray
+                → can_interface → 모터
+task_fsm_node → gripper_node (open/close 서비스)
+```
+
+**FSM 상태 순서**
+```
+IDLE → PRE_GRASP → GRASP_DESCEND → GRASP_CLOSE
+     → LIFT → TRANSIT → PLACE_DESCEND
+     → GRASP_OPEN → RETRACT → HOME → DONE → IDLE
+```
+
+### 유틸리티 노드
+
 | 노드 | 역할 |
 |------|------|
 | [`hold_node`](phy/hold_node.py) | 중력 보상만 적용 — 외력에 자연스럽게 밀리는 cobot 기본 모드 |
-| [`ee_xyz_trajectory_node`](phy/ee_xyz_trajectory_node.py) | EE 좌표 입력 → IK → 5차 다항 궤적 → 모터 명령 |
+| [`ee_xyz_trajectory_node`](phy/ee_xyz_trajectory_node.py) | EE 좌표 입력 → IK → 5차 다항 궤적 → 모터 명령 (디버그용) |
 
 ## 라이브러리 모듈
 

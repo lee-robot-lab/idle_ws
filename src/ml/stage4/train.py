@@ -27,7 +27,7 @@ def get_args():
     parser.add_argument("--scenes_dir", default=str(root / "data/scenes"))
     parser.add_argument("--split_json", default=str(root / "data/split.json"))
     parser.add_argument("--labels_json", default=str(root / "data/stage4_relations.json"))
-    parser.add_argument("--stage1_ckpt", default=str(root / "checkpoints/stage1/best.pt"))
+    parser.add_argument("--stage1_ckpt", default=str(root / "checkpoints/stage1_vitb14/best.pt"))
     parser.add_argument("--color_net_ckpt", default=str(root / "checkpoints/color_net/best.pt"))
     parser.add_argument("--dino_cache_dir", default=str(root / "data/dino_cache/dinov2_vits14_reg"))
     parser.add_argument("--out_dir", default=str(root / "checkpoints/stage4"))
@@ -85,7 +85,10 @@ def main():
                             num_workers=args.workers)
 
     encoder = SlotEncoder().to(device).eval()
-    encoder.load_state_dict(torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)["state_dict"])
+    _s1_sd = torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)["state_dict"]
+    _s1_sd.pop("head_sem.weight", None)
+    _s1_sd.pop("head_sem.bias", None)
+    encoder.load_state_dict(_s1_sd, strict=False)
     encoder.requires_grad_(False)
 
     color_net = ColorNet().to(device).eval()
