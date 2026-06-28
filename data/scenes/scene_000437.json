@@ -2942,5 +2942,11 @@
         44
       ]
     ]
-  }
+  },
+  "target_colors": [
+    "red",
+    "green",
+    "blue",
+    "basket"
+  ]
 }

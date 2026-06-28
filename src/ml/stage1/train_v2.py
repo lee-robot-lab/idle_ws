@@ -269,7 +269,7 @@ def main():
     ap.add_argument('--input_w',     type=int, default=416)
     ap.add_argument('--input_h',     type=int, default=288)
     ap.add_argument('--batch',       type=int, default=8)
-    ap.add_argument('--epochs',      type=int, default=100)
+    ap.add_argument('--epochs',      type=int, default=500)
     ap.add_argument('--lr',          type=float, default=1e-4)
     ap.add_argument('--num_queries', type=int, default=6)
     ap.add_argument('--dec_layers',  type=int, default=3)
@@ -277,15 +277,15 @@ def main():
     ap.add_argument('--dino_dim',    type=int, default=384)
     ap.add_argument('--mask_prob',   type=float, default=0.3)
     ap.add_argument('--warmup_frac', type=float, default=0.05)
-    ap.add_argument('--stage1_ckpt', default=None,
+    ap.add_argument('--stage1_ckpt', default='checkpoints/stage1_vitb14/best.pt',
                     help='사전학습 체크포인트 경로 (e.g. checkpoints/stage1_vitb14/best.pt)')
     ap.add_argument('--resume',      default=None,
                     help='이어학습 체크포인트 경로')
     ap.add_argument('--lam_cls',   type=float, default=1.0)
-    ap.add_argument('--lam_xy',    type=float, default=5.0)
+    ap.add_argument('--lam_xy',    type=float, default=15.0)
     ap.add_argument('--lam_yaw',   type=float, default=2.0)
     ap.add_argument('--lam_feat',  type=float, default=1.0)
-    ap.add_argument('--patience',         type=int,  default=20)
+    ap.add_argument('--patience',         type=int,  default=100)
     ap.add_argument('--freeze_backbone',  action='store_true', default=True)
     ap.add_argument('--no_freeze_backbone', dest='freeze_backbone',
                     action='store_false')

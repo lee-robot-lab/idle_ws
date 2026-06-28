@@ -33,13 +33,15 @@ def get_args():
     p.add_argument("--scenes_dir",     default=str(_ROOT / "data/scenes"))
     p.add_argument("--split_json",     default=str(_ROOT / "data/split.json"))
     p.add_argument("--dino_cache_dir", default=str(_ROOT / "data/dino_cache/dinov2_vits14_reg"))
-    p.add_argument("--stage1_ckpt",    default=str(_ROOT / "checkpoints/stage1/best.pt"))
+    p.add_argument("--stage1_ckpt",    default=str(_ROOT / "checkpoints/stage1_v2/best.pt"))
     p.add_argument("--out_dir",        default=str(_ROOT / "checkpoints/color_net_v2"))
-    p.add_argument("--epochs",        type=int,   default=100)
+    p.add_argument("--epochs",        type=int,   default=500)
     p.add_argument("--lr",            type=float, default=1e-3)
     p.add_argument("--weight_decay",  type=float, default=1e-4)
     p.add_argument("--warmup_frac",   type=float, default=0.05)
-    p.add_argument("--patience",      type=int,   default=20)
+    p.add_argument("--patience",      type=int,   default=100)
+    p.add_argument("--es_start",      type=int,   default=15,
+                   help="이 에폭 이전에는 early stopping 카운트 안 함")
     p.add_argument("--batch_size",    type=int,   default=8)
     p.add_argument("--workers",       type=int,   default=2)
     p.add_argument("--present_thr",   type=float, default=0.5)
@@ -70,27 +72,37 @@ def build_is_target_gt(scene_ids: list[str], scenes_dir: str,
 
 
 @torch.no_grad()
-def evaluate(encoder, color_net, loader, device, present_thr):
+def evaluate(encoder, color_net, loader, device, present_thr, scenes_dir):
     color_net.eval()
     correct = total = 0
     per_class = {i: [0, 0] for i in range(4)}
+    tgt_correct = tgt_total = 0
 
-    for img, gt_xy, gt_yaw, gt_sem, gt_present, _ in loader:
+    for img, gt_xy, gt_yaw, gt_sem, gt_present, sids in loader:
         img   = img.to(device)
         gt_xy = gt_xy.to(device)
 
         out     = encoder(img)
         xy      = out["xy"]
         present = out["present"]
-        logit, _ = color_net(img, xy)
+        logit, is_target_logit = color_net(img, xy)
 
         B = img.shape[0]
+        all_labels = []
         for b in range(B):
             labels = hungarian_color_labels(
                 xy[b], gt_xy[b], present[b], present_thr)
+            all_labels.append(labels)
+        all_labels = torch.stack(all_labels)  # (B, N)
+
+        is_target_gt = build_is_target_gt(
+            list(sids), scenes_dir, all_labels).to(device)  # (B, N, 1)
+
+        # color accuracy
+        for b in range(B):
             pred_color = logit[b].argmax(-1)
-            for slot_i in (labels >= 0).nonzero(as_tuple=True)[0]:
-                gt_c   = labels[slot_i].item()
+            for slot_i in (all_labels[b] >= 0).nonzero(as_tuple=True)[0]:
+                gt_c   = all_labels[b, slot_i].item()
                 pred_c = pred_color[slot_i].item()
                 if gt_c == pred_c:
                     correct += 1
@@ -98,12 +110,19 @@ def evaluate(encoder, color_net, loader, device, present_thr):
                 total += 1
                 per_class[gt_c][1] += 1
 
+        # is_target accuracy (present 슬롯만)
+        pred_tgt     = (is_target_logit > 0).float()
+        present_mask = (all_labels >= 0).unsqueeze(-1).to(device)
+        tgt_correct += (pred_tgt.eq(is_target_gt) * present_mask).sum().item()
+        tgt_total   += present_mask.sum().item()
+
     acc = correct / total if total > 0 else 0.0
     per_class_acc = {
         COLORS[i]: (v[0] / v[1] if v[1] > 0 else 0.0)
         for i, v in per_class.items()
     }
-    return acc, per_class_acc
+    tgt_acc = tgt_correct / tgt_total if tgt_total > 0 else 0.0
+    return acc, tgt_acc, per_class_acc
 
 
 def main():
@@ -128,7 +147,8 @@ def main():
     # ── 모델 ────────────────────────────────────────────────────
     ckpt = torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)
     encoder = SlotEncoder()
-    encoder.load_state_dict(ckpt["state_dict"])
+    # strict=False: SlotEncoderDN 체크포인트의 dn_embed key 무시
+    encoder.load_state_dict(ckpt["state_dict"], strict=False)
     encoder.to(device).eval()
     encoder.requires_grad_(False)
 
@@ -149,7 +169,6 @@ def main():
     scaler  = torch.amp.GradScaler("cuda") if use_amp else None
     print(f"device={device}  AMP={use_amp}  lam_target={args.lam_target}")
 
-    best_acc     = 0.0
     patience_cnt = 0
 
     for epoch in range(1, args.epochs + 1):
@@ -203,31 +222,31 @@ def main():
 
         scheduler.step()
 
-        val_acc, per_cls = evaluate(encoder, color_net, val_loader, device, args.present_thr)
+        val_acc, tgt_acc, per_cls = evaluate(
+            encoder, color_net, val_loader, device, args.present_thr, args.scenes_dir)
         avg_loss = total_loss / max(n_batches, 1)
         cur_lr   = scheduler.get_last_lr()[0]
-        print(f"ep {epoch:03d}  loss={avg_loss:.4f}  val_acc={val_acc:.4f}  "
+        print(f"ep {epoch:03d}  loss={avg_loss:.4f}  "
+              f"color={val_acc:.4f}  is_target={tgt_acc:.4f}  "
               f"lr={cur_lr:.2e}  {per_cls}")
 
-        if val_acc > best_acc:
-            best_acc     = val_acc
-            patience_cnt = 0
-            torch.save({
-                "epoch":       epoch,
-                "val_acc":     val_acc,
-                "color_net":   color_net.state_dict(),
-                "stage1_ckpt": args.stage1_ckpt,
-            }, out_dir / "best.pt")
-            print(f"  → saved best (acc={best_acc:.4f})")
-        else:
+        ckpt = {
+            "epoch":       epoch,
+            "val_acc":     val_acc,
+            "tgt_acc":     tgt_acc,
+            "color_net":   color_net.state_dict(),
+            "stage1_ckpt": args.stage1_ckpt,
+        }
+        torch.save(ckpt, out_dir / "last.pt")
+        torch.save(ckpt, out_dir / "best.pt")
+
+        if epoch >= args.es_start:
             patience_cnt += 1
             if args.patience > 0 and patience_cnt >= args.patience:
                 print(f"Early stop at epoch {epoch} (patience={args.patience})")
                 break
 
-    torch.save({"epoch": epoch, "color_net": color_net.state_dict()},
-               out_dir / "last.pt")
-    print(f"\n학습 완료. best val_acc={best_acc:.4f}")
+    print(f"\n학습 완료. color={val_acc:.4f}  is_target={tgt_acc:.4f}")
 
 
 if __name__ == "__main__":

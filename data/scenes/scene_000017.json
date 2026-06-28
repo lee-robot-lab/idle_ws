@@ -2910,5 +2910,11 @@
         377
       ]
     ]
-  }
+  },
+  "target_colors": [
+    "red",
+    "green",
+    "blue",
+    "basket"
+  ]
 }
