@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "policy_network_interface.json",
+  "title": "Policy Network Runtime Interface",
+  "description": "FSM과 ResNet18 기반 Policy Network 사이의 런타임 데이터 계약",
+  "$defs": {
+    "objectName": {
+      "type": "string",
+      "enum": [
+        "red_block",
+        "blue_block",
+        "green_block",
+        "basket"
+      ]
+    },
+    "blockName": {
+      "type": "string",
+      "enum": [
+        "red_block",
+        "blue_block",
+        "green_block"
+      ]
+    },
+    "referenceName": {
+      "type": "string",
+      "enum": [
+        "red_block",
+        "blue_block",
+        "green_block",
+        "basket",
+        "robot"
+      ]
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relation",
+        "reference"
+      ],
+      "properties": {
+        "relation": {
+          "type": "string",
+          "enum": [
+            "left_of",
+            "right_of",
+            "front_of",
+            "behind",
+            "nearest_to",
+            "farthest_from",
+            "leftmost",
+            "rightmost"
+          ]
+        },
+        "reference": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/referenceName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "relation": {
+                "enum": [
+                  "leftmost",
+                  "rightmost"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reference": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "reference": {
+                "$ref": "#/$defs/referenceName"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "objectQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "relations"
+      ],
+      "properties": {
+        "type": {
+          "const": "block"
+        },
+        "relations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/relation"
+          }
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "object",
+        "object_query",
+        "target",
+        "target_query",
+        "depends_on"
+      ],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "pick",
+            "place",
+            "pick_place",
+            "stack"
+          ]
+        },
+        "object": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/blockName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "object_query": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/objectQuery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/objectName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_query": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/objectQuery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depends_on": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rgb_image",
+        "step",
+        "phase"
+      ],
+      "properties": {
+        "rgb_image": {
+          "description": "RealSense D435 RGB tensor. Runtime shape: (3, H, W). JSON 전송 시에는 텐서 핸들/배열 직렬화 규약을 별도로 적용한다."
+        },
+        "step": {
+          "$ref": "#/$defs/step"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "DETECT_PICK",
+            "DETECT_PLACE"
+          ]
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "cos_yaw",
+        "sin_yaw"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "월드 좌표 X (m)"
+        },
+        "y": {
+          "type": "number",
+          "description": "월드 좌표 Y (m)"
+        },
+        "cos_yaw": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "description": "cos(4θ)"
+        },
+        "sin_yaw": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "description": "sin(4θ)"
+        }
+      }
+    }
+  },
+  "x-phase-gating": {
+    "DETECT_PICK": {
+      "used_step_fields": [
+        "object",
+        "object_query",
+        "action"
+      ],
+      "ignored_step_fields": [
+        "target",
+        "target_query"
+      ]
+    },
+    "DETECT_PLACE": {
+      "used_step_fields": [
+        "target",
+        "target_query",
+        "action"
+      ],
+      "ignored_step_fields": [
+        "object",
+        "object_query"
+      ]
+    }
+  },
+  "x-embedding-vocab": {
+    "color": [
+      "red",
+      "blue",
+      "green",
+      "null"
+    ],
+    "relation": [
+      "left_of",
+      "right_of",
+      "front_of",
+      "behind",
+      "nearest_to",
+      "farthest_from",
+      "leftmost",
+      "rightmost",
+      "null"
+    ],
+    "anchor": [
+      "basket",
+      "red_block",
+      "blue_block",
+      "green_block",
+      "robot",
+      "null"
+    ],
+    "action": [
+      "pick",
+      "place",
+      "pick_place",
+      "stack"
+    ],
+    "phase": [
+      "DETECT_PICK",
+      "DETECT_PLACE"
+    ]
+  },
+  "x-runtime-policy": {
+    "calls": "FSM이 각 step의 DETECT_PICK/DETECT_PLACE phase에서 Policy Network를 1회 호출한다.",
+    "tie_break": "관계 조건을 만족하는 후보가 여러 개면 쿼리 anchor에 가장 가까운 블록을 정답으로 선택한다.",
+    "yaw_recovery": "theta = atan2(sin_yaw, cos_yaw) / 4",
+    "unresolved": [
+      "front_of/behind 기준 프레임"
+    ]
+  }
+}
