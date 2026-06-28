@@ -1,7 +1,5 @@
 # MuJoCo Phase RL Runtime Outputs
 
-배포/공유용 runtime 산출물만 보관.
-
 ## 남긴 파일
 
 - `final/vision_estimator.pt`
