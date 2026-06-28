@@ -1,6 +1,15 @@
 # Policy Network — 단계별 상세 설계 지침 (통합)
 
-작성일: 2026-06-25
+작성일: 2026-06-25  
+**⚠ 상태 (2026-06-29): 구버전 — top-K 후보 제안 방식은 현행 PPO 기반 설계로 대체됨.**
+
+현행 아키텍처 → `docs/superpowers/specs/2026-06-29-full-system-architecture.md`  
+현행 obs/action 구조 → `docs/superpowers/specs/2026-06-29-world-in-world-phase-goal-design.md`
+
+이 문서는 초기 설계 결정 근거 기록용으로 보존.
+
+---
+
 진입점 문서. 아래 세 문서를 평가·통합한 결과이며, 단계별 상세 설계는 이 문서에서 이어서 채운다.
 
 - 설계 원본: `docs/policy_network/policy_network_design.md`

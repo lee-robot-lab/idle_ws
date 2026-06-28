@@ -152,6 +152,7 @@ class PhasePickPlaceEnv(gym.Env):
                 "phase": spaces.Box(low=-inf, high=inf, shape=(9,), dtype=np.float32),
                 "history": spaces.Box(low=-inf, high=inf, shape=(13,), dtype=np.float32),
                 "slot_diff": spaces.Box(low=-inf, high=inf, shape=(64,), dtype=np.float32),
+                "rssm_latent": spaces.Box(low=-inf, high=inf, shape=(64,), dtype=np.float32),
             }
         )
 

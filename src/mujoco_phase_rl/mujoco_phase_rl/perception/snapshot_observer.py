@@ -11,6 +11,7 @@ from mujoco_phase_rl.tasks.phase_manager import COMMAND_COUNT
 _ACTIVE_PHASE_COUNT = 7   # OBSERVE_OBJECT..RETREAT (phase_id 0-6)
 _ACTIVE_RESULT_COUNT = 4  # SUCCESS/FAILURE/INVALID/TIMEOUT; NONE(0)→all zeros
 _SLOT_DIFF_DIM = 64
+_RSSM_LATENT_DIM = 64    # RSSM belief summary (zeros until RSSM is integrated)
 
 
 @dataclass
@@ -82,9 +83,10 @@ class SnapshotObserver:
                 )
 
         return {
-            "robot": robot,       # (11,)
-            "task": task,         # (4,)
-            "phase": phase,       # (9,)
-            "history": history,   # (13,)
-            "slot_diff": slot_diff,  # (64,)
+            "robot": robot,                                              # (11,)
+            "task": task,                                                # (4,)
+            "phase": phase,                                              # (9,)
+            "history": history,                                          # (13,)
+            "slot_diff": slot_diff,                                      # (64,)
+            "rssm_latent": np.zeros(_RSSM_LATENT_DIM, dtype=np.float32),  # (64,)
         }
