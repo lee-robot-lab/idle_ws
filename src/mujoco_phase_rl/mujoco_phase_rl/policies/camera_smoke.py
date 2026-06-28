@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
-from mujoco_phase_rl.perception.image_embedding import save_rgb_ppm
 
 
 def main() -> None:
@@ -31,7 +31,9 @@ def main() -> None:
     frame = env.render()
     if frame is None:
         raise RuntimeError("Expected rgb_array frame from env.render()")
-    output_path = save_rgb_ppm(Path(args.save_frame), frame)
+    output_path = Path(args.save_frame)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(frame).save(output_path)
     embedding = obs["slot_diff"]
 
     result = {

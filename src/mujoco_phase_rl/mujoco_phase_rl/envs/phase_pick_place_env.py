@@ -186,6 +186,7 @@ class PhasePickPlaceEnv(gym.Env):
             self.slot_embedder.reset()
         self.slot_state_bridge_grounded = False
         self._cached_slot_diff_emb = np.zeros(IMAGE_EMBEDDING_SIZE, dtype=np.float32)
+        self._cached_curr_slots = None
         self.pose_provider.reset()
 
         self.current_task = self.task.sample(self.rng)
@@ -863,16 +864,21 @@ class PhasePickPlaceEnv(gym.Env):
         return self.last_pose_estimate
 
     def _build_slot_state(self) -> SlotState:
-        """'slot' 모드: SlotEmbedder 실행 후 SlotStateBridge. 'zeros': GT XY."""
+        """'slot' 모드: SlotEmbedder를 interval마다 실행 후 SlotStateBridge. 'zeros': GT XY."""
         if self.image_embedding_mode == "slot" and self.slot_embedder is not None:
-            emb, curr_slots = self.slot_embedder.embed(self.model, self.data)
-            self._cached_slot_diff_emb = emb
-            self._cached_curr_slots = curr_slots
-            # 에피소드 첫 관측 시 GT proximity로 grounding 초기화
-            if not self.slot_state_bridge_grounded:
-                self._init_grounding_from_gt(curr_slots)
-                self.slot_state_bridge_grounded = True
-            return self.slot_state_bridge.estimate(curr_slots)
+            should_run = (
+                self._cached_curr_slots is None
+                or self.step_count % self.image_embedding_interval == 0
+            )
+            if should_run:
+                emb, curr_slots = self.slot_embedder.embed(self.model, self.data)
+                self._cached_slot_diff_emb = emb
+                self._cached_curr_slots = curr_slots
+                # 에피소드 첫 관측 시 GT proximity로 grounding 초기화
+                if not self.slot_state_bridge_grounded:
+                    self._init_grounding_from_gt(curr_slots)
+                    self.slot_state_bridge_grounded = True
+            return self.slot_state_bridge.estimate(self._cached_curr_slots)
         # zeros 모드: GT 위치 직접 사용
         pose = self.pose_provider.estimate(self.current_task, self.rng)
         self.last_pose_estimate = pose
