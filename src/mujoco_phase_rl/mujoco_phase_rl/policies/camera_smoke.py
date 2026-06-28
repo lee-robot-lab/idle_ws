@@ -23,7 +23,7 @@ def main() -> None:
 
     env = PhasePickPlaceEnv(
         render_mode="rgb_array",
-        image_embedding_mode="camera",
+        image_embedding_mode="zeros",
         image_width=args.embedding_width,
         image_height=args.embedding_height,
     )
@@ -32,7 +32,7 @@ def main() -> None:
     if frame is None:
         raise RuntimeError("Expected rgb_array frame from env.render()")
     output_path = save_rgb_ppm(Path(args.save_frame), frame)
-    embedding = obs["embeddings"][:16]
+    embedding = obs["slot_diff"]
 
     result = {
         "seed": args.seed,
@@ -44,7 +44,7 @@ def main() -> None:
         "frame_mean": float(np.mean(frame)),
         "embedding_shape": list(embedding.shape),
         "embedding": [float(value) for value in embedding],
-        "embedding_status": info["image_embedding_status"],
+        "embedding_status": info["image_embedding_mode"],
         "phase": info["phase"],
     }
     env.close()

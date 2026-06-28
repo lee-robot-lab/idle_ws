@@ -109,7 +109,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--no-command-mask", action="store_true")
-    parser.add_argument("--image-embedding", choices=["zeros", "camera"], default="zeros")
+    parser.add_argument("--image-embedding", choices=["zeros", "slot"], default="zeros")
     parser.add_argument("--image-width", type=int, default=64)
     parser.add_argument("--image-height", type=int, default=64)
     parser.add_argument("--image-embedding-interval", type=int, default=1)
