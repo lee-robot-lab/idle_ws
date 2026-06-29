@@ -39,6 +39,7 @@ _DEFAULT_COLOR_NET = str(_CKPT_ROOT / "color_net_v2" / "best.pt")
 
 _BLOCK_Z  = 0.023
 _BASKET_Z = 0.009
+_STACK_Z  = 0.063
 _BLOCK_COLORS = ("red", "green", "blue")
 
 
@@ -51,34 +52,73 @@ def _load_detect():
     return mod.detect
 
 
-def dets_to_task_sample(dets: list[dict], block_color: str) -> TaskSample:
-    """detect() 결과 → TaskSample. block_color 또는 basket 없으면 ValueError."""
+def _yaw_deg_to_quat(cx_px: float, cy_px: float, yaw_deg: float,
+                     H: np.ndarray) -> np.ndarray:
+    """이미지 yaw → H 보정 world yaw → quaternion."""
+    d = 10.0
+    yaw_r = math.radians(yaw_deg)
+    p0 = H @ np.array([cx_px, cy_px, 1.0])
+    p1 = H @ np.array([cx_px + d * math.cos(yaw_r), cy_px + d * math.sin(yaw_r), 1.0])
+    w0, w1 = p0[:2] / p0[2], p1[:2] / p1[2]
+    world_yaw = math.atan2(w1[1] - w0[1], w1[0] - w0[0])
+    return np.array([math.cos(world_yaw / 2), 0.0, 0.0, math.sin(world_yaw / 2)],
+                    dtype=np.float64)
+
+
+def dets_to_task_sample(
+    dets: list[dict],
+    pick_color: str,
+    task_type: str = "pick_place",
+    target_color: str | None = None,
+) -> TaskSample:
+    """detect() 결과 → TaskSample. 필요한 물체 없으면 ValueError."""
+    from mujoco_phase_rl.perception.pose_provider import _H_DEFAULT
     by_color: dict[str, dict] = {}
     for d in dets:
-        c = d["color"]
-        if c not in by_color:
-            by_color[c] = d
+        if d["color"] not in by_color:
+            by_color[d["color"]] = d
 
-    if block_color not in by_color:
-        raise ValueError(
-            f"블록 색 '{block_color}' 검출 실패 (detected: {list(by_color)})"
-        )
-    if "basket" not in by_color:
-        raise ValueError(f"basket 검출 실패 (detected: {list(by_color)})")
+    if pick_color not in by_color:
+        raise ValueError(f"'{pick_color}' 검출 실패 (detected: {list(by_color)})")
 
-    blk = by_color[block_color]
-    bsk = by_color["basket"]
-    yaw_rad = math.radians(blk["yaw_deg"])
-    object_quat = np.array(
-        [math.cos(yaw_rad / 2), 0.0, 0.0, math.sin(yaw_rad / 2)],
-        dtype=np.float64,
+    blk = by_color[pick_color]
+    object_pos = np.array([blk["x_m"], blk["y_m"], _BLOCK_Z], dtype=np.float64)
+    object_quat = _yaw_deg_to_quat(
+        blk["center_px"][0], blk["center_px"][1], blk["yaw_deg"], _H_DEFAULT
     )
+
+    if task_type == "stack":
+        if target_color is None or target_color not in by_color:
+            raise ValueError(f"stack 타겟 '{target_color}' 검출 실패")
+        tgt = by_color[target_color]
+        target_pos = np.array([tgt["x_m"], tgt["y_m"], _STACK_Z], dtype=np.float64)
+        bystanders = {
+            c: np.array([d["x_m"], d["y_m"], _BLOCK_Z], dtype=np.float64)
+            for c, d in by_color.items()
+            if c not in (pick_color, target_color, "basket")
+            and c in ("red", "green", "blue")
+        }
+    else:
+        if "basket" not in by_color:
+            raise ValueError(f"basket 검출 실패 (detected: {list(by_color)})")
+        bsk = by_color["basket"]
+        target_pos = np.array([bsk["x_m"], bsk["y_m"], _BASKET_Z], dtype=np.float64)
+        bystanders = {
+            c: np.array([d["x_m"], d["y_m"], _BLOCK_Z], dtype=np.float64)
+            for c, d in by_color.items()
+            if c not in (pick_color, "basket") and c in ("red", "green", "blue")
+        }
+
     return TaskSample(
-        object_pos=np.array([blk["x_m"], blk["y_m"], _BLOCK_Z], dtype=np.float64),
+        object_pos=object_pos,
         object_quat=object_quat,
-        target_pos=np.array([bsk["x_m"], bsk["y_m"], _BASKET_Z], dtype=np.float64),
+        target_pos=target_pos,
         target_yaw=0.0,
         object_mass=0.10,
+        pick_color=pick_color,
+        task_type=task_type,
+        target_color=target_color,
+        bystander_poses=bystanders,
     )
 
 

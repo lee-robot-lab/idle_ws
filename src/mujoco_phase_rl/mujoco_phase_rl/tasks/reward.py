@@ -28,6 +28,7 @@ def compute_phase_reward(
     timeout: bool,
     executor_status: str,
     extra_info: dict | None = None,
+    task_type: str = "pick_place",
 ) -> tuple[float, dict[str, float]]:
     extra_info = extra_info or {}
     components: dict[str, float] = {"step": -0.01}
@@ -63,7 +64,7 @@ def compute_phase_reward(
     elif phase == Phase.MOVE_TO_PLACE and command == Command.MOVE_TO_PLACE:
         _add_move_to_place_components(components, extra_info)
     elif phase == Phase.PLACE and command == Command.PLACE:
-        _add_place_components(components, extra_info)
+        _add_place_components(components, extra_info, task_type=task_type)
     elif phase == Phase.RETREAT and command == Command.HOME:
         _add_home_components(components, extra_info)
         if phase_success:
@@ -144,12 +145,14 @@ def _add_move_to_place_components(components: dict[str, float], info: dict) -> N
         components["object_carried"] = 0.10
 
 
-def _add_place_components(components: dict[str, float], info: dict) -> None:
+def _add_place_components(components: dict[str, float], info: dict,
+                           task_type: str = "pick_place") -> None:
     if bool(info.get("object_in_target", False)):
         components["object_in_target"] = 0.40
     object_speed = _finite(info.get("object_speed"))
     if object_speed is not None:
-        components["object_stable"] = 0.20 * _closeness(object_speed, 0.10)
+        scale = 0.05 if task_type == "stack" else 0.10
+        components["object_stable"] = 0.20 * _closeness(object_speed, scale)
 
 
 def _add_home_components(components: dict[str, float], info: dict) -> None:

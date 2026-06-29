@@ -167,7 +167,7 @@ def test_dets_to_task_sample_red_block():
         {"color": "basket", "x_m": 0.13,  "y_m": 0.79, "yaw_deg": 0.0,
          "contour": np.zeros((4, 1, 2), dtype=np.int32), "center_px": (0, 0)},
     ]
-    ts = dets_to_task_sample(dets, block_color="red")
+    ts = dets_to_task_sample(dets, pick_color="red")
     assert np.allclose(ts.object_pos[:2], [0.05, 0.40], atol=1e-6)
     assert np.allclose(ts.target_pos[:2], [0.13, 0.79], atol=1e-6)
     assert np.isclose(ts.object_pos[2], 0.023)
@@ -180,7 +180,7 @@ def test_dets_to_task_sample_missing_block_raises():
     dets = [{"color": "basket", "x_m": 0.13, "y_m": 0.79, "yaw_deg": 0.0,
              "contour": np.zeros((4,1,2), dtype=np.int32), "center_px": (0,0)}]
     with pytest.raises(ValueError, match="blue"):
-        dets_to_task_sample(dets, block_color="blue")
+        dets_to_task_sample(dets, pick_color="blue")
 
 
 def test_dets_to_task_sample_missing_basket_raises():
@@ -189,4 +189,4 @@ def test_dets_to_task_sample_missing_basket_raises():
     dets = [{"color": "red", "x_m": 0.05, "y_m": 0.40, "yaw_deg": 0.0,
              "contour": np.zeros((4,1,2), dtype=np.int32), "center_px": (0,0)}]
     with pytest.raises(ValueError, match="basket"):
-        dets_to_task_sample(dets, block_color="red")
+        dets_to_task_sample(dets, pick_color="red")

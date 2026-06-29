@@ -40,7 +40,6 @@ class AugSlotEmbedder:
         self._bg = bg_img_bgr
         self._H_world2px = np.asarray(H_world2px, dtype=np.float64)
         self.aug_prob = aug_prob
-        self._block_color = block_color
         self._rng = np.random.default_rng()
 
         # train 이미지 풀 캐시
@@ -75,15 +74,18 @@ class AugSlotEmbedder:
 
     def _embed_aug(self, model, data) -> tuple[np.ndarray, dict]:
         from mujoco_phase_rl.perception.slot_aug import SlotAugmentor
+        import mujoco as _mj
 
-        # sim 에서 현재 물체 위치 추출 — body id 직접 조회
-        import mujoco
-        block_body_id  = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"block_{self._block_color}")
-        basket_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "basket")
-        bx, by = float(data.xpos[block_body_id][0]), float(data.xpos[block_body_id][1])
-        tx, ty = float(data.xpos[basket_body_id][0]), float(data.xpos[basket_body_id][1])
+        obj_positions: dict[str, tuple[float, float]] = {}
+        for color in ("red", "green", "blue"):
+            bid = _mj.mj_name2id(model, _mj.mjtObj.mjOBJ_BODY, f"block_{color}")
+            if bid >= 0:
+                obj_positions[color] = (float(data.xpos[bid][0]), float(data.xpos[bid][1]))
+        basket_id = _mj.mj_name2id(model, _mj.mjtObj.mjOBJ_BODY, "basket")
+        if basket_id >= 0:
+            obj_positions["basket"] = (float(data.xpos[basket_id][0]), float(data.xpos[basket_id][1]))
 
-        src_img, dets = self._pool[int(self._rng.integers(len(self._pool)))]
-        aug = SlotAugmentor(src_img, self._bg, dets, self._H_world2px)
-        composed = aug.compose({self._block_color: (bx, by), "basket": (tx, ty)})
+        src_img, src_dets = self._pool[int(self._rng.integers(len(self._pool)))]
+        aug = SlotAugmentor(src_img, self._bg, src_dets, self._H_world2px)
+        composed = aug.compose(obj_positions)
         return self._base.embed_bgr(composed)
