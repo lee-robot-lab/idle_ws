@@ -97,8 +97,8 @@ def build_task_scene_xml(
     if worldbody is None:
         raise ValueError("robot.xml is missing <worldbody>")
 
-    _remove_named_bodies(root, {"block_green", "block_blue"})
-    _prepare_task_block(root, worldbody)
+    for _color in ("red", "green", "blue"):
+        _prepare_block(root, _color)
     _prepare_basket_target(root, show_target_marker=show_target_marker)
     _prepare_gripper_sites(root)
 
@@ -133,10 +133,16 @@ def build_task_scene_xml(
     return ET.tostring(root, encoding="unicode")
 
 
-def set_freejoint_pose(data: mujoco.MjData, names: NameMap, pos: np.ndarray, quat: np.ndarray) -> None:
-    qposadr = names.object_qposadr
-    dofadr = names.object_dofadr
-    data.qpos[qposadr:qposadr + 3] = np.asarray(pos, dtype=np.float64)
+def set_freejoint_pose(
+    data: mujoco.MjData,
+    names: NameMap,
+    pos: np.ndarray,
+    quat: np.ndarray,
+    color: str = "red",
+) -> None:
+    qposadr = names.block_qposadr[color]
+    dofadr  = names.block_dofadr[color]
+    data.qpos[qposadr:qposadr + 3] = np.asarray(pos,  dtype=np.float64)
     data.qpos[qposadr + 3:qposadr + 7] = np.asarray(quat, dtype=np.float64)
     data.qvel[dofadr:dofadr + 6] = 0.0
 
@@ -152,38 +158,46 @@ def _remove_named_bodies(root: ET.Element, names: set[str]) -> None:
                 parent.remove(child)
 
 
-def _prepare_task_block(root: ET.Element, worldbody: ET.Element) -> None:
-    block = _find_named(root, "body", TASK_OBJECT_BODY)
-    if block is None:
-        block = ET.SubElement(worldbody, "body", {"name": TASK_OBJECT_BODY, "pos": "0.0 0.40 0.023"})
-        ET.SubElement(block, "freejoint", {"name": TASK_OBJECT_JOINT})
-        ET.SubElement(
-            block,
-            "geom",
-            {
-                "name": "block_red_geom",
-                "type": "box",
-                "size": "0.02 0.02 0.02",
-                "rgba": "0.9 0.2 0.2 1",
-                "mass": "0.1",
-                "contype": "1",
-                "conaffinity": "1",
-            },
-        )
-        return
+_BLOCK_INIT_POS = {
+    "red":   "0.0  0.40 0.023",
+    "green": "-0.10 0.42 0.023",
+    "blue":  "0.10  0.42 0.023",
+}
+_BLOCK_RGBA = {
+    "red":   "0.9 0.2 0.2 1",
+    "green": "0.2 0.8 0.2 1",
+    "blue":  "0.2 0.2 0.9 1",
+}
 
-    block.set("pos", "0.0 0.40 0.023")
+
+def _prepare_block(root: ET.Element, color: str) -> None:
+    body_name  = f"block_{color}"
+    joint_name = f"block_{color}_freejoint"
+    geom_name  = f"block_{color}_geom"
+    block = _find_named(root, "body", body_name)
+    if block is None:
+        worldbody = root.find("worldbody")
+        block = ET.SubElement(
+            worldbody, "body",
+            {"name": body_name, "pos": _BLOCK_INIT_POS[color]},
+        )
+        ET.SubElement(block, "geom", {
+            "name": geom_name, "type": "box",
+            "size": "0.02 0.02 0.02",
+            "rgba": _BLOCK_RGBA[color],
+            "mass": "0.1", "contype": "1", "conaffinity": "1",
+        })
+    block.set("pos", _BLOCK_INIT_POS[color])
     freejoint = block.find("freejoint")
     if freejoint is None:
         freejoint = block.find("joint[@type='free']")
     if freejoint is None:
         freejoint = ET.Element("freejoint")
         block.insert(0, freejoint)
-    freejoint.set("name", TASK_OBJECT_JOINT)
-
+    freejoint.set("name", joint_name)
     geom = block.find("geom")
     if geom is not None:
-        geom.set("name", "block_red_geom")
+        geom.set("name", geom_name)
         geom.set("type", "box")
         geom.set("size", "0.02 0.02 0.02")
         geom.set("mass", "0.1")

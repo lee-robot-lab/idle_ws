@@ -49,6 +49,9 @@ class NameMap:
     gripper_center_site_id: int
     joint_ranges: np.ndarray
     actuator_ctrlrange: np.ndarray
+    block_body_ids: dict   # {"red": int, "green": int, "blue": int}
+    block_qposadr:  dict   # {"red": int, "green": int, "blue": int}
+    block_dofadr:   dict   # {"red": int, "green": int, "blue": int}
 
 
 def resolve_name_map(model: mujoco.MjModel) -> NameMap:
@@ -65,6 +68,12 @@ def resolve_name_map(model: mujoco.MjModel) -> NameMap:
 
     object_joint_id = _id(model, mujoco.mjtObj.mjOBJ_JOINT, TASK_OBJECT_JOINT)
     object_body_id = _id(model, mujoco.mjtObj.mjOBJ_BODY, TASK_OBJECT_BODY)
+
+    _COLORS = ("red", "green", "blue")
+    _block_jnt_ids = {c: _id(model, mujoco.mjtObj.mjOBJ_JOINT, f"block_{c}_freejoint") for c in _COLORS}
+    block_body_ids = {c: _id(model, mujoco.mjtObj.mjOBJ_BODY, f"block_{c}") for c in _COLORS}
+    block_qposadr  = {c: int(model.jnt_qposadr[_block_jnt_ids[c]]) for c in _COLORS}
+    block_dofadr   = {c: int(model.jnt_dofadr[_block_jnt_ids[c]])  for c in _COLORS}
     basket_body_id = _id(model, mujoco.mjtObj.mjOBJ_BODY, BASKET_BODY)
     target_geom_id = _id(model, mujoco.mjtObj.mjOBJ_GEOM, TARGET_GEOM)
     target_site_id = _id(model, mujoco.mjtObj.mjOBJ_SITE, TARGET_SITE)
@@ -108,6 +117,9 @@ def resolve_name_map(model: mujoco.MjModel) -> NameMap:
         gripper_center_site_id=gripper_center_site_id,
         joint_ranges=joint_ranges,
         actuator_ctrlrange=actuator_ctrlrange,
+        block_body_ids=block_body_ids,
+        block_qposadr=block_qposadr,
+        block_dofadr=block_dofadr,
     )
 
 

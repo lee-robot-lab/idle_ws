@@ -6,17 +6,25 @@ import numpy as np
 import pytest
 
 
-def test_block_moves_with_prob_1():
-    """perturb_prob=1.0 이면 매 step 블록 XY 가 바뀐다."""
+def test_block_moves_with_prob_1(monkeypatch):
+    """perturb_prob=1.0 + rng 고정 → block 이 선택되면 body_pos 가 바뀐다."""
     from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
     env = PhasePickPlaceEnv(max_episode_steps=4, perturb_prob=1.0, perturb_max_m=0.08)
     env.reset(seed=0)
+
+    # rng 를 교체해 block 을 강제 선택 (rng.choice 결과 무관하게 결정론적으로 동작)
+    orig_rng = env.rng
+    class ForcedRng:
+        def random(self): return 0.0          # perturb_prob 조건 통과
+        def choice(self, lst): return "block"
+        def uniform(self, lo, hi, size=None):
+            return np.array([0.05, 0.05]) if size == 2 else orig_rng.uniform(lo, hi, size)
+    monkeypatch.setattr(env, "rng", ForcedRng())
+
     before = env.data.xpos[env.names.object_body_id][:2].copy()
     env.step(env.action_space.sample())
     after = env.data.xpos[env.names.object_body_id][:2].copy()
     env.close()
-    # 섭동이 일어나면 위치가 바뀌거나 clamp 에 걸려 동일할 수 있으므로
-    # 최소 한 축이라도 달라지면 OK (모든 delta 가 0이 되는 확률은 무시)
     assert not np.allclose(before, after, atol=1e-4)
 
 

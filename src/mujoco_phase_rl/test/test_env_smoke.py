@@ -32,8 +32,8 @@ def test_mujoco_model_loads_with_task_scene():
     assert scene.names.gripper_center_site_id >= 0
     assert scene.names.target_geom_id >= 0
     assert mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, TASK_OBJECT_BODY) >= 0
-    assert mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, "block_green") < 0
-    assert mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, "block_blue") < 0
+    assert mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, "block_green") >= 0
+    assert mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, "block_blue") >= 0
 
 
 def test_task_scene_can_hide_target_marker_for_vision_data():
