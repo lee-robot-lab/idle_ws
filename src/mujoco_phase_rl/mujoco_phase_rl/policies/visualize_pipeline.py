@@ -123,9 +123,22 @@ def panel_slots(ax, img_bgr: np.ndarray, curr_slots: dict, emb: np.ndarray) -> N
 _VIZ_CROP_X0, _VIZ_CROP_X1, _VIZ_CROP_Y0 = 90, 1120, 5   # stage1/dataset.py와 동일
 
 
+def _mask_outside_crop(img: np.ndarray) -> np.ndarray:
+    """crop 바깥 영역을 어둡게 만들어 모델이 보는 영역을 강조한다."""
+    out = img.copy()
+    out[:_VIZ_CROP_Y0, :] = out[:_VIZ_CROP_Y0, :] // 3
+    out[:, :_VIZ_CROP_X0] = out[:, :_VIZ_CROP_X0] // 3
+    out[:, _VIZ_CROP_X1:] = out[:, _VIZ_CROP_X1:] // 3
+    # crop 경계선 표시
+    out[_VIZ_CROP_Y0, _VIZ_CROP_X0:_VIZ_CROP_X1] = [0, 255, 0]
+    out[:, _VIZ_CROP_X0]  = [0, 255, 0]
+    out[:, _VIZ_CROP_X1]  = [0, 255, 0]
+    return out
+
+
 def panel_augmented(ax, aug_img: np.ndarray, label: str = "SlotAugmentor",
                     show_crop: bool = False) -> None:
-    img = aug_img[_VIZ_CROP_Y0:, _VIZ_CROP_X0:_VIZ_CROP_X1] if show_crop else aug_img
+    img = _mask_outside_crop(aug_img) if show_crop else aug_img
     ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     suffix = " [model crop]" if show_crop else ""
     ax.set_title(f"Stage3: {label}{suffix}", fontsize=10)
