@@ -14,6 +14,9 @@ import math
 import cv2
 import numpy as np
 
+# 모델 학습 crop 경계 (stage1/dataset.py 와 동일)
+_CROP_X0, _CROP_X1, _CROP_Y0, _CROP_Y1 = 90, 1120, 5, 720
+
 # 물체별 기본 높이 (m) — parallax 보정에 사용
 _OBJ_HEIGHTS: dict[str, float] = {
     "red":    0.023,
@@ -95,6 +98,10 @@ class SlotAugmentor:
             p = self._H @ np.array([x_q, y_q, 1.0])
             new_cx = int(round(p[0] / p[2]))
             new_cy = int(round(p[1] / p[2]))
+
+            # 패치 중심이 crop 밖이면 건너뜀 (모델이 보지 못하는 위치)
+            if not (_CROP_X0 <= new_cx <= _CROP_X1 and _CROP_Y0 <= new_cy <= _CROP_Y1):
+                continue
 
             x_start = new_cx - cx_p
             y_start = new_cy - cy_p

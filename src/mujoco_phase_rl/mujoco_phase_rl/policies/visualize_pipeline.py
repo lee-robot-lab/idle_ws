@@ -48,10 +48,10 @@ _CROP_X0, _CROP_X1, _CROP_Y0 = 90, 1120, 5
 _IN_W, _IN_H = 416, 288
 
 def _slot_xy_to_px(xy_norm: np.ndarray) -> tuple[int, int]:
-    """슬롯 인코더 xy ([-1,1]) → 원본 이미지 픽셀."""
+    """슬롯 인코더 xy ([0,1] sigmoid) → 원본 이미지 픽셀."""
     nx, ny = float(xy_norm[0]), float(xy_norm[1])
-    px_crop = (nx + 1) / 2 * _IN_W
-    py_crop = (ny + 1) / 2 * _IN_H
+    px_crop = nx * _IN_W
+    py_crop = ny * _IN_H
     px_orig = px_crop * (_CROP_X1 - _CROP_X0) / _IN_W + _CROP_X0
     py_orig = py_crop * (720 - _CROP_Y0) / _IN_H + _CROP_Y0
     return int(round(px_orig)), int(round(py_orig))
@@ -120,9 +120,15 @@ def panel_slots(ax, img_bgr: np.ndarray, curr_slots: dict, emb: np.ndarray) -> N
     ax.axis("off")
 
 
-def panel_augmented(ax, aug_img: np.ndarray, label: str = "SlotAugmentor") -> None:
-    ax.imshow(cv2.cvtColor(aug_img, cv2.COLOR_BGR2RGB))
-    ax.set_title(f"Stage3: {label}", fontsize=10)
+_VIZ_CROP_X0, _VIZ_CROP_X1, _VIZ_CROP_Y0 = 90, 1120, 5   # stage1/dataset.py와 동일
+
+
+def panel_augmented(ax, aug_img: np.ndarray, label: str = "SlotAugmentor",
+                    show_crop: bool = False) -> None:
+    img = aug_img[_VIZ_CROP_Y0:, _VIZ_CROP_X0:_VIZ_CROP_X1] if show_crop else aug_img
+    ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    suffix = " [model crop]" if show_crop else ""
+    ax.set_title(f"Stage3: {label}{suffix}", fontsize=10)
     ax.axis("off")
 
 
@@ -200,11 +206,10 @@ def run_pipeline(
     H_world2px = np.linalg.inv(_H_DEFAULT)
     aug = SlotAugmentor(val_img, bg_img, dets, H_world2px) if augment else None
 
-    # 예시 이동 위치: 각 검출 물체를 조금씩 이동
+    # 예시 이동: y축으로만 살짝 이동 (0.03m) — crop 내에서 유지
     example_positions = {}
     for d in dets:
-        dx = 0.04 if d["x_m"] < 0.15 else -0.04
-        example_positions[d["color"]] = (d["x_m"] + dx, d["y_m"])
+        example_positions[d["color"]] = (d["x_m"], d["y_m"] + 0.03)
     aug_img = aug.compose(example_positions) if aug else val_img.copy()
     aug_emb, _ = embedder.embed_bgr(aug_img)
 
@@ -263,8 +268,8 @@ def run_pipeline(
     panel_slots      (fig.add_subplot(gs[0, 1]), val_img, curr_slots, emb)
     panel_embedding  (fig.add_subplot(gs[0, 2]), emb, "slot_diff (초기 프레임)")
 
-    panel_augmented  (fig.add_subplot(gs[1, 0]), bg_img,  "배경 이미지")
-    panel_augmented  (fig.add_subplot(gs[1, 1]), aug_img, "SlotAugmentor (예시 이동)")
+    panel_augmented  (fig.add_subplot(gs[1, 0]), aug_img, "SlotAugmentor (full)")
+    panel_augmented  (fig.add_subplot(gs[1, 1]), aug_img, "SlotAugmentor", show_crop=True)
     panel_embedding  (fig.add_subplot(gs[1, 2]), aug_emb, "slot_diff (이동 후 프레임)")
 
     if has_ppo:
