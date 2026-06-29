@@ -110,7 +110,8 @@ def main() -> None:
     try:
         from stable_baselines3 import PPO
         from stable_baselines3.common.callbacks import CheckpointCallback
-        from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor, VecCheckNan
+        from stable_baselines3.common.vec_env import VecMonitor, VecCheckNan
+        from mujoco_phase_rl.envs.batched_slot_vec_env import BatchedSlotDummyVecEnv
     except ModuleNotFoundError as e:
         raise SystemExit("stable-baselines3 required") from e
 
@@ -155,7 +156,7 @@ def main() -> None:
             return env
         return _init
 
-    vec_env = DummyVecEnv([make_env(r) for r in range(args.n_envs)])
+    vec_env = BatchedSlotDummyVecEnv([make_env(r) for r in range(args.n_envs)])
     vec_env = VecMonitor(vec_env)
     vec_env = VecCheckNan(vec_env, raise_exception=True)
 
