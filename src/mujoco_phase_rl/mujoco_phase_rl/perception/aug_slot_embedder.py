@@ -78,7 +78,7 @@ class AugSlotEmbedder:
 
         # sim 에서 현재 물체 위치 추출 — body id 직접 조회
         import mujoco
-        block_body_id  = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "block_red")
+        block_body_id  = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"block_{self._block_color}")
         basket_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "basket")
         bx, by = float(data.xpos[block_body_id][0]), float(data.xpos[block_body_id][1])
         tx, ty = float(data.xpos[basket_body_id][0]), float(data.xpos[basket_body_id][1])
