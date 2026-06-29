@@ -175,28 +175,41 @@ def run_episode(
     block_color: str,
     deterministic: bool,
     augment: bool,
+    mask_invalid_commands: bool = True,
+    model=None,
+    embedder=None,
 ) -> dict[str, Any]:
+    """val 이미지 기반 PPO 에피소드 실행.
+
+    model/embedder를 미리 넘기면 로딩을 건너뜀 (배치 평가 시 활용).
+    """
     from stable_baselines3 import PPO
     from mujoco_phase_rl.policies.train_ppo import _make_mixed_policy
     from mujoco_phase_rl.perception.image_embedding import SlotEmbedder
     from mujoco_phase_rl.perception.slot_aug import SlotAugmentor
     from mujoco_phase_rl.perception.pose_provider import _H_DEFAULT
 
-    model = PPO.load(
-        model_path, device="cpu",
-        custom_objects={"policy_class": _make_mixed_policy()},
-    )
-    embedder = SlotEmbedder(
-        stage1_ckpt=slot_stage1_ckpt,
-        slot_diff_ckpt=slot_diff_ckpt,
-        color_net_ckpt=slot_color_net_ckpt,
-        device="cpu",
-    )
+    _own_model = model is None
+    _own_embedder = embedder is None
+
+    if _own_model:
+        model = PPO.load(
+            model_path, device="cpu",
+            custom_objects={"policy_class": _make_mixed_policy()},
+        )
+    if _own_embedder:
+        embedder = SlotEmbedder(
+            stage1_ckpt=slot_stage1_ckpt,
+            slot_diff_ckpt=slot_diff_ckpt,
+            color_net_ckpt=slot_color_net_ckpt,
+            device="cpu",
+        )
     H_world2px = np.linalg.inv(_H_DEFAULT)
     aug = SlotAugmentor(val_img_bgr, bg_img_bgr, dets, H_world2px) if augment else None
 
     env = PhasePickPlaceEnv(
         max_episode_steps=steps,
+        mask_invalid_commands=mask_invalid_commands,
         image_embedding_mode="slot",
         slot_stage1_ckpt=slot_stage1_ckpt,
         slot_diff_ckpt=slot_diff_ckpt,
@@ -237,7 +250,8 @@ def run_episode(
             break
 
     env.close()
-    embedder.close()
+    if _own_embedder:
+        embedder.close()
     return {
         "final_phase": info.get("phase", "UNKNOWN"),
         "return": round(total_reward, 3),
@@ -259,6 +273,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=32)
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--no-augment", action="store_true")
+    parser.add_argument("--no-command-mask", action="store_true",
+                        help="Disable phase command safety mask during evaluation")
     parser.add_argument("--slot-stage1-ckpt",    default=_DEFAULT_STAGE1)
     parser.add_argument("--slot-diff-ckpt",      default=_DEFAULT_SLOT_DIFF)
     parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_COLOR_NET)
@@ -321,6 +337,7 @@ def main() -> None:
         block_color=args.block_color,
         deterministic=not args.stochastic,
         augment=not args.no_augment,
+        mask_invalid_commands=not args.no_command_mask,
     )
     print(f"결과: {result}")
 

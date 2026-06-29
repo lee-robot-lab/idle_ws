@@ -22,6 +22,17 @@ def test_build_eval_cases_expands_pick_place_and_stack_pairs():
     ]
 
 
+def test_parser_uses_command_mask_by_default():
+    from mujoco_phase_rl.policies.run_val_sim_batch import build_arg_parser
+
+    args = build_arg_parser().parse_args([
+        "--model", "model.zip",
+        "--bg-image", "bg.jpg",
+    ])
+
+    assert args.no_command_mask is False
+
+
 def test_summarize_results_groups_by_task_and_color():
     from mujoco_phase_rl.policies.run_val_sim_batch import summarize_results
 

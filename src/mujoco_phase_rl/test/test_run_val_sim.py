@@ -234,6 +234,7 @@ def test_run_val_sim_parser_exposes_stack_target_args():
     assert args.task_type == "stack"
     assert args.target_color == "blue"
     assert args.pose_source == "slot"
+    assert args.no_command_mask is False
 
 
 def test_augment_positions_for_stack_includes_target_block_and_bystanders():

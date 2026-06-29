@@ -36,8 +36,11 @@ _DEFAULT_COLOR_NET = str(_CKPT_ROOT / "color_net_v2" / "best.pt")
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Robust fine-tune a trained stack PPO checkpoint.")
-    parser.add_argument("--base-model", required=True)
-    parser.add_argument("--output-dir", default="outputs/ppo_stack_robust")
+    parser.add_argument(
+        "--base-model",
+        default="outputs/ppo_stack_base_s0/checkpoints/ppo_stack_143360_steps.zip",
+    )
+    parser.add_argument("--output-dir", default="outputs/ppo_stack_pg_s0")
     parser.add_argument("--total-timesteps", type=int, default=100_000)
     parser.add_argument("--n-envs", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
@@ -59,6 +62,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_COLOR_NET)
     parser.add_argument("--slot-transition-ckpt", default=None)
     parser.add_argument("--slot-device", default="cuda")
+    parser.add_argument("--no-command-mask", action="store_true",
+                        help="Disable phase command safety mask during fine-tuning")
     parser.add_argument("--no-val-pool", action="store_true")
     parser.add_argument("--no-aug-slot", action="store_true",
                         help="Disable AugSlotEmbedder replacement; perturb-only fine-tune")
@@ -101,14 +106,16 @@ def _make_aug_embedder(args):
 
 
 def _build_vec_env(args, val_pool):
-    from stable_baselines3.common.vec_env import DummyVecEnv, VecCheckNan, VecMonitor
+    from stable_baselines3.common.vec_env import VecCheckNan, VecMonitor
 
+    from mujoco_phase_rl.envs.batched_slot_vec_env import BatchedSlotDummyVecEnv
     from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
 
     def make_env(rank: int):
         def _init():
             env = PhasePickPlaceEnv(
                 max_episode_steps=args.max_episode_steps,
+                mask_invalid_commands=not args.no_command_mask,
                 image_embedding_mode="slot",
                 slot_stage1_ckpt=args.slot_stage1_ckpt,
                 slot_diff_ckpt=args.slot_diff_ckpt,
@@ -144,7 +151,7 @@ def _build_vec_env(args, val_pool):
 
         return _init
 
-    vec_env = DummyVecEnv([make_env(rank) for rank in range(args.n_envs)])
+    vec_env = BatchedSlotDummyVecEnv([make_env(rank) for rank in range(args.n_envs)])
     vec_env = VecMonitor(vec_env)
     return VecCheckNan(vec_env, raise_exception=True)
 

@@ -4,20 +4,19 @@
 # ================================================================
 
 
-def test_parser_requires_base_model_and_defaults_are_conservative():
+def test_parser_defaults_are_conservative():
     from mujoco_phase_rl.policies.finetune_stack_robust import build_arg_parser
 
-    args = build_arg_parser().parse_args([
-        "--base-model", "outputs/ppo_stack_base_s0/final_model.zip",
-    ])
+    args = build_arg_parser().parse_args([])
 
-    assert args.base_model == "outputs/ppo_stack_base_s0/final_model.zip"
-    assert args.output_dir == "outputs/ppo_stack_robust"
+    assert args.base_model == "outputs/ppo_stack_base_s0/checkpoints/ppo_stack_143360_steps.zip"
+    assert args.output_dir == "outputs/ppo_stack_pg_s0"
     assert args.total_timesteps == 100_000
     assert args.aug_prob == 0.3
     assert args.perturb_prob == 0.01
     assert args.perturb_max == 0.05
     assert args.pose_source == "slot"
+    assert args.no_command_mask is False
 
 
 def test_load_base_model_uses_custom_policy_and_env():

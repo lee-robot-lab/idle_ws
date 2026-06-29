@@ -116,8 +116,8 @@ def _parse_csv(value: str) -> list[str]:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Batch evaluate PPO on val-image sim cases.")
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--bg-image", required=True)
+    parser.add_argument("--model", default="outputs/ppo_stack_pg_s0/final_model.zip")
+    parser.add_argument("--bg-image", default="../../data/background.jpg")
     parser.add_argument("--split", choices=["train", "val"], default="val")
     parser.add_argument("--max-scenes", type=int, default=None)
     parser.add_argument("--block-colors", default="red,green,blue")
@@ -126,6 +126,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--no-augment", action="store_true")
+    parser.add_argument("--no-command-mask", action="store_true",
+                        help="Disable phase command safety mask during evaluation")
     parser.add_argument("--slot-stage1-ckpt", default=None)
     parser.add_argument("--slot-diff-ckpt", default=None)
     parser.add_argument("--slot-color-net-ckpt", default=None)
@@ -156,6 +158,23 @@ def main() -> None:
     stage1 = args.slot_stage1_ckpt or run_val_sim._DEFAULT_STAGE1
     slot_diff = args.slot_diff_ckpt or run_val_sim._DEFAULT_SLOT_DIFF
     color_net = args.slot_color_net_ckpt or run_val_sim._DEFAULT_COLOR_NET
+
+    from stable_baselines3 import PPO
+    from mujoco_phase_rl.policies.train_ppo import _make_mixed_policy
+    from mujoco_phase_rl.perception.image_embedding import SlotEmbedder
+
+    print(f"모델 로딩: {args.model}")
+    ppo_model = PPO.load(
+        args.model, device="cpu",
+        custom_objects={"policy_class": _make_mixed_policy()},
+    )
+    print(f"SlotEmbedder 로딩: {stage1}")
+    slot_embedder = SlotEmbedder(
+        stage1_ckpt=stage1,
+        slot_diff_ckpt=slot_diff,
+        color_net_ckpt=color_net,
+        device="cpu",
+    )
 
     detect = _load_detect()
     scene_ids = _load_scene_ids(args.split, args.max_scenes)
@@ -191,6 +210,9 @@ def main() -> None:
                 block_color=case.block_color,
                 deterministic=not args.stochastic,
                 augment=not args.no_augment,
+                mask_invalid_commands=not args.no_command_mask,
+                model=ppo_model,
+                embedder=slot_embedder,
             )
             row = {**case.as_dict(), **result}
         except Exception as exc:
@@ -208,6 +230,8 @@ def main() -> None:
             f"{case.block_color}->{case.target_color or 'basket'} "
             f"success={row['success']} phase={row['final_phase']}"
         )
+
+    slot_embedder.close()
 
     payload = {"summary": summarize_results(rows), "rows": rows}
     text = json.dumps(payload, indent=2, sort_keys=True)
