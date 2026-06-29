@@ -1,10 +1,10 @@
 # ================================================================
 # collect_world_model_rollouts.py
 # 설명: PhasePickPlaceEnv 실제 reset/step 호출로 sim_gt_rollout 데이터를 수집한다.
-#       전이 레코드를 JSONL로 저장하며, slot 모드는 checkpoint CLI 연결 후 지원 예정.
+#       all_steps: 매 step 기록. phase_gates: phase 전환 시만 기록 (RSSM 학습용).
 # 사용법:
 #   python -m mujoco_phase_rl.policies.collect_world_model_rollouts \
-#     --output-dir outputs/rollouts --episodes 10 --max-steps 20 --overwrite
+#     --mode scripted --image-embedding-mode slot --record-mode phase_gates --overwrite
 # ================================================================
 from __future__ import annotations
 
@@ -24,6 +24,11 @@ from mujoco_phase_rl.world_model.transition_record import build_transition_recor
 
 DATA_MODE = "sim_gt_rollout"
 FORMAT = "world_model_rollout_v1"
+
+_CKPT_ROOT = Path(__file__).parents[4] / "checkpoints"
+_DEFAULT_SLOT_STAGE1 = str(_CKPT_ROOT / "stage1_v2" / "best.pt")
+_DEFAULT_SLOT_DIFF = str(_CKPT_ROOT / "slot_diff" / "best.pt")
+_DEFAULT_SLOT_COLOR_NET = str(_CKPT_ROOT / "color_net_v2" / "best.pt")
 
 _SCRIPTED_SEQUENCE: tuple[tuple[Command, dict[str, float]], ...] = (
     (Command.MOVE_TO_PREGRASP, {}),
@@ -97,7 +102,12 @@ def collect_world_model_rollouts(
     seed: int = 0,
     mode: str = "scripted",
     image_embedding_mode: str = "zeros",
+    record_mode: str = "all_steps",
     overwrite: bool = False,
+    slot_stage1_ckpt: str | None = None,
+    slot_diff_ckpt: str | None = None,
+    slot_color_net_ckpt: str | None = None,
+    slot_device: str = "cuda",
 ) -> dict[str, Any]:
     if episodes < 1:
         raise ValueError("episodes must be >= 1")
@@ -105,8 +115,15 @@ def collect_world_model_rollouts(
         raise ValueError("max_steps must be >= 1")
     if mode not in {"scripted", "random"}:
         raise ValueError("mode must be one of: scripted, random")
-    if image_embedding_mode != "zeros":
-        raise ValueError("collect_world_model_rollouts currently supports image_embedding_mode='zeros' only")
+    if record_mode not in {"all_steps", "phase_gates"}:
+        raise ValueError("record_mode must be one of: all_steps, phase_gates")
+    if image_embedding_mode == "slot":
+        if not (slot_stage1_ckpt and slot_diff_ckpt and slot_color_net_ckpt):
+            raise ValueError(
+                "slot mode requires slot_stage1_ckpt, slot_diff_ckpt, slot_color_net_ckpt"
+            )
+    elif image_embedding_mode != "zeros":
+        raise ValueError("image_embedding_mode must be one of: zeros, slot")
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -125,6 +142,10 @@ def collect_world_model_rollouts(
         max_episode_steps=max_steps,
         image_embedding_mode=image_embedding_mode,
         mask_invalid_commands=True,
+        slot_stage1_ckpt=slot_stage1_ckpt,
+        slot_diff_ckpt=slot_diff_ckpt,
+        slot_color_net_ckpt=slot_color_net_ckpt,
+        slot_device=slot_device,
     )
     try:
         with transitions_tmp_path.open("w", encoding="utf-8") as transition_file:
@@ -133,32 +154,71 @@ def collect_world_model_rollouts(
                 obs_t, _reset_info = env.reset(seed=episode_seed)
                 scene = _scene_record(env, episode_seed)
 
+                if record_mode == "phase_gates":
+                    phase_start_obs = obs_t
+                    phase_cumulative_reward = 0.0
+                    phase_step = 0
+
                 for step in range(max_steps):
                     action = _action_for_step(mode, step, rng)
                     obs_tp1, reward, terminated, truncated, info = env.step(action)
-                    phase_id = _phase_id_from_obs(obs_t)
-                    goal_xy = _goal_xy_from_obs(obs_t, phase_id)
-                    phase_destination = encode_phase_destination_2d(
-                        phase_id=phase_id,
-                        goal_xy_world=goal_xy,
-                    )
-                    record = build_transition_record(
-                        episode=episode,
-                        step=step,
-                        data_mode=DATA_MODE,
-                        obs_t=obs_t,
-                        phase_destination=phase_destination,
-                        env_action=action,
-                        reward=reward,
-                        obs_tp1=obs_tp1,
-                        terminated=terminated,
-                        truncated=truncated,
-                        info=info,
-                        scene=scene,
-                    )
-                    transition_file.write(json.dumps(record, allow_nan=False, sort_keys=True))
-                    transition_file.write("\n")
-                    records += 1
+
+                    if record_mode == "all_steps":
+                        phase_id = _phase_id_from_obs(obs_t)
+                        goal_xy = _goal_xy_from_obs(obs_t, phase_id)
+                        phase_destination = encode_phase_destination_2d(
+                            phase_id=phase_id,
+                            goal_xy_world=goal_xy,
+                        )
+                        record = build_transition_record(
+                            episode=episode,
+                            step=step,
+                            data_mode=DATA_MODE,
+                            obs_t=obs_t,
+                            phase_destination=phase_destination,
+                            env_action=action,
+                            reward=reward,
+                            obs_tp1=obs_tp1,
+                            terminated=terminated,
+                            truncated=truncated,
+                            info=info,
+                            scene=scene,
+                        )
+                        transition_file.write(json.dumps(record, allow_nan=False, sort_keys=True))
+                        transition_file.write("\n")
+                        records += 1
+
+                    else:  # phase_gates
+                        phase_cumulative_reward += reward
+                        prev_phase = _phase_id_from_obs(obs_t)
+                        curr_phase = _phase_id_from_obs(obs_tp1)
+                        if prev_phase != curr_phase or terminated or truncated:
+                            phase_id = _phase_id_from_obs(phase_start_obs)
+                            goal_xy = _goal_xy_from_obs(phase_start_obs, phase_id)
+                            phase_destination = encode_phase_destination_2d(
+                                phase_id=phase_id,
+                                goal_xy_world=goal_xy,
+                            )
+                            record = build_transition_record(
+                                episode=episode,
+                                step=phase_step,
+                                data_mode=DATA_MODE,
+                                obs_t=phase_start_obs,
+                                phase_destination=phase_destination,
+                                env_action=action,
+                                reward=phase_cumulative_reward,
+                                obs_tp1=obs_tp1,
+                                terminated=terminated,
+                                truncated=truncated,
+                                info=info,
+                                scene=scene,
+                            )
+                            transition_file.write(json.dumps(record, allow_nan=False, sort_keys=True))
+                            transition_file.write("\n")
+                            records += 1
+                            phase_start_obs = obs_tp1
+                            phase_cumulative_reward = 0.0
+                            phase_step = step + 1
 
                     if terminated or truncated:
                         break
@@ -174,6 +234,7 @@ def collect_world_model_rollouts(
         "seed": int(seed),
         "mode": mode,
         "image_embedding_mode": image_embedding_mode,
+        "record_mode": record_mode,
         "records": int(records),
         "transitions": str(transitions_path),
     }
@@ -190,7 +251,7 @@ def collect_world_model_rollouts(
     }
 
 
-_DEFAULT_OUTPUT_ROOT = Path(__file__).parents[4] / "outputs" / "world_model_rollouts"
+_DEFAULT_OUTPUT_ROOT = Path(__file__).parents[4] / "outputs" / "world_model_rollouts_slot"
 
 
 def main() -> None:
@@ -200,8 +261,13 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=64)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--mode", choices=("scripted", "random"), default="scripted")
-    parser.add_argument("--image-embedding-mode", choices=("zeros",), default="zeros")
+    parser.add_argument("--image-embedding-mode", choices=("zeros", "slot"), default="zeros")
+    parser.add_argument("--record-mode", choices=("all_steps", "phase_gates"), default="all_steps")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--slot-stage1-ckpt", default=_DEFAULT_SLOT_STAGE1)
+    parser.add_argument("--slot-diff-ckpt", default=_DEFAULT_SLOT_DIFF)
+    parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_SLOT_COLOR_NET)
+    parser.add_argument("--slot-device", default="cuda")
     args = parser.parse_args()
     output_dir = args.output_dir or str(_DEFAULT_OUTPUT_ROOT / args.mode)
 
@@ -212,7 +278,12 @@ def main() -> None:
         seed=args.seed,
         mode=args.mode,
         image_embedding_mode=args.image_embedding_mode,
+        record_mode=args.record_mode,
         overwrite=args.overwrite,
+        slot_stage1_ckpt=args.slot_stage1_ckpt,
+        slot_diff_ckpt=args.slot_diff_ckpt,
+        slot_color_net_ckpt=args.slot_color_net_ckpt,
+        slot_device=args.slot_device,
     )
     print(json.dumps(result, allow_nan=False, sort_keys=True))
 

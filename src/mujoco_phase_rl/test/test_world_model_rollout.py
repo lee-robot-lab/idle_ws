@@ -50,7 +50,7 @@ def test_collect_world_model_rollouts_writes_jsonl_and_metadata(tmp_path):
 
 
 def test_collect_world_model_rollouts_rejects_slot_mode_without_checkpoint_args(tmp_path):
-    with pytest.raises(ValueError, match="zeros"):
+    with pytest.raises(ValueError, match="slot_stage1_ckpt"):
         collect_world_model_rollouts(
             output_dir=tmp_path,
             episodes=1,
@@ -59,6 +59,30 @@ def test_collect_world_model_rollouts_rejects_slot_mode_without_checkpoint_args(
             mode="scripted",
             image_embedding_mode="slot",
         )
+
+
+def test_collect_world_model_rollouts_phase_gates_records_only_phase_transitions(tmp_path):
+    result = collect_world_model_rollouts(
+        output_dir=tmp_path,
+        episodes=5,
+        max_steps=64,
+        seed=0,
+        mode="scripted",
+        image_embedding_mode="zeros",
+        record_mode="phase_gates",
+    )
+    records = [json.loads(line) for line in Path(result["transitions"]).read_text().splitlines()]
+    assert len(records) >= 1
+    for r in records:
+        obs_t_phase = int(np.argmax(r["obs_t"]["phase"][:7]))
+        obs_tp1_phase = int(np.argmax(r["obs_tp1"]["phase"][:7]))
+        is_done = r["terminated"] or r["truncated"]
+        assert obs_t_phase != obs_tp1_phase or is_done, (
+            f"phase_gates 모드에서 phase 미변경 레코드 발견: "
+            f"obs_t phase={obs_t_phase}, obs_tp1 phase={obs_tp1_phase}"
+        )
+    metadata_dict = json.loads(Path(result["metadata"]).read_text())
+    assert metadata_dict["record_mode"] == "phase_gates"
 
 
 def test_collect_world_model_rollouts_requires_overwrite_for_existing_output(tmp_path):
