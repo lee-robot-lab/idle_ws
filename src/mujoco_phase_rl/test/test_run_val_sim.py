@@ -132,3 +132,37 @@ def test_slot_augmentor_blur_changes_image():
     blurred  = aug.compose({"red": (0.10, 0.50)}, flip=False, blur_k=5)
 
     assert not np.array_equal(no_blur, blurred)
+
+
+def test_dets_to_task_sample_red_block():
+    from mujoco_phase_rl.policies.run_val_sim import dets_to_task_sample
+
+    dets = [
+        {"color": "red",    "x_m": 0.05,  "y_m": 0.40, "yaw_deg": 10.0,
+         "contour": np.zeros((4, 1, 2), dtype=np.int32), "center_px": (0, 0)},
+        {"color": "basket", "x_m": 0.13,  "y_m": 0.79, "yaw_deg": 0.0,
+         "contour": np.zeros((4, 1, 2), dtype=np.int32), "center_px": (0, 0)},
+    ]
+    ts = dets_to_task_sample(dets, block_color="red")
+    assert np.allclose(ts.object_pos[:2], [0.05, 0.40], atol=1e-6)
+    assert np.allclose(ts.target_pos[:2], [0.13, 0.79], atol=1e-6)
+    assert np.isclose(ts.object_pos[2], 0.023)
+    assert np.isclose(ts.target_pos[2], 0.009)
+
+
+def test_dets_to_task_sample_missing_block_raises():
+    from mujoco_phase_rl.policies.run_val_sim import dets_to_task_sample
+
+    dets = [{"color": "basket", "x_m": 0.13, "y_m": 0.79, "yaw_deg": 0.0,
+             "contour": np.zeros((4,1,2), dtype=np.int32), "center_px": (0,0)}]
+    with pytest.raises(ValueError, match="blue"):
+        dets_to_task_sample(dets, block_color="blue")
+
+
+def test_dets_to_task_sample_missing_basket_raises():
+    from mujoco_phase_rl.policies.run_val_sim import dets_to_task_sample
+
+    dets = [{"color": "red", "x_m": 0.05, "y_m": 0.40, "yaw_deg": 0.0,
+             "contour": np.zeros((4,1,2), dtype=np.int32), "center_px": (0,0)}]
+    with pytest.raises(ValueError, match="basket"):
+        dets_to_task_sample(dets, block_color="red")
