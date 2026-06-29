@@ -1,6 +1,6 @@
 # 2026-06-29 최종 인수인계 (mujoco_phase_rl)
 
-> **이 문서가 기준입니다.** 같은 날짜의 다른 session-summary.md보다 이 문서가 최신입니다.
+> **이 문서가 기준입니다.** 마지막 업데이트: 세션 3 (BatchedSlotDummyVecEnv + robust finetune + ROS2 plan)
 
 ---
 
@@ -25,6 +25,13 @@ feature/stage4-integration
 | AugSlotEmbedder (시각 보강) | ✅ | train 이미지 풀 + 확률적 real 패치 합성 |
 | Mid-episode perturbation | ✅ | `perturb_prob`, `perturb_max_m` 파라미터 추가 |
 | **멀티블록 pick & stack** | ✅ | 3색(red/green/blue) × (pick_place\|stack) — 아래 상세 |
+| BatchedSlotDummyVecEnv | ✅ | n_envs 이미지 GPU 1회 forward — `finetune_stack.py`, `finetune_stack_robust.py` 적용 |
+| inject_slot_result() zeros 버그 수정 | ✅ | `slot_state_bridge is None` guard — `phase_pick_place_env.py:1044` |
+| eval (GT vs slot) | ✅ | GT=91.1%, slot=0.0% → sim-to-real gap 확인 |
+| finetune_stack_robust.py | ✅ | slot 기반 fine-tuning 스크립트 (AugSlotEmbedder + 기본값 설정) |
+| run_val_sim_batch 1회 로드 | ✅ | 에피소드마다 재로드 → 루프 전 1회 로드로 최적화 |
+| ROS2 real-data pipeline 계획 | ✅ | Plan B Tasks 1~4 설계 완료 (`docs/superpowers/plans/2026-06-29-ros2-real-data-pipeline.md`) |
+| 테스트 | ✅ | 125개 통과 (이번 세션 +4: BatchedSlotDummyVecEnv) |
 
 ---
 
@@ -86,7 +93,7 @@ cmd = [0, 1,  # stack
 ### 커밋 범위
 
 ```
-BASE: 9c384c9  →  현재 HEAD: 272f20c (+픽스 중)
+BASE: 9c384c9  →  현재 HEAD: 9afa361
 496b0ca  feat: TaskSample + PickPlaceTask 멀티블록 멀티태스크 확장
 5659c50  feat: 3블록 씬 + NameMap block_body_ids + set_freejoint_pose color 파라미터
 8bbcbc8  fix: _prepare_block 기존 body 경로에 rgba 갱신 추가
@@ -96,17 +103,44 @@ a72b02a  feat: PhasePickPlaceEnv 멀티블록 + cmd(9) obs + stack 성공 판정
 0a04a30  test: dets_to_task_sample stack 분기 테스트 추가
 e50475f  feat: finetune_stack.py — val 이미지 기반 3블록 멀티태스크 PPO 학습
 272f20c  fix: finetune_stack.py 미사용 import 제거
-+ 픽스 커밋 (final review 대응) — 진행 중
+bac00d7  fix: stack PLACE z 수정 + end-to-end test
+b0032e7  로스데모
+235454d  perf: BatchedSlotDummyVecEnv — slot inference batched across n_envs
+11d5a01  feat: run_val_sim_batch 모델 1회 로드 + 스크립트 기본값 + 테스트 업데이트
+a595af6  feat: finetune_stack.py에 --no-command-mask 플래그 추가
+35d7a76  docs: 구현 계획 2개 추가
+287183e  test: BatchedSlotDummyVecEnv 단위 테스트 4개 추가
+9afa361  perf: finetune_stack.py에 BatchedSlotDummyVecEnv 적용
 ```
 
 ---
 
 ## 다음 작업
 
-### 즉시: scratch PPO 학습 시작
+### 즉시 1: slot fine-tuning (finetune_stack_robust.py)
+
+sim-to-real gap(GT=91.1% vs slot=0.0%) 해소를 위해 slot 기반 fine-tuning이 필수.
 
 ```bash
 cd ~/idle_ws/src/mujoco_phase_rl
+nohup python3 mujoco_phase_rl/policies/finetune_stack_robust.py \
+  > outputs/ppo_stack_pg_s0/train.log 2>&1 &
+echo "PID: $!"
+# 기본값: --base-model outputs/ppo_stack_base_s0/checkpoints/ppo_stack_143360_steps.zip
+#          --output-dir outputs/ppo_stack_pg_s0
+```
+
+학습 완료 후 eval:
+```bash
+python3 mujoco_phase_rl/policies/run_val_sim_batch.py \
+  --max-scenes 20 \
+  --out outputs/ppo_stack_pg_s0/eval_val20_slot.json
+```
+
+### 즉시 2: scratch PPO 학습 (finetune_stack.py)
+
+base 모델이 없는 경우 scratch 학습:
+```bash
 nohup python3 mujoco_phase_rl/policies/finetune_stack.py \
   --output-dir outputs/ppo_stack \
   --stack-prob 0.6 \
@@ -114,18 +148,25 @@ nohup python3 mujoco_phase_rl/policies/finetune_stack.py \
   --n-envs 4 \
   --seed 0 \
   > outputs/ppo_stack_train.log 2>&1 &
-echo "PID: $!"
 ```
 
-학습 완료 후 `CLAUDE.md` 체크포인트 테이블에 `ppo_stack/final_model.zip` 추가.
+주의: `finetune_stack.py`는 이름과 달리 `PPO.load()` 없이 새 PPO를 생성한다.
 
-주의: `finetune_stack.py`는 이름과 달리 `PPO.load()` 없이 새 PPO를 생성한다. `ppo_slot_best.zip`은 obs shape이 달라 이어 학습하지 않는다.
+### 향후 1: ROS2 real-data pipeline (Plan B)
 
-### 향후: 실기체 연동
+설계 완료 → `docs/superpowers/plans/2026-06-29-ros2-real-data-pipeline.md`
 
-- visual 측: AugSlotEmbedder (sim2real 시각 강건성) — `finetune_stack.py`에 미연결, 별도 통합 필요
-- robot state 측: MuJoCo GT → 실기체 관절 값으로 교체
+```
+Task 1: ppo_supervisor_node.py  (shadow/execute mode + episode recording)
+Task 2: build_real_val_pool.py  (npz → pool.json)
+Task 3: finetune_from_real.py   (real val_pool 기반 fine-tuning)
+Task 4: ppo_demo.launch.py      (supervisor + FSM 통합 런치)
+```
+
+### 향후 2: 실기체 연동
+
 - `--aug-prob` 파라미터가 파싱되나 아직 `PhasePickPlaceEnv`에 전달되지 않음 (향후 통합 예정)
+- robot state 측: MuJoCo GT → 실기체 관절 값으로 교체
 
 ---
 
@@ -138,7 +179,8 @@ echo "PID: $!"
 | SlotDiff | `checkpoints/slot_diff/best.pt` | ✅ 현행 |
 | SlotTransitionModel | `checkpoints/slot_transition_model/best.pt` | ✅ val=5.8184 @ep35 |
 | slot PPO (best) | `outputs/ppo_slot_best.zip` | ✅ 100% success @174k |
-| stack PPO | `outputs/ppo_stack/final_model.zip` | ⏳ 학습 예정 (174-dim obs) |
+| stack base PPO | `outputs/ppo_stack_base_s0/checkpoints/ppo_stack_143360_steps.zip` | ✅ 학습 완료 (174-dim obs) |
+| stack robust PPO | `outputs/ppo_stack_pg_s0/final_model.zip` | ⏳ 학습 예정 (slot fine-tuning) |
 
 ---
 
@@ -156,5 +198,15 @@ echo "PID: $!"
 
 | 문서 | 구버전인 이유 |
 |---|---|
-| `docs/agent/archive/claude/2026-06-29-session-summary.md` | slot PPO 학습 중, world model 미구현으로 기재 |
+| `docs/agent/archive/claude/2026-06-29-session-summary.md` | 삭제됨 — slot PPO 학습 중 상태로 기재, 이 문서로 통합 |
 | 구 handoff의 "101/165-dim obs" 표기 | 현재는 항상 174-dim |
+
+## 신규 주요 파일 (세션 3)
+
+| 파일 | 역할 |
+|---|---|
+| `mujoco_phase_rl/envs/batched_slot_vec_env.py` | BatchedSlotDummyVecEnv — n_envs 이미지 GPU 1회 forward |
+| `mujoco_phase_rl/policies/finetune_stack_robust.py` | AugSlotEmbedder 기반 slot fine-tuning |
+| `test/test_batched_slot_vec_env.py` | BatchedSlotDummyVecEnv 단위 테스트 4개 |
+| `docs/superpowers/plans/2026-06-29-ros2-real-data-pipeline.md` | ROS2 real-data pipeline Plan B |
+| `docs/superpowers/plans/2026-06-29-immediate-improvements.md` | Plan A Tasks 1~5 (완료) |
