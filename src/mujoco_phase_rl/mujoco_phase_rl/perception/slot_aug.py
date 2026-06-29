@@ -39,6 +39,10 @@ class SlotAugmentor:
         camera_z: float = 0.73,
         camera_nadir_xy: tuple[float, float] = (0.021, 0.590),
     ) -> None:
+        src_h, src_w = src_img_bgr.shape[:2]
+        bg_h, bg_w = bg_img_bgr.shape[:2]
+        if bg_h != src_h or bg_w != src_w:
+            bg_img_bgr = cv2.resize(bg_img_bgr, (src_w, src_h))
         self._bg = bg_img_bgr.copy()
         self._H = H_world2px.astype(np.float64)
         self._cam_z = camera_z
