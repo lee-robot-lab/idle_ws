@@ -663,7 +663,7 @@ class PhasePickPlaceEnv(gym.Env):
         self.object_grasped = False
         set_freejoint_pose(self.data, self.names, placed_pos, self.grasp_object_quat,
                            color=self._pick_color)
-        self.data.qvel[self.names.object_dofadr:self.names.object_dofadr + 6] = 0.0
+        self.data.qvel[self.names.block_dofadr[self._pick_color]:self.names.block_dofadr[self._pick_color] + 6] = 0.0
         mujoco.mj_forward(self.model, self.data)
         self._run_pd_hold(q_hold, self._gripper_open_q(), 80)
 
