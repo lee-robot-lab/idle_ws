@@ -59,8 +59,8 @@ class SlotAugmentor:
             pmask = mask_full[by:y2, bx:x2]
 
             cx_img, cy_img = d["center_px"]
-            cx_p = cx_img - bx
-            cy_p = cy_img - by
+            cx_p = int(round(cx_img)) - bx
+            cy_p = int(round(cy_img)) - by
             self._patches[color] = (patch, pmask, cx_p, cy_p, x2 - bx, y2 - by)
 
     def _parallax_correct(self, x_m: float, y_m: float, h_obj: float) -> tuple[float, float]:
