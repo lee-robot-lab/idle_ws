@@ -16,6 +16,7 @@ def _make_curr_slots(xy_list):
     return {
         "present": np.ones((N, 1), dtype=np.float32),
         "xy": np.array(xy_list, dtype=np.float32),
+        "yaw": np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (N, 1)),
     }
 
 
@@ -26,6 +27,8 @@ def test_slot_state_is_dataclass():
     )
     assert s.object_xy.shape == (2,)
     assert s.target_xy.shape == (2,)
+    assert s.object_yaw == 0.0
+    assert s.target_yaw == 0.0
 
 
 def test_slot_state_bridge_requires_grounding():
@@ -46,6 +49,8 @@ def test_slot_state_bridge_estimate_returns_slot_state():
     assert state.object_xy.dtype == np.float32
     assert np.all(np.isfinite(state.object_xy))
     assert np.all(np.isfinite(state.target_xy))
+    assert np.isfinite(state.object_yaw)
+    assert np.isfinite(state.target_yaw)
 
 
 def test_slot_state_bridge_different_slots_different_world_xy():
@@ -54,6 +59,24 @@ def test_slot_state_bridge_different_slots_different_world_xy():
     curr = _make_curr_slots([(0.3, 0.4), (0.7, 0.6)])
     state = bridge.estimate(curr)
     assert not np.allclose(state.object_xy, state.target_xy)
+
+
+def test_slot_state_bridge_decodes_cos4sin4_yaw():
+    bridge = SlotStateBridge(H=_H_TEST)
+    bridge.set_grounding(object_slot_idx=0, target_slot_idx=1)
+    yaw = np.deg2rad(30.0)
+    curr = {
+        "present": np.ones((2, 1), dtype=np.float32),
+        "xy": np.array([(0.5, 0.5), (0.8, 0.2)], dtype=np.float32),
+        "yaw": np.array([
+            [np.cos(4.0 * yaw), np.sin(4.0 * yaw)],
+            [1.0, 0.0],
+        ], dtype=np.float32),
+    }
+
+    state = bridge.estimate(curr)
+
+    assert state.object_yaw == pytest.approx(yaw, abs=1e-6)
 
 
 import mujoco
@@ -129,6 +152,31 @@ def test_observe_slot_diff_accepts_64_dim_input():
     emb = np.ones(64, dtype=np.float32)
     obs = _make_observer().observe(_make_slot_state(), _make_state(), slot_diff_emb=emb)
     assert np.allclose(obs["slot_diff"], emb)
+
+
+def test_slot_pose_source_uses_slot_state_for_estimate(monkeypatch):
+    from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
+
+    env = PhasePickPlaceEnv(max_episode_steps=4, image_embedding_mode="zeros", pose_source="slot")
+    env.reset(seed=0)
+    slot_state = SlotState(
+        object_xy=np.array([0.11, 0.41], dtype=np.float32),
+        target_xy=np.array([0.02, 0.62], dtype=np.float32),
+        object_yaw=0.3,
+        target_yaw=-0.2,
+        object_confidence=0.8,
+        target_confidence=0.9,
+    )
+    monkeypatch.setattr(env, "_build_slot_state", lambda: slot_state)
+
+    pose = env._estimate_pose()
+
+    env.close()
+    assert np.allclose(pose.object_pos[:2], [0.11, 0.41])
+    assert np.allclose(pose.target_pos[:2], [0.02, 0.62])
+    assert pose.target_yaw == pytest.approx(-0.2)
+    assert pose.object_confidence == pytest.approx(0.8)
+    assert pose.source == "slot"
 
 
 def test_observe_phase_onehot_active_phase():

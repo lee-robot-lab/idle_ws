@@ -218,6 +218,49 @@ def test_dets_to_task_sample_stack_basic():
     assert "green" in ts.bystander_poses
 
 
+def test_run_val_sim_parser_exposes_stack_target_args():
+    """CLI에서 stack 평가에 필요한 task_type/target_color를 지정할 수 있어야 한다."""
+    from mujoco_phase_rl.policies.run_val_sim import build_arg_parser
+
+    parser = build_arg_parser()
+    args = parser.parse_args([
+        "--model", "model.zip",
+        "--bg-image", "bg.jpg",
+        "--block-color", "red",
+        "--task-type", "stack",
+        "--target-color", "blue",
+    ])
+
+    assert args.task_type == "stack"
+    assert args.target_color == "blue"
+    assert args.pose_source == "slot"
+
+
+def test_augment_positions_for_stack_includes_target_block_and_bystanders():
+    """stack 평가 이미지 합성에는 pick block, target block, bystander가 모두 들어가야 한다."""
+    from mujoco_phase_rl.policies.run_val_sim import augment_positions_for_task
+
+    ts = TaskSample(
+        object_pos=np.array([0.05, 0.40, 0.023], dtype=np.float64),
+        object_quat=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        target_pos=np.array([0.13, 0.79, 0.063], dtype=np.float64),
+        target_yaw=0.0,
+        object_mass=0.10,
+        pick_color="red",
+        task_type="stack",
+        target_color="blue",
+        bystander_poses={"green": np.array([-0.05, 0.45, 0.023], dtype=np.float64)},
+    )
+
+    positions = augment_positions_for_task(ts, np.array([0.06, 0.41, 0.023]))
+
+    assert positions == {
+        "red": (0.06, 0.41),
+        "blue": (0.13, 0.79),
+        "green": (-0.05, 0.45),
+    }
+
+
 def test_dets_to_task_sample_stack_missing_target():
     """stack 태스크 — target_color 없으면 ValueError."""
     from mujoco_phase_rl.policies.run_val_sim import dets_to_task_sample

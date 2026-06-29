@@ -1,6 +1,7 @@
 # ================================================================
 # finetune_stack.py
-# 설명: 3색 블록 × pick_place/stack 멀티태스크 PPO 학습.
+# 설명: 3색 블록 × pick_place/stack 멀티태스크 PPO scratch 학습.
+#       파일명은 finetune_stack이지만 기존 PPO 체크포인트를 이어 학습하지 않는다.
 #       val 이미지 detect XY로 에피소드 초기화 (visual augment는 미연결).
 # 사용법:
 #   python3 mujoco_phase_rl/policies/finetune_stack.py \

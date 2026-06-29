@@ -5,8 +5,12 @@
 #   python3 mujoco_phase_rl/policies/run_val_sim.py \
 #     --model outputs/ppo_slot/final_model.zip \
 #     --bg-image ../../data/background.jpg \
-#     --block-color red [--scene scene_000001 | --random-val] \
+#     --block-color red --task-type pick_place [--scene scene_000001 | --random-val] \
 #     --steps 32
+#   python3 mujoco_phase_rl/policies/run_val_sim.py \
+#     --model outputs/ppo_stack/final_model.zip \
+#     --bg-image ../../data/background.jpg \
+#     --block-color red --task-type stack --target-color blue
 # ================================================================
 from __future__ import annotations
 
@@ -129,6 +133,33 @@ def pick_val_scene(scene_id: str | None, random_val: bool, seed: int) -> str:
     return random.Random(seed).choice(val_ids)
 
 
+def augment_positions_for_task(
+    task_sample: TaskSample,
+    object_pos_world: np.ndarray,
+) -> dict[str, tuple[float, float]]:
+    positions: dict[str, tuple[float, float]] = {
+        task_sample.pick_color: (
+            float(object_pos_world[0]),
+            float(object_pos_world[1]),
+        )
+    }
+    if task_sample.task_type == "stack":
+        if task_sample.target_color is not None:
+            positions[task_sample.target_color] = (
+                float(task_sample.target_pos[0]),
+                float(task_sample.target_pos[1]),
+            )
+    else:
+        positions["basket"] = (
+            float(task_sample.target_pos[0]),
+            float(task_sample.target_pos[1]),
+        )
+
+    for color, pos in task_sample.bystander_poses.items():
+        positions[color] = (float(pos[0]), float(pos[1]))
+    return positions
+
+
 def run_episode(
     val_img_bgr: np.ndarray,
     bg_img_bgr: np.ndarray,
@@ -140,6 +171,7 @@ def run_episode(
     slot_diff_ckpt: str,
     slot_color_net_ckpt: str,
     slot_transition_ckpt: str | None,
+    pose_source: str,
     block_color: str,
     deterministic: bool,
     augment: bool,
@@ -170,6 +202,7 @@ def run_episode(
         slot_diff_ckpt=slot_diff_ckpt,
         slot_color_net_ckpt=slot_color_net_ckpt,
         slot_transition_ckpt=slot_transition_ckpt,
+        pose_source=pose_source,
     )
     obs, _ = env.reset(seed=0, options={"task_sample": task_sample})
     embedder.reset()
@@ -181,9 +214,7 @@ def run_episode(
     def _get_slot_diff(obj_pos_world: np.ndarray) -> np.ndarray:
         if aug is not None:
             img = aug.compose(
-                {block_color: (float(obj_pos_world[0]), float(obj_pos_world[1])),
-                 "basket": (float(task_sample.target_pos[0]),
-                            float(task_sample.target_pos[1]))},
+                augment_positions_for_task(task_sample, obj_pos_world),
                 flip=do_flip, blur_k=blur_k,
             )
         else:
@@ -215,11 +246,13 @@ def run_episode(
     }
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Val 이미지 → sim 소환 → PPO episode")
     parser.add_argument("--model", required=True)
     parser.add_argument("--bg-image", required=True, help="레퍼런스 배경 이미지 경로")
     parser.add_argument("--block-color", choices=list(_BLOCK_COLORS), default="red")
+    parser.add_argument("--task-type", choices=["pick_place", "stack"], default="pick_place")
+    parser.add_argument("--target-color", choices=list(_BLOCK_COLORS), default=None)
     parser.add_argument("--scene", default=None)
     parser.add_argument("--random-val", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
@@ -230,7 +263,17 @@ def main() -> None:
     parser.add_argument("--slot-diff-ckpt",      default=_DEFAULT_SLOT_DIFF)
     parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_COLOR_NET)
     parser.add_argument("--slot-transition-ckpt", default=None)
+    parser.add_argument("--pose-source", choices=["gt", "noisy_gt", "slot"], default="slot")
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
+    if args.task_type == "stack" and args.target_color is None:
+        parser.error("--task-type stack requires --target-color")
+    if args.target_color == args.block_color:
+        parser.error("--target-color must differ from --block-color")
 
     scene_id = pick_val_scene(args.scene, args.random_val, args.seed)
     img_path = _SCENES_DIR / f"{scene_id}.jpg"
@@ -245,11 +288,19 @@ def main() -> None:
 
     detect = _load_detect()
     dets = detect(val_img)
-    print(f"scene: {scene_id}  block: {args.block_color}")
+    print(
+        f"scene: {scene_id}  block: {args.block_color}  "
+        f"task_type: {args.task_type}  target: {args.target_color}"
+    )
     print(f"검출: {[d['color'] for d in dets]}")
 
     try:
-        ts = dets_to_task_sample(dets, args.block_color)
+        ts = dets_to_task_sample(
+            dets,
+            args.block_color,
+            task_type=args.task_type,
+            target_color=args.target_color,
+        )
     except ValueError as e:
         sys.exit(f"scene 소환 실패: {e}")
 
@@ -266,6 +317,7 @@ def main() -> None:
         slot_diff_ckpt=args.slot_diff_ckpt,
         slot_color_net_ckpt=args.slot_color_net_ckpt,
         slot_transition_ckpt=args.slot_transition_ckpt,
+        pose_source=args.pose_source,
         block_color=args.block_color,
         deterministic=not args.stochastic,
         augment=not args.no_augment,

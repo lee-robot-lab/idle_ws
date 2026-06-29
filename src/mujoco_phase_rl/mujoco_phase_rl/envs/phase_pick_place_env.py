@@ -13,6 +13,7 @@ from mujoco_phase_rl.controllers.trajectory_controller import (
 )
 from mujoco_phase_rl.perception.image_embedding import SlotEmbedder, IMAGE_EMBEDDING_SIZE
 from mujoco_phase_rl.perception.pose_provider import (
+    PoseEstimate,
     SlotState,
     SlotStateBridge,
     make_pose_provider,
@@ -972,6 +973,28 @@ class PhasePickPlaceEnv(gym.Env):
     def _estimate_pose(self):
         if self.current_task is None:
             raise RuntimeError("Environment must be reset before pose estimation")
+        if self.pose_source == "slot":
+            slot_state = self._build_slot_state()
+            object_pos = np.array(
+                [
+                    float(slot_state.object_xy[0]),
+                    float(slot_state.object_xy[1]),
+                    float(self.current_task.object_pos[2]),
+                ],
+                dtype=np.float64,
+            )
+            target_pos = self.current_task.target_pos.copy()
+            target_pos[:2] = slot_state.target_xy.astype(np.float64)
+            self.last_pose_estimate = PoseEstimate(
+                object_pos=object_pos,
+                object_quat=_yaw_to_quat_wxyz(slot_state.object_yaw),
+                target_pos=target_pos,
+                target_yaw=float(slot_state.target_yaw),
+                object_confidence=float(slot_state.object_confidence),
+                target_confidence=float(slot_state.target_confidence),
+                source="slot",
+            )
+            return self.last_pose_estimate
         self.last_pose_estimate = self.pose_provider.estimate(self.current_task, self.rng)
         return self.last_pose_estimate
 
@@ -1130,3 +1153,8 @@ class PhasePickPlaceEnv(gym.Env):
 def _quat_wxyz_to_yaw(quat: np.ndarray) -> float:
     w, x, y, z = [float(value) for value in np.asarray(quat, dtype=np.float64)]
     return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+
+
+def _yaw_to_quat_wxyz(yaw: float) -> np.ndarray:
+    half = 0.5 * float(yaw)
+    return np.array([np.cos(half), 0.0, 0.0, np.sin(half)], dtype=np.float64)

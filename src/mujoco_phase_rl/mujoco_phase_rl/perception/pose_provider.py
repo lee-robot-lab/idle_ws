@@ -100,6 +100,10 @@ def make_pose_provider(
 ):
     if source == "gt":
         return MujocoGroundTruthPoseProvider(model, data, names)
+    if source == "slot":
+        # The environment converts SlotState into PoseEstimate for this mode.
+        # A GT provider is still useful internally for initial slot grounding.
+        return MujocoGroundTruthPoseProvider(model, data, names)
     if source == "noisy_gt":
         return NoisyMujocoPoseProvider(
             model,
@@ -109,7 +113,7 @@ def make_pose_provider(
             target_pos_noise_std=target_pos_noise_std,
             dropout_prob=dropout_prob,
         )
-    raise ValueError("pose_source must be one of: gt, noisy_gt")
+    raise ValueError("pose_source must be one of: gt, noisy_gt, slot")
 
 
 def _noise(rng: np.random.Generator, std: float) -> np.ndarray:
@@ -140,6 +144,10 @@ class SlotState:
 
     object_xy: np.ndarray  # float32 (2,)  world (x_m, y_m)
     target_xy: np.ndarray  # float32 (2,)  world (x_m, y_m)
+    object_yaw: float = 0.0
+    target_yaw: float = 0.0
+    object_confidence: float = 1.0
+    target_confidence: float = 1.0
 
 
 class SlotStateBridge:
@@ -160,9 +168,15 @@ class SlotStateBridge:
         xy = np.asarray(curr_slots["xy"])  # (N, 2) normalized [0,1]
         obj_world = self._norm_to_world(xy[self.object_slot_idx])
         tgt_world = self._norm_to_world(xy[self.target_slot_idx])
+        yaw = np.asarray(curr_slots.get("yaw", np.zeros((len(xy), 2), dtype=np.float32)))
+        present = np.asarray(curr_slots.get("present", np.ones((len(xy), 1), dtype=np.float32)))
         return SlotState(
             object_xy=obj_world.astype(np.float32),
             target_xy=tgt_world.astype(np.float32),
+            object_yaw=_cos4sin4_to_yaw(yaw[self.object_slot_idx]),
+            target_yaw=_cos4sin4_to_yaw(yaw[self.target_slot_idx]),
+            object_confidence=float(present[self.object_slot_idx, 0]),
+            target_confidence=float(present[self.target_slot_idx, 0]),
         )
 
     def _norm_to_world(self, xy_norm: np.ndarray) -> np.ndarray:
@@ -172,3 +186,12 @@ class SlotStateBridge:
         p = np.array([u, v, 1.0], dtype=np.float64)
         q = self._H @ p
         return q[:2] / q[2]
+
+
+def _cos4sin4_to_yaw(vec: np.ndarray) -> float:
+    arr = np.asarray(vec, dtype=np.float64)
+    if arr.shape[0] < 2:
+        return 0.0
+    if not np.all(np.isfinite(arr[:2])):
+        return 0.0
+    return float(0.25 * np.arctan2(arr[1], arr[0]))
