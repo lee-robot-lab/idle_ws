@@ -1041,7 +1041,7 @@ class PhasePickPlaceEnv(gym.Env):
         """배치 추론 결과를 주입. 이후 _observe() 호출 시 신선한 임베딩을 사용한다."""
         self._cached_slot_diff_emb = emb
         self._cached_curr_slots = curr_slots
-        if not self.slot_state_bridge_grounded:
+        if not self.slot_state_bridge_grounded and self.slot_state_bridge is not None:
             self._init_grounding_from_gt(curr_slots)
             self.slot_state_bridge_grounded = True
         if self.slot_embedder is not None:
