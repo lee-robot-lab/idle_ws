@@ -15,10 +15,8 @@ import importlib.util
 import json
 import random
 from pathlib import Path
-from functools import partial
 
 import cv2
-import numpy as np
 
 _WS_ROOT    = Path(__file__).resolve().parents[4]
 _ML_ROOT    = _WS_ROOT / "src" / "ml"
@@ -107,7 +105,7 @@ def main() -> None:
 
     try:
         from stable_baselines3 import PPO
-        from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback, BaseCallback
+        from stable_baselines3.common.callbacks import CheckpointCallback
         from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor, VecCheckNan
     except ModuleNotFoundError as e:
         raise SystemExit("stable-baselines3 required") from e
