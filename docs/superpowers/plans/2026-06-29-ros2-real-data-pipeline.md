@@ -12,19 +12,22 @@
 
 ## Current Evidence
 
-- Good prior result was GT-pose eval: `outputs/ppo_stack_base_s0/eval_ckpt133120_gt_val5_allcolors.json` = 41/45 success, 91.1%.
-- Learned slot-pose eval was already 0%: `outputs/ppo_stack_base_s0/eval_ckpt133120_slot_val3_allcolors.json` = 0/27.
-- Current `outputs/ppo_stack_pg_s0/final_model.zip` is not useful for demo: diagnostic shows raw `RECOVERY` masked to `STOP`, so it stays in `OBSERVE_OBJECT`.
+- Current best policy checkpoint: `outputs/ppo_stack_followup_fixed_s0/checkpoints/ppo_stack_robust_143360_steps.zip`.
+- Current GT val20 reference for that checkpoint: `160/180 = 88.9%`.
+- Current slot liveaugment val20 reference after basket-static/source-position fixes: about `152/180 = 84.4%`.
+- Later `163840`/`171008` follow-up checkpoints were worse than `143360`; do not promote them as demo baselines.
+- `outputs/ppo_stack_pg_s0/final_model.zip` is discarded. It came from the earlier broken command/action layout and should not be used for demo or continued training.
 - `outputs/ppo_stack_pg_s0/metadata.json` has `"slot_transition_ckpt": null`; this is not an RSSM-trained policy.
-- Root cause is not “needs RSSM first.” The immediate gap is learned slot grounding/pose quality plus PPO fine-tune collapse under slot-pose failures.
+- Render `slot_diff` recovery curriculum is a separate experimental track. It can improve recovery behavior, but it does not replace real slot-pose validation for the ROS2 path.
 
 ## Runtime Constraints
 
 - No HSV, no `detect_live.py`, no `idle_vision`, and no color-thresholded pose in the demo control path.
 - HSV/dataset labels may be used only offline for evaluation metrics, never as runtime input to PPO or executor.
 - Do not use `/pickplace/command` for PPO execute. That path invokes the old high-level FSM sequence.
-- Keep `ppo_stack_base_s0/checkpoints/ppo_stack_133120_steps.zip` as the current best policy baseline.
+- Keep `outputs/ppo_stack_followup_fixed_s0/checkpoints/ppo_stack_robust_143360_steps.zip` as the current best policy baseline until a new checkpoint beats it on clean GT and slot/liveaugment eval.
 - Do not continue training from `ppo_stack_pg_s0/final_model.zip`.
+- Do not treat render recovery success as proof that real camera slot pose is solved; real-image pose and grounding still need their own validation gate.
 
 ---
 
