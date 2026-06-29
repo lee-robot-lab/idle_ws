@@ -190,3 +190,47 @@ def test_dets_to_task_sample_missing_basket_raises():
              "contour": np.zeros((4,1,2), dtype=np.int32), "center_px": (0,0)}]
     with pytest.raises(ValueError, match="basket"):
         dets_to_task_sample(dets, pick_color="red")
+
+
+def _make_dets_3blocks():
+    """3개 블록(red, green, blue) fixture — stack 테스트용."""
+    return [
+        {"color": "red",   "x_m": 0.05,  "y_m": 0.40, "yaw_deg": 10.0,
+         "contour": np.zeros((4, 1, 2), dtype=np.int32), "center_px": (0, 0)},
+        {"color": "green", "x_m": -0.05, "y_m": 0.45, "yaw_deg": 5.0,
+         "contour": np.zeros((4, 1, 2), dtype=np.int32), "center_px": (0, 0)},
+        {"color": "blue",  "x_m": 0.13,  "y_m": 0.79, "yaw_deg": 0.0,
+         "contour": np.zeros((4, 1, 2), dtype=np.int32), "center_px": (0, 0)},
+    ]
+
+
+def test_dets_to_task_sample_stack_basic():
+    """stack 태스크 — target_color 제공 시 올바른 TaskSample 반환."""
+    from mujoco_phase_rl.policies.run_val_sim import dets_to_task_sample
+
+    dets = _make_dets_3blocks()
+    ts = dets_to_task_sample(dets, pick_color="red", task_type="stack", target_color="blue")
+    assert ts.task_type == "stack"
+    assert ts.pick_color == "red"
+    assert ts.target_color == "blue"
+    assert ts.target_pos[2] == pytest.approx(0.063)
+    assert len(ts.bystander_poses) == 1
+    assert "green" in ts.bystander_poses
+
+
+def test_dets_to_task_sample_stack_missing_target():
+    """stack 태스크 — target_color 없으면 ValueError."""
+    from mujoco_phase_rl.policies.run_val_sim import dets_to_task_sample
+
+    dets = _make_dets_3blocks()
+    with pytest.raises(ValueError, match="stack 타겟"):
+        dets_to_task_sample(dets, pick_color="red", task_type="stack", target_color="purple")
+
+
+def test_dets_to_task_sample_stack_no_target_color():
+    """stack 태스크 — target_color=None이면 ValueError."""
+    from mujoco_phase_rl.policies.run_val_sim import dets_to_task_sample
+
+    dets = _make_dets_3blocks()
+    with pytest.raises(ValueError):
+        dets_to_task_sample(dets, pick_color="red", task_type="stack", target_color=None)
