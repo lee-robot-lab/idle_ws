@@ -137,6 +137,10 @@ class PhasePickPlaceEnv(gym.Env):
         self._cached_slot_diff_emb: np.ndarray = np.zeros(IMAGE_EMBEDDING_SIZE, dtype=np.float32)
         self._cached_curr_slots: dict | None = None
         self.slot_state_bridge_grounded = False
+        # 배치 추론용 deferred 모드 (BatchedSlotDummyVecEnv에서 사용)
+        self._slot_embed_deferred: bool = False
+        self._slot_embed_pending_img = None
+        self._embed_injected: bool = False
         if self.image_embedding_mode == "slot":
             if not (slot_stage1_ckpt and slot_diff_ckpt and slot_color_net_ckpt):
                 raise ValueError(
@@ -1006,13 +1010,24 @@ class PhasePickPlaceEnv(gym.Env):
                 or self.step_count % self.image_embedding_interval == 0
             )
             if should_run:
-                emb, curr_slots = self.slot_embedder.embed(self.model, self.data)
-                self._cached_slot_diff_emb = emb
-                self._cached_curr_slots = curr_slots
-                # 에피소드 첫 관측 시 GT proximity로 grounding 초기화
-                if not self.slot_state_bridge_grounded:
-                    self._init_grounding_from_gt(curr_slots)
-                    self.slot_state_bridge_grounded = True
+                if self._embed_injected:
+                    # 배치 추론 결과가 이미 주입됨 — 캐시 그대로 사용
+                    self._embed_injected = False
+                elif self._slot_embed_deferred and self._cached_curr_slots is not None:
+                    # deferred 모드: 렌더만 하고 NN 추론은 나중에 배치로 수행
+                    self._slot_embed_pending_img = self.slot_embedder.render_and_preprocess(
+                        self.model, self.data
+                    )
+                    # 이번 step obs는 이전 캐시 사용 (inject 후 _observe() 재호출로 갱신됨)
+                else:
+                    # 일반 경로 (초기화 시 또는 deferred 비활성)
+                    emb, curr_slots = self.slot_embedder.embed(self.model, self.data)
+                    self._cached_slot_diff_emb = emb
+                    self._cached_curr_slots = curr_slots
+                    # 에피소드 첫 관측 시 GT proximity로 grounding 초기화
+                    if not self.slot_state_bridge_grounded:
+                        self._init_grounding_from_gt(curr_slots)
+                        self.slot_state_bridge_grounded = True
             return self.slot_state_bridge.estimate(self._cached_curr_slots)
         # zeros 모드: GT 위치 직접 사용
         pose = self.pose_provider.estimate(self.current_task, self.rng)
@@ -1021,6 +1036,18 @@ class PhasePickPlaceEnv(gym.Env):
             object_xy=pose.object_pos[:2].astype(np.float32),
             target_xy=pose.target_pos[:2].astype(np.float32),
         )
+
+    def inject_slot_result(self, emb: np.ndarray, curr_slots: dict) -> None:
+        """배치 추론 결과를 주입. 이후 _observe() 호출 시 신선한 임베딩을 사용한다."""
+        self._cached_slot_diff_emb = emb
+        self._cached_curr_slots = curr_slots
+        if not self.slot_state_bridge_grounded:
+            self._init_grounding_from_gt(curr_slots)
+            self.slot_state_bridge_grounded = True
+        if self.slot_embedder is not None:
+            self.slot_embedder._prev_slots = curr_slots
+        self._slot_embed_pending_img = None
+        self._embed_injected = True
 
     def _init_grounding_from_gt(self, curr_slots: dict) -> None:
         """GT world XY와 slot XY를 비교해 closest slot을 grounding으로 설정."""

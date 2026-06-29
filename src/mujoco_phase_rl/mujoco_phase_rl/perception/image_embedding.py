@@ -164,6 +164,74 @@ class SlotEmbedder:
         self._prev_slots = curr_slots
         return emb.astype(np.float32), curr_slots
 
+    def render_and_preprocess(self, model, data) -> "torch.Tensor":
+        """NN 추론 없이 이미지 렌더링+전처리만 수행. Returns (1, 3, H, W) tensor."""
+        import mujoco
+
+        if self._renderer is None:
+            self._renderer = mujoco.Renderer(
+                model, height=self.render_height, width=self.render_width
+            )
+        self._renderer.update_scene(data, camera=self.camera)
+        rgb = self._renderer.render()
+        return self._preprocess(rgb)
+
+    @staticmethod
+    def batch_embed_from_prerendered(
+        ref: "SlotEmbedder",
+        embedder_list: list,
+        img_tensors: list,
+    ) -> list:
+        """배치 추론. ref의 NN 가중치로 모든 env를 한 번에 forward.
+
+        Args:
+            ref: 공유 NN 가중치를 제공할 SlotEmbedder (embedder_list[0] 권장)
+            embedder_list: 각 env의 SlotEmbedder 인스턴스 (_prev_slots 상태 유지)
+            img_tensors: 각 env의 render_and_preprocess() 결과 List[Tensor(1,3,H,W)]
+
+        Returns:
+            List[(emb:(64,), curr_slots:dict)]  — embedder._prev_slots 업데이트 포함
+        """
+        import torch
+        import torch.nn.functional as F
+
+        B = len(embedder_list)
+        imgs = torch.cat(img_tensors, dim=0).to(ref.device)  # (B, 3, H, W)
+
+        with torch.no_grad():
+            enc_out = ref._encoder(imgs)
+            present = torch.sigmoid(enc_out["present"])   # (B, N, 1)
+            xy = enc_out["xy"]                            # (B, N, 2)
+            color_logit, _ = ref._color_net(imgs, xy)     # (B, N, 4)
+            color_soft = F.softmax(color_logit, dim=-1)   # (B, N, 4)
+
+        slot_pairs_list = []
+        curr_slots_list = []
+        for b, inst in enumerate(embedder_list):
+            curr_slots = {
+                "present": present[b].cpu().numpy(),
+                "xy": xy[b].cpu().numpy(),
+                "color_logit": color_logit[b].cpu().numpy(),
+            }
+            if inst._prev_slots is None:
+                inst._prev_slots = curr_slots
+            prev_feats = inst._to_feats(inst._prev_slots)
+            curr_feats = inst._to_feats_soft(curr_slots, color_soft[b].cpu().numpy())
+            pair = np.concatenate([prev_feats, curr_feats], axis=-1)[np.newaxis]
+            slot_pairs_list.append(torch.tensor(pair, dtype=torch.float32))
+            curr_slots_list.append(curr_slots)
+
+        slot_pairs_batch = torch.cat(slot_pairs_list, dim=0).to(ref.device)  # (B, N, 14)
+        with torch.no_grad():
+            embs = ref._slot_diff(slot_pairs_batch)  # (B, 64)
+
+        results = []
+        for b, inst in enumerate(embedder_list):
+            emb = embs[b].cpu().numpy().astype(np.float32)
+            inst._prev_slots = curr_slots_list[b]
+            results.append((emb, curr_slots_list[b]))
+        return results
+
     def close(self) -> None:
         if self._renderer is not None:
             self._renderer.close()
