@@ -6,7 +6,7 @@ import json
 import numpy as np
 
 from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
-from mujoco_phase_rl.tasks.phase_manager import Command
+from mujoco_phase_rl.tasks.phase_manager import Command, POLICY_COMMAND_COUNT
 
 
 def _parse_bool(value: str) -> bool:
@@ -16,15 +16,16 @@ def _parse_bool(value: str) -> bool:
 def command_action(command: Command, params: dict[str, float] | None = None) -> np.ndarray:
     params = params or {}
     action = np.zeros(14, dtype=np.float32)
-    action[:8] = -1.0
+    action[:POLICY_COMMAND_COUNT] = -1.0
     action[int(command)] = 1.0
-    action[8] = float(np.clip(params.get("dx", 0.0) / 0.06, -1.0, 1.0))
-    action[9] = float(np.clip(params.get("dy", 0.0) / 0.06, -1.0, 1.0))
-    action[10] = float(np.clip(params.get("dz", 0.0) / 0.04, -1.0, 1.0))
-    action[11] = float(np.clip(params.get("dyaw", 0.0) / np.deg2rad(30.0), -1.0, 1.0))
-    action[12] = float(np.clip(params.get("gripper", 0.0), -1.0, 1.0))
+    cont = POLICY_COMMAND_COUNT
+    action[cont + 0] = float(np.clip(params.get("dx", 0.0) / 0.06, -1.0, 1.0))
+    action[cont + 1] = float(np.clip(params.get("dy", 0.0) / 0.06, -1.0, 1.0))
+    action[cont + 2] = float(np.clip(params.get("dz", 0.0) / 0.04, -1.0, 1.0))
+    action[cont + 3] = float(np.clip(params.get("dyaw", 0.0) / np.deg2rad(30.0), -1.0, 1.0))
+    action[cont + 4] = float(np.clip(params.get("gripper", 0.0), -1.0, 1.0))
     lift_height = float(params.get("lift_height", 0.085))
-    action[13] = float(np.clip(2.0 * (lift_height - 0.02) / (0.15 - 0.02) - 1.0, -1.0, 1.0))
+    action[cont + 6] = float(np.clip(2.0 * (lift_height - 0.02) / (0.15 - 0.02) - 1.0, -1.0, 1.0))
     return action
 
 

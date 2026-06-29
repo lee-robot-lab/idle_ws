@@ -14,7 +14,14 @@ from mujoco_phase_rl.policies.scripted_rollout import (
     run_scripted_pregrasp,
     run_scripted_sequence,
 )
-from mujoco_phase_rl.tasks.phase_manager import Command, Phase, StepResult
+from mujoco_phase_rl.tasks.phase_manager import (
+    ALLOWED_COMMANDS,
+    Command,
+    POLICY_COMMAND_COUNT,
+    Phase,
+    StepResult,
+)
+from mujoco_phase_rl.tasks.pick_place_task import TaskSample
 from mujoco_phase_rl.utils.mujoco_loader import load_task_scene, set_freejoint_pose
 from mujoco_phase_rl.utils.logging import EpisodeSummary
 from mujoco_phase_rl.utils.name_maps import TASK_OBJECT_BODY
@@ -69,6 +76,30 @@ def test_reset_uses_can_bridge_home_pose_and_open_gripper():
     env.close()
 
 
+def test_reset_moves_pick_place_basket_to_task_target():
+    env = PhasePickPlaceEnv(max_episode_steps=5)
+    sample = TaskSample(
+        object_pos=np.array([0.12, 0.40, 0.023], dtype=np.float64),
+        object_quat=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        target_pos=np.array([-0.23, 0.54, 0.009], dtype=np.float64),
+        target_yaw=0.0,
+        object_mass=0.1,
+        pick_color="red",
+        task_type="pick_place",
+        target_color=None,
+        bystander_poses={
+            "green": np.array([-0.28, 0.38, 0.023], dtype=np.float64),
+            "blue": np.array([0.28, 0.38, 0.023], dtype=np.float64),
+        },
+    )
+
+    env.reset(seed=1, options={"task_sample": sample})
+
+    basket_xy = env.data.xpos[env.names.basket_body_id][:2]
+    env.close()
+    assert np.allclose(basket_xy, sample.target_pos[:2], atol=1e-9)
+
+
 def test_invalid_command_does_not_advance_phase():
     env = PhasePickPlaceEnv(max_episode_steps=5)
     env.reset(seed=2)
@@ -91,10 +122,26 @@ def test_command_mask_maps_invalid_logits_to_allowed_command():
 
     _obs, _reward, _terminated, _truncated, info = env.step(action)
     assert info["raw_command"] == "LIFT"
-    assert info["command"] in {"MOVE_TO_PREGRASP", "STOP"}
+    assert info["command"] == "MOVE_TO_PREGRASP"
     assert info["command_was_masked"] is True
     assert info["valid_command"] is True
     env.close()
+
+
+def test_stop_is_not_allowed_in_active_training_phases():
+    active_phases = {
+        Phase.OBSERVE_OBJECT,
+        Phase.MOVE_TO_PREGRASP,
+        Phase.GRASP,
+        Phase.LIFT,
+        Phase.MOVE_TO_PLACE,
+        Phase.PLACE,
+        Phase.RETREAT,
+    }
+    for phase in active_phases:
+        assert Command.STOP not in ALLOWED_COMMANDS[phase]
+    assert Command.STOP in ALLOWED_COMMANDS[Phase.DONE]
+    assert Command.STOP in ALLOWED_COMMANDS[Phase.FAILURE]
 
 
 def test_workspace_failure_tracks_attempt_without_phase_advance():
@@ -187,7 +234,7 @@ def test_command_mask_excludes_recovery_without_failure_context():
 
     _obs, _reward, _terminated, _truncated, info = env.step(action)
     assert info["raw_command"] == "RECOVERY"
-    assert info["command"] in {"GRASP", "LIFT", "STOP"}
+    assert info["command"] in {"GRASP", "LIFT"}
     assert info["command_was_masked"] is True
     assert info["valid_command"] is True
     env.close()
@@ -205,7 +252,7 @@ def test_command_mask_excludes_recovery_while_holding_object_in_place_phase():
 
     _obs, _reward, _terminated, _truncated, info = env.step(action)
     assert info["raw_command"] == "RECOVERY"
-    assert info["command"] in {"PLACE", "HOME", "STOP"}
+    assert info["command"] in {"PLACE", "HOME"}
     assert info["command"] != "RECOVERY"
     assert info["command_was_masked"] is True
     assert info["valid_command"] is True
@@ -366,7 +413,7 @@ def test_reward_components_are_finite_and_phase_named():
     env = PhasePickPlaceEnv(max_episode_steps=5)
     env.reset(seed=0)
     action = np.zeros(14, dtype=np.float32)
-    action[:8] = -1.0
+    action[:POLICY_COMMAND_COUNT] = -1.0
     action[int(Command.MOVE_TO_PREGRASP)] = 1.0
 
     _obs, reward, _terminated, _truncated, info = env.step(action)

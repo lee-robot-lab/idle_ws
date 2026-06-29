@@ -136,6 +136,7 @@ def pick_val_scene(scene_id: str | None, random_val: bool, seed: int) -> str:
 def augment_positions_for_task(
     task_sample: TaskSample,
     object_pos_world: np.ndarray,
+    scene_static_positions: dict[str, tuple[float, float]] | None = None,
 ) -> dict[str, tuple[float, float]]:
     positions: dict[str, tuple[float, float]] = {
         task_sample.pick_color: (
@@ -157,6 +158,9 @@ def augment_positions_for_task(
 
     for color, pos in task_sample.bystander_poses.items():
         positions[color] = (float(pos[0]), float(pos[1]))
+    if scene_static_positions:
+        for color, pos in scene_static_positions.items():
+            positions.setdefault(color, (float(pos[0]), float(pos[1])))
     return positions
 
 
@@ -178,6 +182,7 @@ def run_episode(
     mask_invalid_commands: bool = True,
     model=None,
     embedder=None,
+    trace: bool = False,
 ) -> dict[str, Any]:
     """val 이미지 기반 PPO 에피소드 실행.
 
@@ -205,7 +210,22 @@ def run_episode(
             device="cpu",
         )
     H_world2px = np.linalg.inv(_H_DEFAULT)
-    aug = SlotAugmentor(val_img_bgr, bg_img_bgr, dets, H_world2px) if augment else None
+    aug = (
+        SlotAugmentor(
+            val_img_bgr,
+            bg_img_bgr,
+            dets,
+            H_world2px,
+            background_mode="source_inpaint",
+        )
+        if augment
+        else None
+    )
+    scene_static_positions = {
+        d["color"]: (float(d["x_m"]), float(d["y_m"]))
+        for d in dets
+        if d.get("color") == "basket"
+    }
 
     env = PhasePickPlaceEnv(
         max_episode_steps=steps,
@@ -219,45 +239,138 @@ def run_episode(
     )
     obs, _ = env.reset(seed=0, options={"task_sample": task_sample})
     embedder.reset()
+    if hasattr(env, "_slot_embed_deferred"):
+        env._slot_embed_deferred = True
+    if pose_source == "slot" and hasattr(env, "slot_state_bridge_grounded"):
+        env.slot_state_bridge_grounded = False
 
     # 에피소드 내 flip/blur는 고정 (에피소드 시작 시 결정)
-    do_flip = augment and bool(random.getrandbits(1))
-    blur_k  = augment and random.choice([0, 3, 5])
+    do_flip = False
+    blur_k = 0
 
-    def _get_slot_diff(obj_pos_world: np.ndarray) -> np.ndarray:
+    def _get_slot_result(obj_pos_world: np.ndarray) -> tuple[np.ndarray, dict]:
         if aug is not None:
             img = aug.compose(
-                augment_positions_for_task(task_sample, obj_pos_world),
+                augment_positions_for_task(
+                    task_sample,
+                    obj_pos_world,
+                    scene_static_positions=scene_static_positions,
+                ),
                 flip=do_flip, blur_k=blur_k,
             )
         else:
             img = val_img_bgr
-        emb, _ = embedder.embed_bgr(img)
-        return emb
+        return embedder.embed_bgr(img)
+
+    def _inject_external_slots(obj_pos_world: np.ndarray) -> dict[str, np.ndarray]:
+        emb, curr_slots = _get_slot_result(obj_pos_world)
+        env.inject_slot_result(emb, curr_slots)
+        return env._observe()
 
     obj_pos = env.data.xpos[env.names.object_body_id]
-    obs["slot_diff"] = _get_slot_diff(obj_pos)
+    obs = _inject_external_slots(obj_pos)
 
     total_reward = 0.0
     step_i = 0
+    trace_rows: list[dict[str, Any]] = []
     for step_i in range(steps):
         action, _ = model.predict(obs, deterministic=deterministic)
         obs, reward, terminated, truncated, info = env.step(action)
         obj_pos = env.data.xpos[env.names.object_body_id]
-        obs["slot_diff"] = _get_slot_diff(obj_pos)
+        obs = _inject_external_slots(obj_pos)
         total_reward += float(reward)
+        if trace:
+            trace_rows.append(_make_trace_row(env, step_i + 1, obs, info, reward, terminated, truncated))
         if terminated or truncated:
             break
 
     env.close()
     if _own_embedder:
         embedder.close()
-    return {
+    result = {
         "final_phase": info.get("phase", "UNKNOWN"),
         "return": round(total_reward, 3),
         "steps": step_i + 1,
         "success": info.get("phase") == "DONE",
     }
+    if trace:
+        result["trace"] = trace_rows
+    return result
+
+
+def _make_trace_row(
+    env,
+    step: int,
+    obs: dict[str, np.ndarray],
+    info: dict[str, Any],
+    reward: float,
+    terminated: bool,
+    truncated: bool,
+) -> dict[str, Any]:
+    task = np.asarray(obs.get("task", np.zeros(4, dtype=np.float32)), dtype=np.float64)
+    object_xy = task[:2]
+    target_xy = task[2:4]
+    gt_object_xy = np.asarray(
+        env.data.xpos[env.names.object_body_id][:2],
+        dtype=np.float64,
+    )
+    if getattr(env, "current_task", None) is None:
+        gt_target_xy = np.array([np.nan, np.nan], dtype=np.float64)
+    else:
+        gt_target_xy = np.asarray(env.current_task.target_pos[:2], dtype=np.float64)
+    row: dict[str, Any] = {
+        "step": int(step),
+        "reward": float(reward),
+        "terminated": bool(terminated),
+        "truncated": bool(truncated),
+        "phase_before": info.get("phase_before"),
+        "phase": info.get("phase"),
+        "phase_after": info.get("phase_after", info.get("phase")),
+        "command": info.get("command"),
+        "raw_command": info.get("raw_command"),
+        "executor_status": info.get("executor_status"),
+        "planner_fail_reason": info.get("planner_fail_reason", ""),
+        "planner_fail_class": info.get("planner_fail_class", ""),
+        "attempt_count": int(info.get("attempt_count", 0)),
+        "object_grasped": bool(info.get("object_grasped", False)),
+        "obs_object_xy": _list2(object_xy),
+        "obs_target_xy": _list2(target_xy),
+        "gt_object_xy": _list2(gt_object_xy),
+        "gt_target_xy": _list2(gt_target_xy),
+        "object_xy_error": _distance(object_xy, gt_object_xy),
+        "target_xy_error": _distance(target_xy, gt_target_xy),
+        "slot_diff_norm": float(np.linalg.norm(obs.get("slot_diff", np.zeros(64, dtype=np.float32)))),
+    }
+    bridge = getattr(env, "slot_state_bridge", None)
+    if bridge is not None:
+        row["object_slot_idx"] = getattr(bridge, "object_slot_idx", None)
+        row["target_slot_idx"] = getattr(bridge, "target_slot_idx", None)
+    curr_slots = getattr(env, "_cached_curr_slots", None)
+    if curr_slots is not None and bridge is not None and "present" in curr_slots:
+        present = np.asarray(curr_slots["present"], dtype=np.float64).reshape(-1)
+        obj_idx = getattr(bridge, "object_slot_idx", None)
+        tgt_idx = getattr(bridge, "target_slot_idx", None)
+        if obj_idx is not None and 0 <= int(obj_idx) < len(present):
+            row["object_slot_present"] = float(present[int(obj_idx)])
+        if tgt_idx is not None and 0 <= int(tgt_idx) < len(present):
+            row["target_slot_present"] = float(present[int(tgt_idx)])
+    for key, value in info.items():
+        if key in row or key == "reward_components":
+            continue
+        if isinstance(value, (str, bool, int, float)) or value is None:
+            row[key] = value
+    return row
+
+
+def _distance(a: np.ndarray, b: np.ndarray) -> float:
+    if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+        return float("nan")
+    return float(np.linalg.norm(np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)))
+
+
+def _list2(values: np.ndarray) -> list[float]:
+    arr = np.asarray(values, dtype=np.float64)
+    return [float(arr[0]), float(arr[1])]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -272,6 +385,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--steps", type=int, default=32)
     parser.add_argument("--stochastic", action="store_true")
+    parser.add_argument("--augment", action="store_true",
+                        help="Use SlotAugmentor compositing during evaluation")
     parser.add_argument("--no-augment", action="store_true")
     parser.add_argument("--no-command-mask", action="store_true",
                         help="Disable phase command safety mask during evaluation")
@@ -280,6 +395,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_COLOR_NET)
     parser.add_argument("--slot-transition-ckpt", default=None)
     parser.add_argument("--pose-source", choices=["gt", "noisy_gt", "slot"], default="slot")
+    parser.add_argument("--trace", action="store_true",
+                        help="Include per-step phase/status and slot-vs-GT pose errors in result JSON")
     return parser
 
 
@@ -336,8 +453,9 @@ def main() -> None:
         pose_source=args.pose_source,
         block_color=args.block_color,
         deterministic=not args.stochastic,
-        augment=not args.no_augment,
+        augment=bool(args.augment and not args.no_augment),
         mask_invalid_commands=not args.no_command_mask,
+        trace=args.trace,
     )
     print(f"결과: {result}")
 

@@ -11,14 +11,16 @@ import torch
 import torch.nn as nn
 
 from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
+from mujoco_phase_rl.tasks.phase_manager import POLICY_COMMAND_COUNT
 from mujoco_phase_rl.utils.logging import EpisodeSummary
 
-_PHASE_DIM = 7   # Categorical — one of 7 commands
-_CONT_DIM  = 7   # Gaussian   — goal_xy(2) + z_grasp + lift_height + place_z + gripper + padding
+_ACTION_DIM = 14
+_PHASE_DIM = POLICY_COMMAND_COUNT
+_CONT_DIM = _ACTION_DIM - _PHASE_DIM
 
 
 class _MixedDist:
-    """Categorical(7) phase + Gaussian(7) continuous params → 14-dim action."""
+    """Categorical command head + Gaussian continuous params."""
 
     def __init__(
         self,
@@ -53,7 +55,7 @@ class _MixedDist:
 
 
 def _make_mixed_policy():
-    """MixedPhasePolicy: Categorical(7) phase head + Gaussian(7) continuous head."""
+    """MixedPhasePolicy: categorical command head + Gaussian continuous head."""
     try:
         from stable_baselines3.common.policies import MultiInputActorCriticPolicy
     except ModuleNotFoundError as exc:

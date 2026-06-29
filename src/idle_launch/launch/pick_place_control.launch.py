@@ -45,12 +45,12 @@ def generate_launch_description() -> LaunchDescription:
     )
     settle_kp_scale_by_motor_arg = DeclareLaunchArgument(
         "settle_kp_scale_by_motor_json",
-        default_value='{"1": 1.4, "2": 1.8, "4": 1.4}',
+        default_value='{"1": 1, "2": 1.2, "4": 1}',
         description="Per-motor kp scale used only while settling to q_final",
     )
     settle_kd_scale_by_motor_arg = DeclareLaunchArgument(
         "settle_kd_scale_by_motor_json",
-        default_value='{"1": 1.35}',
+        default_value='{"1": 1, "2": 1.4}',
         description="Per-motor kd scale used only while settling to q_final",
     )
     settle_gain_ramp_arg = DeclareLaunchArgument(
@@ -80,7 +80,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     hold_friction_scale_arg = DeclareLaunchArgument(
         "hold_friction_scale",
-        default_value="0.4",
+        default_value="0.0",
         description="Friction feedforward scale after DONE hold",
     )
     hold_friction_deadband_arg = DeclareLaunchArgument(
@@ -90,12 +90,12 @@ def generate_launch_description() -> LaunchDescription:
     )
     hold_kp_scale_by_motor_arg = DeclareLaunchArgument(
         "hold_kp_scale_by_motor_json",
-        default_value="{}",
+        default_value="{ 1: 1, 2: 1.4, 4: 1 }",
         description="Per-motor kp scale used after DONE hold",
     )
     hold_kd_scale_by_motor_arg = DeclareLaunchArgument(
         "hold_kd_scale_by_motor_json",
-        default_value='{"1": 0.85, "2": 0.75, "3": 0.85, "4": 0.7}',
+        default_value='{}',
         description="Per-motor kd scale used after DONE hold",
     )
     hold_latch_actual_q_arg = DeclareLaunchArgument(
@@ -110,12 +110,12 @@ def generate_launch_description() -> LaunchDescription:
     )
     kp_max_arg = DeclareLaunchArgument(
         "kp_max",
-        default_value="70.0",
+        default_value="60.0",
         description="Software clamp for outgoing motor kp",
     )
     kd_max_arg = DeclareLaunchArgument(
         "kd_max",
-        default_value="15.0",
+        default_value="10.0",
         description="Software clamp for outgoing motor kd",
     )
     settle_vel_rad_s_arg = DeclareLaunchArgument(
@@ -135,7 +135,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     settle_qd_lpf_alpha_arg = DeclareLaunchArgument(
         "settle_qd_lpf_alpha",
-        default_value="0.7",
+        default_value="0.9",
         description="IIR alpha for settle-phase qd low-pass filter (method B)",
     )
     plan_diag_csv_path_arg = DeclareLaunchArgument(

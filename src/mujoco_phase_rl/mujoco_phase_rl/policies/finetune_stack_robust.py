@@ -70,14 +70,35 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def load_base_model(*, ppo_cls, base_model: str, env, device: str):
+def load_base_model(
+    *,
+    ppo_cls,
+    base_model: str,
+    env,
+    device: str,
+    learning_rate: float | None = None,
+    n_steps: int | None = None,
+    batch_size: int | None = None,
+    gamma: float | None = None,
+):
     from mujoco_phase_rl.policies.train_ppo import _make_mixed_policy
+
+    load_kwargs = {}
+    if learning_rate is not None:
+        load_kwargs["learning_rate"] = learning_rate
+    if n_steps is not None:
+        load_kwargs["n_steps"] = n_steps
+    if batch_size is not None:
+        load_kwargs["batch_size"] = batch_size
+    if gamma is not None:
+        load_kwargs["gamma"] = gamma
 
     return ppo_cls.load(
         base_model,
         env=env,
         device=device,
         custom_objects={"policy_class": _make_mixed_policy()},
+        **load_kwargs,
     )
 
 
@@ -172,11 +193,17 @@ def main() -> None:
     print(f"val pool: {len(val_pool)} (task_sample, img) pairs")
 
     vec_env = _build_vec_env(args, val_pool)
-    model = load_base_model(ppo_cls=PPO, base_model=args.base_model, env=vec_env, device="auto")
-    model.learning_rate = args.learning_rate
-    model.n_steps = args.n_steps
-    model.batch_size = min(args.batch_size, args.n_steps * args.n_envs)
-    model.gamma = args.gamma
+    effective_batch_size = min(args.batch_size, args.n_steps * args.n_envs)
+    model = load_base_model(
+        ppo_cls=PPO,
+        base_model=args.base_model,
+        env=vec_env,
+        device="auto",
+        learning_rate=args.learning_rate,
+        n_steps=args.n_steps,
+        batch_size=effective_batch_size,
+        gamma=args.gamma,
+    )
 
     ckpt_cb = CheckpointCallback(
         save_freq=max(10240 // args.n_envs, 1),
@@ -199,7 +226,7 @@ def main() -> None:
         "perturb_max": args.perturb_max,
         "learning_rate": args.learning_rate,
         "n_steps": args.n_steps,
-        "batch_size": min(args.batch_size, args.n_steps * args.n_envs),
+        "batch_size": effective_batch_size,
         "gamma": args.gamma,
         "pose_source": args.pose_source,
         "pose_noise_std": args.pose_noise_std,

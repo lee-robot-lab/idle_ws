@@ -36,6 +36,8 @@ def compute_phase_reward(
     if not valid_command:
         components["invalid_command"] = -1.0
         return _total(components), components
+    if bool(extra_info.get("command_was_masked", False)):
+        components["masked_command"] = -0.2
 
     if executor_status == "IK_FAIL":
         components["ik_fail"] = -1.0

@@ -36,27 +36,26 @@ class StepResult(IntEnum):
 
 PHASE_COUNT = len(Phase)
 COMMAND_COUNT = len(Command)
+POLICY_COMMAND_COUNT = COMMAND_COUNT - 1  # STOP is terminal/safety state, not a learned PPO action.
 RESULT_COUNT = len(StepResult)
 
 
 ALLOWED_COMMANDS: dict[Phase, set[Command]] = {
-    Phase.OBSERVE_OBJECT: {Command.MOVE_TO_PREGRASP, Command.STOP},
+    Phase.OBSERVE_OBJECT: {Command.MOVE_TO_PREGRASP},
     Phase.MOVE_TO_PREGRASP: {
         Command.MOVE_TO_PREGRASP,
         Command.GRASP,
         Command.RECOVERY,
-        Command.STOP,
     },
-    Phase.GRASP: {Command.GRASP, Command.LIFT, Command.RECOVERY, Command.STOP},
-    Phase.LIFT: {Command.LIFT, Command.MOVE_TO_PLACE, Command.RECOVERY, Command.STOP},
+    Phase.GRASP: {Command.GRASP, Command.LIFT, Command.RECOVERY},
+    Phase.LIFT: {Command.LIFT, Command.MOVE_TO_PLACE, Command.RECOVERY},
     Phase.MOVE_TO_PLACE: {
         Command.MOVE_TO_PLACE,
         Command.PLACE,
         Command.RECOVERY,
-        Command.STOP,
     },
-    Phase.PLACE: {Command.PLACE, Command.HOME, Command.RECOVERY, Command.STOP},
-    Phase.RETREAT: {Command.HOME, Command.STOP},
+    Phase.PLACE: {Command.PLACE, Command.HOME, Command.RECOVERY},
+    Phase.RETREAT: {Command.HOME},
     Phase.DONE: {Command.STOP},
     Phase.FAILURE: {Command.STOP},
 }

@@ -64,24 +64,25 @@ def test_slot_state_bridge_different_slots_different_world_xy():
 def test_slot_state_bridge_decodes_cos4sin4_yaw():
     bridge = SlotStateBridge(H=_H_TEST)
     bridge.set_grounding(object_slot_idx=0, target_slot_idx=1)
-    yaw = np.deg2rad(30.0)
+    image_yaw = np.deg2rad(30.0)
     curr = {
         "present": np.ones((2, 1), dtype=np.float32),
         "xy": np.array([(0.5, 0.5), (0.8, 0.2)], dtype=np.float32),
         "yaw": np.array([
-            [np.cos(4.0 * yaw), np.sin(4.0 * yaw)],
+            [np.cos(4.0 * image_yaw), np.sin(4.0 * image_yaw)],
             [1.0, 0.0],
         ], dtype=np.float32),
     }
 
     state = bridge.estimate(curr)
 
-    assert state.object_yaw == pytest.approx(yaw, abs=1e-6)
+    assert state.object_yaw == pytest.approx(-image_yaw, abs=1e-6)
 
 
 import mujoco
 from mujoco_phase_rl.perception.snapshot_observer import SnapshotObserver, SnapshotState
 from mujoco_phase_rl.utils.mujoco_loader import load_task_scene
+from mujoco_phase_rl.utils.mujoco_loader import set_freejoint_pose
 
 
 def _make_state(phase_id=0, prev_result_id=0):
@@ -179,6 +180,109 @@ def test_slot_pose_source_uses_slot_state_for_estimate(monkeypatch):
     assert pose.source == "slot"
 
 
+def _norm_from_test_world(x: float, y: float) -> tuple[float, float]:
+    u = (x + 0.5) / 0.001
+    v = (0.5 - y) / 0.001
+    return ((u - 90.0) / 1030.0, (v - 5.0) / 715.0)
+
+
+def test_injected_slots_reground_when_object_moves():
+    from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
+    from mujoco_phase_rl.tasks.pick_place_task import TaskSample
+
+    env = PhasePickPlaceEnv(max_episode_steps=4)
+    sample = TaskSample(
+        object_pos=np.array([0.10, 0.20, 0.023], dtype=np.float64),
+        object_quat=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        target_pos=np.array([0.25, 0.10, 0.009], dtype=np.float64),
+        target_yaw=0.0,
+        object_mass=0.1,
+        pick_color="red",
+        task_type="pick_place",
+    )
+    env.reset(seed=0, options={"task_sample": sample})
+    env.slot_state_bridge = SlotStateBridge(H=_H_TEST)
+
+    target_xy = _norm_from_test_world(0.25, 0.10)
+    slots_a = {
+        "present": np.ones((3, 1), dtype=np.float32),
+        "xy": np.array([
+            _norm_from_test_world(0.10, 0.20),
+            target_xy,
+            _norm_from_test_world(-0.20, 0.35),
+        ], dtype=np.float32),
+        "yaw": np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (3, 1)),
+    }
+    env.slot_state_bridge_grounded = False
+    env.inject_slot_result(np.zeros(64, dtype=np.float32), slots_a)
+    assert env.slot_state_bridge.object_slot_idx == 0
+    assert env.slot_state_bridge.target_slot_idx == 1
+
+    moved_pos = np.array([-0.10, 0.30, 0.023], dtype=np.float64)
+    set_freejoint_pose(
+        env.data,
+        env.names,
+        moved_pos,
+        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        color="red",
+    )
+    mujoco.mj_forward(env.model, env.data)
+
+    slots_b = {
+        "present": np.ones((3, 1), dtype=np.float32),
+        "xy": np.array([
+            _norm_from_test_world(0.10, 0.20),
+            target_xy,
+            _norm_from_test_world(-0.10, 0.30),
+        ], dtype=np.float32),
+        "yaw": np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (3, 1)),
+    }
+    env.inject_slot_result(np.ones(64, dtype=np.float32), slots_b)
+
+    env.close()
+    assert env.slot_state_bridge.object_slot_idx == 2
+    assert env.slot_state_bridge.target_slot_idx == 1
+
+
+def test_slot_grounding_prefers_color_assignment_over_nearest_slot():
+    from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
+    from mujoco_phase_rl.tasks.pick_place_task import TaskSample
+
+    env = PhasePickPlaceEnv(max_episode_steps=4)
+    sample = TaskSample(
+        object_pos=np.array([0.10, 0.20, 0.023], dtype=np.float64),
+        object_quat=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        target_pos=np.array([0.25, 0.10, 0.063], dtype=np.float64),
+        target_yaw=0.0,
+        object_mass=0.1,
+        pick_color="red",
+        task_type="stack",
+        target_color="green",
+    )
+    env.reset(seed=0, options={"task_sample": sample})
+    env.slot_state_bridge = SlotStateBridge(H=_H_TEST)
+
+    slots = {
+        "present": np.ones((3, 1), dtype=np.float32),
+        "xy": np.array([
+            _norm_from_test_world(0.10, 0.20),   # nearest to object, but blue
+            _norm_from_test_world(-0.05, 0.30),  # red by ColorNet
+            _norm_from_test_world(0.25, 0.10),   # green target by ColorNet
+        ], dtype=np.float32),
+        "yaw": np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (3, 1)),
+        "color_logit": np.array([
+            [-4.0, -4.0, 5.0, -4.0],
+            [5.0, -4.0, -4.0, -4.0],
+            [-4.0, 4.0, -4.0, -4.0],
+        ], dtype=np.float32),
+    }
+    env.inject_slot_result(np.zeros(64, dtype=np.float32), slots)
+
+    env.close()
+    assert env.slot_state_bridge.object_slot_idx == 1
+    assert env.slot_state_bridge.target_slot_idx == 2
+
+
 def test_observe_phase_onehot_active_phase():
     obs = _make_observer().observe(_make_slot_state(), _make_state(phase_id=2))
     assert obs["phase"][2] == 1.0
@@ -232,6 +336,7 @@ def test_slot_embedder_output_shape():
     assert np.all(np.isfinite(emb))
     assert slots["present"].shape == (6, 1)
     assert slots["xy"].shape == (6, 2)
+    assert slots["yaw"].shape == (6, 2)
     assert slots["color_logit"].shape == (6, 4)
     embedder.close()
 

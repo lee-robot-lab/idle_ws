@@ -21,8 +21,8 @@ from mujoco_phase_rl.perception.pose_provider import (
 from mujoco_phase_rl.perception.snapshot_observer import SnapshotObserver, SnapshotState
 from mujoco_phase_rl.tasks.phase_manager import (
     ALLOWED_COMMANDS,
-    COMMAND_COUNT,
     Command,
+    POLICY_COMMAND_COUNT,
     Phase,
     PhaseManager,
     StepResult,
@@ -36,6 +36,7 @@ from mujoco_phase_rl.world_model.phase_destination import encode_phase_destinati
 
 GRASP_TARGET_Z_DELTA = 0.018
 GRASP_DZ_ACTION_SCALE = 0.20
+_SLOT_COLOR_TO_INDEX = {"red": 0, "green": 1, "blue": 2, "basket": 3}
 
 
 @dataclass
@@ -265,9 +266,13 @@ class PhasePickPlaceEnv(gym.Env):
         timeout = False
         ik_success = True
         extra_info: dict[str, float | int | str | bool] = {}
+        if decoded.command_was_masked:
+            extra_info["command_was_masked"] = True
 
         if valid_command:
             executor_status, sim_steps, ik_success, phase_success, extra_info = self._execute_command(decoded)
+            if decoded.command_was_masked:
+                extra_info["command_was_masked"] = True
             if phase_success or executor_status == "RECOVERED":
                 self.prev_result = StepResult.SUCCESS
             else:
@@ -310,6 +315,7 @@ class PhasePickPlaceEnv(gym.Env):
             timeout=timeout,
             executor_status=executor_status,
             extra_info=extra_info,
+            task_type=self.current_task.task_type if self.current_task is not None else "pick_place",
         )
         self.prev_reward = reward
         self.prev_command_id = int(decoded.command)
@@ -386,17 +392,18 @@ class PhasePickPlaceEnv(gym.Env):
         if arr.shape != (14,):
             raise ValueError(f"Expected action shape (14,), got {arr.shape}")
         arr = np.clip(arr, -1.0, 1.0)
-        raw_command = Command(int(np.argmax(arr[:COMMAND_COUNT])))
+        raw_command = Command(int(np.argmax(arr[:POLICY_COMMAND_COUNT])))
         command = raw_command
         command_was_masked = False
         if self.mask_invalid_commands and not self._is_command_valid(raw_command):
             allowed_commands = sorted(self._allowed_commands_for_current_context(), key=int)
             command = max(allowed_commands, key=lambda candidate: float(arr[int(candidate)]))
             command_was_masked = True
-        delta_xyz = np.array([arr[8] * 0.06, arr[9] * 0.06, arr[10] * 0.04], dtype=np.float64)
-        dyaw = float(arr[11] * np.deg2rad(30.0))
-        gripper_close = bool(arr[12] < 0.0)
-        lift_height = float(0.02 + (arr[13] + 1.0) * 0.5 * (0.15 - 0.02))
+        cont = arr[POLICY_COMMAND_COUNT:]
+        delta_xyz = np.array([cont[0] * 0.06, cont[1] * 0.06, cont[2] * 0.04], dtype=np.float64)
+        dyaw = float(cont[3] * np.deg2rad(30.0))
+        gripper_close = bool(cont[4] < 0.0)
+        lift_height = float(0.02 + (cont[6] + 1.0) * 0.5 * (0.15 - 0.02))
         return DecodedAction(
             command=command,
             raw_command=raw_command,
@@ -890,6 +897,8 @@ class PhasePickPlaceEnv(gym.Env):
                                    dtype=np.float64)
             set_freejoint_pose(self.data, self.names, tgt_center, _ID_QUAT,
                                color=sample.target_color)
+        elif sample.task_type == "pick_place":
+            self.model.body_pos[self.names.basket_body_id][:2] = sample.target_pos[:2]
         body_mass = self.model.body_mass[self._object_body_id]
         if body_mass > 0.0:
             self.model.body_mass[self._object_body_id] = sample.object_mass
@@ -1024,8 +1033,8 @@ class PhasePickPlaceEnv(gym.Env):
                     emb, curr_slots = self.slot_embedder.embed(self.model, self.data)
                     self._cached_slot_diff_emb = emb
                     self._cached_curr_slots = curr_slots
-                    # 에피소드 첫 관측 시 GT proximity로 grounding 초기화
-                    if not self.slot_state_bridge_grounded:
+                    # SlotEncoder query index is not an object identity; re-ground on each fresh slot result.
+                    if self.slot_state_bridge is not None:
                         self._init_grounding_from_gt(curr_slots)
                         self.slot_state_bridge_grounded = True
             return self.slot_state_bridge.estimate(self._cached_curr_slots)
@@ -1041,7 +1050,7 @@ class PhasePickPlaceEnv(gym.Env):
         """배치 추론 결과를 주입. 이후 _observe() 호출 시 신선한 임베딩을 사용한다."""
         self._cached_slot_diff_emb = emb
         self._cached_curr_slots = curr_slots
-        if not self.slot_state_bridge_grounded and self.slot_state_bridge is not None:
+        if self.slot_state_bridge is not None:
             self._init_grounding_from_gt(curr_slots)
             self.slot_state_bridge_grounded = True
         if self.slot_embedder is not None:
@@ -1050,7 +1059,7 @@ class PhasePickPlaceEnv(gym.Env):
         self._embed_injected = True
 
     def _init_grounding_from_gt(self, curr_slots: dict) -> None:
-        """GT world XY와 slot XY를 비교해 closest slot을 grounding으로 설정."""
+        """Task color labels and GT world XY를 사용해 slot grounding을 설정."""
         pose = self.pose_provider.estimate(self.current_task, self.rng)
         self.last_pose_estimate = pose
         obj_world = pose.object_pos[:2]
@@ -1060,14 +1069,66 @@ class PhasePickPlaceEnv(gym.Env):
             for xy in curr_slots["xy"]
         ])  # (N, 2)
         presents = curr_slots["present"][:, 0]  # (N,)
-        weights = np.where(presents > 0.5, 1.0, 10.0)
-        obj_idx = int(np.argmin(
-            np.linalg.norm(slot_worlds - obj_world, axis=1) * weights
-        ))
-        tgt_idx = int(np.argmin(
-            np.linalg.norm(slot_worlds - tgt_world, axis=1) * weights
-        ))
+        slot_to_color = self._assign_slot_colors(curr_slots, presents)
+        obj_idx = self._slot_idx_for_label(
+            label=self.current_task.pick_color,
+            slot_to_color=slot_to_color,
+            slot_worlds=slot_worlds,
+            gt_world=obj_world,
+            presents=presents,
+        )
+        target_label = self.current_task.target_color or "basket"
+        tgt_idx = self._slot_idx_for_label(
+            label=target_label,
+            slot_to_color=slot_to_color,
+            slot_worlds=slot_worlds,
+            gt_world=tgt_world,
+            presents=presents,
+        )
         self.slot_state_bridge.set_grounding(obj_idx, tgt_idx)
+
+    def _slot_idx_for_label(
+        self,
+        label: str,
+        slot_to_color: np.ndarray | None,
+        slot_worlds: np.ndarray,
+        gt_world: np.ndarray,
+        presents: np.ndarray,
+    ) -> int:
+        color_idx = _SLOT_COLOR_TO_INDEX.get(label)
+        if slot_to_color is not None and color_idx is not None:
+            matches = np.flatnonzero(slot_to_color == color_idx)
+            if len(matches) > 0:
+                distances = np.linalg.norm(slot_worlds[matches] - gt_world, axis=1)
+                return int(matches[int(np.argmin(distances))])
+        weights = np.where(presents > 0.5, 1.0, 10.0)
+        return int(np.argmin(np.linalg.norm(slot_worlds - gt_world, axis=1) * weights))
+
+    def _assign_slot_colors(self, curr_slots: dict, presents: np.ndarray) -> np.ndarray | None:
+        color_logit = curr_slots.get("color_logit")
+        if color_logit is None:
+            return None
+        logits = np.asarray(color_logit, dtype=np.float64)
+        if logits.ndim != 2 or logits.shape[1] < len(_SLOT_COLOR_TO_INDEX):
+            return None
+        present_idx = np.flatnonzero(np.asarray(presents, dtype=np.float64) > 0.5)
+        if len(present_idx) == 0:
+            return None
+
+        try:
+            from scipy.optimize import linear_sum_assignment
+        except Exception:
+            return np.argmax(logits, axis=1).astype(np.int64)
+
+        selected = logits[present_idx, :len(_SLOT_COLOR_TO_INDEX)]
+        selected = selected - np.max(selected, axis=1, keepdims=True)
+        prob = np.exp(selected)
+        prob = prob / np.sum(prob, axis=1, keepdims=True)
+        row_ind, col_ind = linear_sum_assignment(1.0 - prob)
+        slot_to_color = np.full((len(logits),), -1, dtype=np.int64)
+        for row, color in zip(row_ind, col_ind):
+            slot_to_color[present_idx[row]] = int(color)
+        return slot_to_color
 
     def _info(
         self,

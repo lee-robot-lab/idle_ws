@@ -6,7 +6,7 @@ import json
 import numpy as np
 
 from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
-from mujoco_phase_rl.tasks.phase_manager import COMMAND_COUNT, Command
+from mujoco_phase_rl.tasks.phase_manager import Command, POLICY_COMMAND_COUNT
 from mujoco_phase_rl.utils.logging import EpisodeSummary
 
 
@@ -93,16 +93,17 @@ def main() -> None:
 
 def _format_policy_intent(step_idx: int, obs: dict, action) -> str:
     arr = np.asarray(action, dtype=np.float32).reshape(-1)
-    raw_command_id = int(np.argmax(arr[:COMMAND_COUNT]))
+    raw_command_id = int(np.argmax(arr[:POLICY_COMMAND_COUNT]))
     raw_command = Command(raw_command_id).name
     phase_id = int(np.argmax(obs["phase"][:9]))
     phase_name = _phase_name(phase_id)
-    dx = float(arr[8] * 0.06)
-    dy = float(arr[9] * 0.06)
-    dz = float(arr[10] * 0.04)
-    dyaw = float(arr[11] * 30.0)
-    lift = float(0.02 + (arr[13] + 1.0) * 0.5 * (0.15 - 0.02))
-    gripper = "close" if float(arr[12]) < 0.0 else "open"
+    cont = arr[POLICY_COMMAND_COUNT:]
+    dx = float(cont[0] * 0.06)
+    dy = float(cont[1] * 0.06)
+    dz = float(cont[2] * 0.04)
+    dyaw = float(cont[3] * 30.0)
+    lift = float(0.02 + (cont[6] + 1.0) * 0.5 * (0.15 - 0.02))
+    gripper = "close" if float(cont[4]) < 0.0 else "open"
     return (
         f"  policy step={step_idx} obs_phase={phase_name} raw_command={raw_command} "
         f"params dx={dx:.3f} dy={dy:.3f} dz={dz:.3f} dyaw_deg={dyaw:.1f} "

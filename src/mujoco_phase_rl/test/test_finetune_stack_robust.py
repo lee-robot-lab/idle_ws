@@ -26,11 +26,12 @@ def test_load_base_model_uses_custom_policy_and_env():
 
     class FakePPO:
         @staticmethod
-        def load(path, *, env, device, custom_objects):
+        def load(path, *, env, device, custom_objects, **kwargs):
             calls["path"] = path
             calls["env"] = env
             calls["device"] = device
             calls["custom_objects"] = custom_objects
+            calls["kwargs"] = kwargs
             return "model"
 
     env = object()
@@ -46,3 +47,35 @@ def test_load_base_model_uses_custom_policy_and_env():
     assert calls["env"] is env
     assert calls["device"] == "cpu"
     assert "policy_class" in calls["custom_objects"]
+    assert calls["kwargs"] == {}
+
+
+def test_load_base_model_forwards_training_overrides():
+    from mujoco_phase_rl.policies.finetune_stack_robust import load_base_model
+
+    calls = {}
+
+    class FakePPO:
+        @staticmethod
+        def load(path, *, env, device, custom_objects, **kwargs):
+            calls["kwargs"] = kwargs
+            return "model"
+
+    model = load_base_model(
+        ppo_cls=FakePPO,
+        base_model="base.zip",
+        env=object(),
+        device="cpu",
+        learning_rate=5e-5,
+        n_steps=64,
+        batch_size=128,
+        gamma=0.9,
+    )
+
+    assert model == "model"
+    assert calls["kwargs"] == {
+        "learning_rate": 5e-5,
+        "n_steps": 64,
+        "batch_size": 128,
+        "gamma": 0.9,
+    }

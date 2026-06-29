@@ -38,17 +38,20 @@ class SlotAugmentor:
         H_world2px: np.ndarray,
         camera_z: float = 0.73,
         camera_nadir_xy: tuple[float, float] = (0.021, 0.590),
+        background_mode: str = "external",
     ) -> None:
         src_h, src_w = src_img_bgr.shape[:2]
         bg_h, bg_w = bg_img_bgr.shape[:2]
         if bg_h != src_h or bg_w != src_w:
             bg_img_bgr = cv2.resize(bg_img_bgr, (src_w, src_h))
-        self._bg = bg_img_bgr.copy()
+        if background_mode not in {"external", "source_inpaint"}:
+            raise ValueError("background_mode must be one of: external, source_inpaint")
         self._H = H_world2px.astype(np.float64)
         self._cam_z = camera_z
         self._nadir = camera_nadir_xy
-        # color → (patch, mask, cx_in_patch, cy_in_patch, bw, bh)
+        # color → (patch, mask, cx_in_patch, cy_in_patch, bw, bh, src_x_m, src_y_m)
         self._patches: dict[str, tuple] = {}
+        source_object_mask = np.zeros((src_h, src_w), dtype=np.uint8)
 
         H_img, W_img = src_img_bgr.shape[:2]
         for d in dets:
@@ -63,12 +66,29 @@ class SlotAugmentor:
 
             mask_full = np.zeros((H_img, W_img), dtype=np.uint8)
             cv2.drawContours(mask_full, [contour], -1, 255, cv2.FILLED)
+            source_object_mask = cv2.bitwise_or(source_object_mask, mask_full)
             pmask = mask_full[by:y2, bx:x2]
 
             cx_img, cy_img = d["center_px"]
             cx_p = int(round(cx_img)) - bx
             cy_p = int(round(cy_img)) - by
-            self._patches[color] = (patch, pmask, cx_p, cy_p, x2 - bx, y2 - by)
+            self._patches[color] = (
+                patch,
+                pmask,
+                cx_p,
+                cy_p,
+                x2 - bx,
+                y2 - by,
+                float(d["x_m"]),
+                float(d["y_m"]),
+            )
+
+        if background_mode == "source_inpaint":
+            kernel = np.ones((5, 5), dtype=np.uint8)
+            inpaint_mask = cv2.dilate(source_object_mask, kernel, iterations=2)
+            self._bg = cv2.inpaint(src_img_bgr, inpaint_mask, 5, cv2.INPAINT_TELEA)
+        else:
+            self._bg = bg_img_bgr.copy()
 
     def _parallax_correct(self, x_m: float, y_m: float, h_obj: float) -> tuple[float, float]:
         """z=h_obj 높이 물체의 world 좌표를 z=0 등가 좌표로 변환 (시차 보정).
@@ -95,17 +115,25 @@ class SlotAugmentor:
         for color, (x_m, y_m) in obj_positions.items():
             if color not in self._patches:
                 continue
-            patch, pmask, cx_p, cy_p, pw, ph = self._patches[color]
+            patch, pmask, cx_p, cy_p, pw, ph, src_x_m, src_y_m = self._patches[color]
 
-            h_obj = _OBJ_HEIGHTS.get(color, _DEFAULT_HEIGHT)
-            x_q, y_q = self._parallax_correct(x_m, y_m, h_obj)
-            p = self._H @ np.array([x_q, y_q, 1.0])
-            new_cx = int(round(p[0] / p[2]))
-            new_cy = int(round(p[1] / p[2]))
+            new_cx_f, new_cy_f = self._world_to_pixel(float(x_m), float(y_m))
+            new_cx = int(round(new_cx_f))
+            new_cy = int(round(new_cy_f))
 
             # 패치 중심이 crop 밖이면 건너뜀 (모델이 보지 못하는 위치)
             if not (_CROP_X0 <= new_cx <= _CROP_X1 and _CROP_Y0 <= new_cy <= _CROP_Y1):
                 continue
+
+            scale = self._adaptive_scale(src_x_m, src_y_m, float(x_m), float(y_m))
+            if not math.isclose(scale, 1.0, rel_tol=1e-6, abs_tol=1e-6):
+                new_pw = max(1, int(round(pw * scale)))
+                new_ph = max(1, int(round(ph * scale)))
+                patch = cv2.resize(patch, (new_pw, new_ph), interpolation=cv2.INTER_LINEAR)
+                pmask = cv2.resize(pmask, (new_pw, new_ph), interpolation=cv2.INTER_NEAREST)
+                cx_p = int(round(cx_p * scale))
+                cy_p = int(round(cy_p * scale))
+                pw, ph = new_pw, new_ph
 
             x_start = new_cx - cx_p
             y_start = new_cy - cy_p
@@ -134,3 +162,28 @@ class SlotAugmentor:
         if blur_k > 0:
             img = cv2.GaussianBlur(img, (blur_k, blur_k), 0)
         return img
+
+    def _world_to_pixel(self, x_m: float, y_m: float) -> tuple[float, float]:
+        p = self._H @ np.array([x_m, y_m, 1.0], dtype=np.float64)
+        return float(p[0] / p[2]), float(p[1] / p[2])
+
+    def _adaptive_scale(
+        self,
+        src_x_m: float,
+        src_y_m: float,
+        dst_x_m: float,
+        dst_y_m: float,
+    ) -> float:
+        src_scale = self._local_pixel_scale(src_x_m, src_y_m)
+        dst_scale = self._local_pixel_scale(dst_x_m, dst_y_m)
+        if src_scale <= 1e-9 or dst_scale <= 1e-9:
+            return 1.0
+        return float(np.clip(dst_scale / src_scale, 0.5, 1.5))
+
+    def _local_pixel_scale(self, x_m: float, y_m: float, eps_m: float = 0.01) -> float:
+        px = np.array(self._world_to_pixel(x_m, y_m), dtype=np.float64)
+        px_dx = np.array(self._world_to_pixel(x_m + eps_m, y_m), dtype=np.float64)
+        px_dy = np.array(self._world_to_pixel(x_m, y_m + eps_m), dtype=np.float64)
+        sx = float(np.linalg.norm(px_dx - px) / eps_m)
+        sy = float(np.linalg.norm(px_dy - px) / eps_m)
+        return 0.5 * (sx + sy)

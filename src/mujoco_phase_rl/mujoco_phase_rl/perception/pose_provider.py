@@ -173,19 +173,53 @@ class SlotStateBridge:
         return SlotState(
             object_xy=obj_world.astype(np.float32),
             target_xy=tgt_world.astype(np.float32),
-            object_yaw=_cos4sin4_to_yaw(yaw[self.object_slot_idx]),
-            target_yaw=_cos4sin4_to_yaw(yaw[self.target_slot_idx]),
+            object_yaw=_cos4sin4_to_world_yaw(
+                yaw[self.object_slot_idx], xy[self.object_slot_idx], self._H
+            ),
+            target_yaw=_cos4sin4_to_world_yaw(
+                yaw[self.target_slot_idx], xy[self.target_slot_idx], self._H
+            ),
             object_confidence=float(present[self.object_slot_idx, 0]),
             target_confidence=float(present[self.target_slot_idx, 0]),
         )
 
     def _norm_to_world(self, xy_norm: np.ndarray) -> np.ndarray:
-        u = float(xy_norm[0]) * _CROP_W + _CROP_X0
-        v = float(xy_norm[1]) * _CROP_H + _CROP_Y0
-        # 3×3 homography (perspective divide)
-        p = np.array([u, v, 1.0], dtype=np.float64)
-        q = self._H @ p
-        return q[:2] / q[2]
+        u, v = _norm_to_pixel(xy_norm)
+        return _pixel_to_world(self._H, u, v)
+
+
+def _norm_to_pixel(xy_norm: np.ndarray) -> tuple[float, float]:
+    return (
+        float(xy_norm[0]) * _CROP_W + _CROP_X0,
+        float(xy_norm[1]) * _CROP_H + _CROP_Y0,
+    )
+
+
+def _pixel_to_world(H: np.ndarray, u: float, v: float) -> np.ndarray:
+    p = np.array([u, v, 1.0], dtype=np.float64)
+    q = H @ p
+    return q[:2] / q[2]
+
+
+def _cos4sin4_to_world_yaw(
+    vec: np.ndarray,
+    xy_norm: np.ndarray,
+    H: np.ndarray,
+    length_px: float = 50.0,
+) -> float:
+    arr = np.asarray(vec, dtype=np.float64)
+    if arr.shape[0] < 2 or not np.all(np.isfinite(arr[:2])):
+        return 0.0
+    if float(np.linalg.norm(arr[:2])) < 1e-6:
+        return 0.0
+
+    image_yaw = _cos4sin4_to_yaw(arr)
+    u0, v0 = _norm_to_pixel(xy_norm)
+    u1 = u0 + float(length_px) * float(np.cos(image_yaw))
+    v1 = v0 + float(length_px) * float(np.sin(image_yaw))
+    w0 = _pixel_to_world(H, u0, v0)
+    w1 = _pixel_to_world(H, u1, v1)
+    return float(np.arctan2(w1[1] - w0[1], w1[0] - w0[0]))
 
 
 def _cos4sin4_to_yaw(vec: np.ndarray) -> float:

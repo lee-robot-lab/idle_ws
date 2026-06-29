@@ -97,6 +97,7 @@ class SlotEmbedder:
             enc_out = self._encoder(img_t.to(self.device))
             present = torch.sigmoid(enc_out["present"])  # (1, N, 1)
             xy = enc_out["xy"]                           # (1, N, 2)
+            yaw = enc_out["yaw"]                         # (1, N, 2)
             color_logit, _ = self._color_net(img_t.to(self.device), xy)  # (1, N, 4)
             import torch.nn.functional as F
             color_soft = F.softmax(color_logit, dim=-1)  # (1, N, 4)
@@ -104,6 +105,7 @@ class SlotEmbedder:
             curr_slots = {
                 "present": present[0].cpu().numpy(),          # (N, 1)
                 "xy": xy[0].cpu().numpy(),                    # (N, 2)
+                "yaw": yaw[0].cpu().numpy(),                  # (N, 2)
                 "color_logit": color_logit[0].cpu().numpy(),  # (N, 4)
             }
 
@@ -140,12 +142,14 @@ class SlotEmbedder:
             enc_out = self._encoder(img_t.to(self.device))
             present = torch.sigmoid(enc_out["present"])
             xy = enc_out["xy"]
+            yaw = enc_out["yaw"]
             color_logit, _ = self._color_net(img_t.to(self.device), xy)
             color_soft = F.softmax(color_logit, dim=-1)
 
             curr_slots = {
                 "present": present[0].cpu().numpy(),
                 "xy": xy[0].cpu().numpy(),
+                "yaw": yaw[0].cpu().numpy(),
                 "color_logit": color_logit[0].cpu().numpy(),
             }
 
@@ -202,6 +206,7 @@ class SlotEmbedder:
             enc_out = ref._encoder(imgs)
             present = torch.sigmoid(enc_out["present"])   # (B, N, 1)
             xy = enc_out["xy"]                            # (B, N, 2)
+            yaw = enc_out["yaw"]                          # (B, N, 2)
             color_logit, _ = ref._color_net(imgs, xy)     # (B, N, 4)
             color_soft = F.softmax(color_logit, dim=-1)   # (B, N, 4)
 
@@ -211,6 +216,7 @@ class SlotEmbedder:
             curr_slots = {
                 "present": present[b].cpu().numpy(),
                 "xy": xy[b].cpu().numpy(),
+                "yaw": yaw[b].cpu().numpy(),
                 "color_logit": color_logit[b].cpu().numpy(),
             }
             if inst._prev_slots is None:

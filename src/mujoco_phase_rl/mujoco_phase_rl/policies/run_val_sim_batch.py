@@ -125,6 +125,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=64)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--stochastic", action="store_true")
+    parser.add_argument("--augment", action="store_true",
+                        help="Use SlotAugmentor compositing during evaluation")
     parser.add_argument("--no-augment", action="store_true")
     parser.add_argument("--no-command-mask", action="store_true",
                         help="Disable phase command safety mask during evaluation")
@@ -133,6 +135,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slot-color-net-ckpt", default=None)
     parser.add_argument("--slot-transition-ckpt", default=None)
     parser.add_argument("--pose-source", choices=["gt", "noisy_gt", "slot"], default="slot")
+    parser.add_argument("--trace", action="store_true",
+                        help="Include per-step phase/status and slot-vs-GT pose errors in each row")
     parser.add_argument("--out", default=None)
     return parser
 
@@ -209,10 +213,11 @@ def main() -> None:
                 pose_source=args.pose_source,
                 block_color=case.block_color,
                 deterministic=not args.stochastic,
-                augment=not args.no_augment,
+                augment=bool(args.augment and not args.no_augment),
                 mask_invalid_commands=not args.no_command_mask,
                 model=ppo_model,
                 embedder=slot_embedder,
+                trace=args.trace,
             )
             row = {**case.as_dict(), **result}
         except Exception as exc:
