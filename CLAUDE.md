@@ -43,6 +43,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest test/ -v
 | ColorNet v2 | `checkpoints/color_net_v2/best.pt` | ✅ 현행 |
 | SlotDiff | `checkpoints/slot_diff/best.pt` | ✅ 현행 |
 | SlotTransitionModel | `checkpoints/slot_transition_model/best.pt` | ✅ 현행 (val=5.8184 @ep35) |
+| PPO (slot, best) | `src/mujoco_phase_rl/outputs/ppo_slot_best.zip` | ✅ 100% success @174k steps |
 | ~~SlotEncoder v1~~ | ~~`checkpoints/stage1/best.pt`~~ | ❌ 구버전, 사용 금지 |
 | ~~ColorNet v1~~ | ~~`checkpoints/color_net/best.pt`~~ | ❌ 구버전, 사용 금지 |
 
