@@ -87,9 +87,9 @@ def _make_observer():
     return SnapshotObserver(scene.model, scene.data, scene.names)
 
 
-def test_observe_returns_five_keys():
+def test_observe_returns_six_keys():
     obs = _make_observer().observe(_make_slot_state(), _make_state())
-    assert set(obs.keys()) == {"robot", "task", "phase", "history", "slot_diff"}
+    assert set(obs.keys()) == {"robot", "task", "phase", "history", "slot_diff", "rssm_latent"}
 
 
 def test_observe_robot_is_11_dim():
