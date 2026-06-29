@@ -74,6 +74,8 @@ class PhasePickPlaceEnv(gym.Env):
         slot_color_net_ckpt: str | None = None,
         slot_device: str = "cpu",
         slot_transition_ckpt: str | None = None,
+        perturb_prob: float = 0.0,
+        perturb_max_m: float = 0.08,
     ) -> None:
         super().__init__()
         self.render_mode = render_mode
@@ -171,6 +173,9 @@ class PhasePickPlaceEnv(gym.Env):
                 "rssm_latent": spaces.Box(low=-inf, high=inf, shape=(64,), dtype=np.float32),
             }
         )
+
+        self.perturb_prob = float(perturb_prob)
+        self.perturb_max_m = float(perturb_max_m)
 
         self.rng = np.random.default_rng()
         self.step_count = 0
@@ -290,6 +295,29 @@ class PhasePickPlaceEnv(gym.Env):
         )
         self.prev_reward = reward
         self.prev_command_id = int(decoded.command)
+
+        # mid-episode perturbation
+        if self.perturb_prob > 0 and self.rng.random() < self.perturb_prob:
+            _BLOCK_BOUNDS = np.array([[-0.15, 0.35], [0.15, 0.45]], dtype=np.float64)
+            _BASKET_BOUNDS = np.array([[-0.30, 0.50], [0.30, 0.80]], dtype=np.float64)
+            _IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+
+            target = self.rng.choice(["block", "basket"])
+            delta = self.rng.uniform(-self.perturb_max_m, self.perturb_max_m, size=2)
+
+            if target == "block" and not self.object_grasped:
+                cur = self.data.xpos[self.names.object_body_id][:2].copy()
+                new_xy = np.clip(cur + delta, _BLOCK_BOUNDS[0], _BLOCK_BOUNDS[1])
+                new_pos = np.array([new_xy[0], new_xy[1], 0.023], dtype=np.float64)
+                set_freejoint_pose(self.data, self.names, new_pos, _IDENTITY_QUAT)
+                mujoco.mj_forward(self.model, self.data)
+            elif target == "basket":
+                cur = self.data.xpos[self.names.basket_body_id][:2].copy()
+                new_xy = np.clip(cur + delta, _BASKET_BOUNDS[0], _BASKET_BOUNDS[1])
+                self.model.body_pos[self.names.basket_body_id][:2] = new_xy
+                mujoco.mj_forward(self.model, self.data)
+                if self.current_task is not None:
+                    self.current_task.target_pos[:2] = new_xy
 
         obs = self._observe()
         info = self._info(
