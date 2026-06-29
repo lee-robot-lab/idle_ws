@@ -30,6 +30,7 @@ from mujoco_phase_rl.tasks.pick_place_task import PickPlaceTask, TaskSample
 from mujoco_phase_rl.tasks.reward import FAILURE_STATUSES, compute_phase_reward
 from mujoco_phase_rl.utils.mujoco_loader import load_task_scene, set_freejoint_pose
 from mujoco_phase_rl.utils.spaces import gym, spaces
+from mujoco_phase_rl.world_model.phase_destination import encode_phase_destination_2d
 
 
 GRASP_TARGET_Z_DELTA = 0.018
@@ -72,6 +73,7 @@ class PhasePickPlaceEnv(gym.Env):
         slot_diff_ckpt: str | None = None,
         slot_color_net_ckpt: str | None = None,
         slot_device: str = "cpu",
+        slot_transition_ckpt: str | None = None,
     ) -> None:
         super().__init__()
         self.render_mode = render_mode
@@ -143,6 +145,20 @@ class PhasePickPlaceEnv(gym.Env):
         self.last_pose_estimate = None
         self.home_q = np.zeros(6, dtype=np.float64)
 
+        self._wm_model = None
+        self._wm_h = None
+        if slot_transition_ckpt is not None:
+            import torch
+            from mujoco_phase_rl.world_model.slot_transition_model import SlotTransitionModel
+            ckpt = torch.load(slot_transition_ckpt, map_location="cpu", weights_only=False)
+            self._wm_model = SlotTransitionModel(
+                input_dim=ckpt.get("input_dim", 84),
+                h_dim=ckpt.get("h_dim", 128),
+                rssm_latent_dim=ckpt.get("rssm_latent_dim", 64),
+            )
+            self._wm_model.load_state_dict(ckpt["state_dict"])
+            self._wm_model.eval()
+
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(14,), dtype=np.float32)
         inf = np.inf
         self.observation_space = spaces.Dict(
@@ -168,7 +184,7 @@ class PhasePickPlaceEnv(gym.Env):
         self.current_task: TaskSample | None = None
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
-        del options
+        injected = (options or {}).get("task_sample")
         if seed is not None:
             self.rng = np.random.default_rng(seed)
 
@@ -189,8 +205,11 @@ class PhasePickPlaceEnv(gym.Env):
         self._cached_slot_diff_emb = np.zeros(IMAGE_EMBEDDING_SIZE, dtype=np.float32)
         self._cached_curr_slots = None
         self.pose_provider.reset()
+        if self._wm_model is not None:
+            import torch
+            self._wm_h = self._wm_model.init_hidden(1, torch.device("cpu"))
 
-        self.current_task = self.task.sample(self.rng)
+        self.current_task = injected if injected is not None else self.task.sample(self.rng)
         self._apply_home_pose()
         self._apply_task_sample(self.current_task)
         mujoco.mj_forward(self.model, self.data)
@@ -856,7 +875,24 @@ class PhasePickPlaceEnv(gym.Env):
         )
         slot_state = self._build_slot_state()
         slot_diff_emb = self._cached_slot_diff_emb
-        return self.observer.observe(slot_state, state, slot_diff_emb=slot_diff_emb)
+        obs = self.observer.observe(slot_state, state, slot_diff_emb=slot_diff_emb)
+        if self._wm_model is not None and self._wm_h is not None:
+            obs["rssm_latent"] = self._wm_step(obs)
+        return obs
+
+    def _wm_step(self, obs: dict) -> np.ndarray:
+        """GRU hidden state 한 step 업데이트 후 64-dim rssm_latent 반환."""
+        import torch
+        phase_id = int(self.phase_manager.phase)
+        task = obs["task"]
+        goal_xy = task[:2] if phase_id <= int(Phase.LIFT) else task[2:4]
+        phase_dest = encode_phase_destination_2d(phase_id=phase_id, goal_xy_world=goal_xy)
+        x_t = np.concatenate([obs["slot_diff"], obs["robot"], phase_dest]).astype(np.float32)
+        x_t_tensor = torch.tensor(x_t).unsqueeze(0)
+        with torch.no_grad():
+            self._wm_h, _, _, _ = self._wm_model(x_t_tensor, self._wm_h)
+            latent = self._wm_model.rssm_latent(self._wm_h).squeeze(0).numpy()
+        return latent
 
     def _estimate_pose(self):
         if self.current_task is None:
