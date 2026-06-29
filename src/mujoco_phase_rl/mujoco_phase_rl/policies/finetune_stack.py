@@ -1,7 +1,7 @@
 # ================================================================
 # finetune_stack.py
 # 설명: 3색 블록 × pick_place/stack 멀티태스크 PPO 학습.
-#       val 이미지 detect XY로 에피소드 초기화, AugSlotEmbedder visual augment.
+#       val 이미지 detect XY로 에피소드 초기화 (visual augment는 미연결).
 # 사용법:
 #   python3 mujoco_phase_rl/policies/finetune_stack.py \
 #     --output-dir outputs/ppo_stack \
@@ -86,7 +86,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-episode-steps", type=int, default=64)
     parser.add_argument("--stack-prob", type=float, default=0.6)
-    parser.add_argument("--aug-prob", type=float, default=0.5)
+    parser.add_argument("--aug-prob", type=float, default=0.5,
+                        help="AugSlotEmbedder augmentation prob (미연결 — 향후 통합 예정)")
     parser.add_argument("--perturb-prob", type=float, default=0.02)
     parser.add_argument("--perturb-max", type=float, default=0.08)
     parser.add_argument("--learning-rate", type=float, default=3e-4)

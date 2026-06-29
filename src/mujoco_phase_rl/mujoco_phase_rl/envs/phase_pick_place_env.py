@@ -902,7 +902,10 @@ class PhasePickPlaceEnv(gym.Env):
         if self.current_task is None:
             return self.data.xpos[self._object_body_id].copy()
         pos = self.current_task.target_pos.copy()
-        pos[2] = 0.023
+        if self.current_task.task_type == "stack":
+            pos[2] = self.current_task.target_pos[2]  # 0.063 = target center
+        else:
+            pos[2] = 0.023
         return pos
 
     def _object_in_target(self) -> bool:

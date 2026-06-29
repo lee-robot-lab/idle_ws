@@ -110,3 +110,21 @@ def test_three_blocks_placed_on_reset():
         pos = env.data.xpos[bid]
         assert pos[2] > 0.01, f"{color} 블록 z={pos[2]:.3f} 너무 낮음"
     env.close()
+
+
+def test_stack_placed_z_in_success_window():
+    """stack PLACE 후 블록 z가 성공창 [0.048, 0.078]에 있어야 함."""
+    env = _make_env(stack_prob=1.0)
+    env.reset(seed=0)
+
+    # target_pos[2]가 0.063 (STACK_Z)인지 확인
+    assert env.current_task.task_type == "stack"
+    tgt_z = env.current_task.target_pos[2]
+    assert tgt_z == pytest.approx(0.063), f"target_pos[2]={tgt_z}"
+
+    # _placed_object_pos()가 반환하는 z 확인
+    placed = env._placed_object_pos()
+    assert 0.048 <= placed[2] <= 0.078, (
+        f"stack placed z={placed[2]:.4f}는 성공창 [0.048, 0.078] 밖"
+    )
+    env.close()
