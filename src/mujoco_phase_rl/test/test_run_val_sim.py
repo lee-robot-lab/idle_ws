@@ -59,3 +59,77 @@ def test_embed_bgr_preprocess_shape():
 
     assert img_t.shape == (1, 3, 288, 416)
     assert img_t.dtype == np.float32
+
+
+def _make_dummy_det(color, cx, cy, x_m, y_m):
+    """SlotAugmentor 테스트용 더미 det 생성."""
+    import cv2
+    # 40×40 사각형 컨투어
+    half = 20
+    contour = np.array([
+        [[cx - half, cy - half]],
+        [[cx + half, cy - half]],
+        [[cx + half, cy + half]],
+        [[cx - half, cy + half]],
+    ], dtype=np.int32)
+    return {
+        "color": color,
+        "center_px": (cx, cy),
+        "contour": contour,
+        "x_m": x_m,
+        "y_m": y_m,
+    }
+
+
+def test_slot_augmentor_compose_shape():
+    from mujoco_phase_rl.perception.slot_aug import SlotAugmentor
+    from mujoco_phase_rl.perception.pose_provider import _H_DEFAULT
+
+    src_img = np.zeros((720, 1280, 3), dtype=np.uint8)
+    src_img[300:340, 600:640] = [0, 0, 200]  # red patch
+    bg_img = np.full((720, 1280, 3), 128, dtype=np.uint8)
+
+    dets = [_make_dummy_det("red", 620, 320, 0.10, 0.50)]
+    H_world2px = np.linalg.inv(_H_DEFAULT)
+
+    aug = SlotAugmentor(src_img, bg_img, dets, H_world2px)
+    result = aug.compose({"red": (0.15, 0.55)}, flip=False, blur_k=0)
+
+    assert result.shape == (720, 1280, 3)
+    assert result.dtype == np.uint8
+
+
+def test_slot_augmentor_flip_changes_image():
+    from mujoco_phase_rl.perception.slot_aug import SlotAugmentor
+    from mujoco_phase_rl.perception.pose_provider import _H_DEFAULT
+
+    src_img = np.zeros((720, 1280, 3), dtype=np.uint8)
+    src_img[300:340, 200:240] = [0, 0, 200]  # 왼쪽에 치우친 패치
+    bg_img = np.full((720, 1280, 3), 128, dtype=np.uint8)
+
+    dets = [_make_dummy_det("red", 220, 320, 0.05, 0.50)]
+    H_world2px = np.linalg.inv(_H_DEFAULT)
+
+    aug = SlotAugmentor(src_img, bg_img, dets, H_world2px)
+    no_flip = aug.compose({"red": (0.05, 0.50)}, flip=False, blur_k=0)
+    flipped  = aug.compose({"red": (0.05, 0.50)}, flip=True,  blur_k=0)
+
+    assert not np.array_equal(no_flip, flipped)
+
+
+def test_slot_augmentor_blur_changes_image():
+    from mujoco_phase_rl.perception.slot_aug import SlotAugmentor
+    from mujoco_phase_rl.perception.pose_provider import _H_DEFAULT
+
+    src_img = np.zeros((720, 1280, 3), dtype=np.uint8)
+    src_img[300:340, 600:640] = [0, 0, 200]
+    bg_img = np.full((720, 1280, 3), 128, dtype=np.uint8)
+
+    dets = [_make_dummy_det("red", 620, 320, 0.10, 0.50)]
+    H_world2px = np.linalg.inv(_H_DEFAULT)
+
+    aug = SlotAugmentor(src_img, bg_img, dets, H_world2px)
+    no_blur = aug.compose({"red": (0.10, 0.50)}, flip=False, blur_k=0)
+    blurred  = aug.compose({"red": (0.10, 0.50)}, flip=False, blur_k=5)
+
+    assert not np.array_equal(no_blur, blurred)
