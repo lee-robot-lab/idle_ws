@@ -134,6 +134,30 @@ def test_slot_augmentor_blur_changes_image():
     assert not np.array_equal(no_blur, blurred)
 
 
+def test_parallax_correct_shifts_away_from_nadir():
+    """시차 보정 시 패치 위치가 nadir 방향 반대로 이동하는지 확인."""
+    from mujoco_phase_rl.perception.slot_aug import SlotAugmentor
+    from mujoco_phase_rl.perception.pose_provider import _H_DEFAULT
+
+    src_img = np.zeros((720, 1280, 3), dtype=np.uint8)
+    bg_img  = np.full((720, 1280, 3), 128, dtype=np.uint8)
+    dets = [_make_dummy_det("red", 620, 320, 0.10, 0.50)]
+    H_world2px = np.linalg.inv(_H_DEFAULT)
+
+    aug = SlotAugmentor(src_img, bg_img, dets, H_world2px)
+
+    # 시차 보정 전후 좌표 비교
+    x_m, y_m = 0.10, 0.50
+    h_obj = 0.023   # block 높이
+    x_q, y_q = aug._parallax_correct(x_m, y_m, h_obj)
+
+    # scale = z/(z-h) > 1 이므로 nadir에서 더 멀어져야 함
+    x_n, y_n = aug._nadir
+    dist_before = ((x_m - x_n)**2 + (y_m - y_n)**2) ** 0.5
+    dist_after  = ((x_q - x_n)**2 + (y_q - y_n)**2) ** 0.5
+    assert dist_after > dist_before, "시차 보정 후 nadir로부터의 거리가 증가해야 함"
+
+
 def test_dets_to_task_sample_red_block():
     from mujoco_phase_rl.policies.run_val_sim import dets_to_task_sample
 
