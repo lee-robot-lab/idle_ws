@@ -63,7 +63,6 @@ def test_embed_bgr_preprocess_shape():
 
 def _make_dummy_det(color, cx, cy, x_m, y_m):
     """SlotAugmentor 테스트용 더미 det 생성."""
-    import cv2
     # 40×40 사각형 컨투어
     half = 20
     contour = np.array([

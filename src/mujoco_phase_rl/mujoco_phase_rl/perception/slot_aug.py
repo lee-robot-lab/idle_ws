@@ -88,6 +88,8 @@ class SlotAugmentor:
 
         if flip:
             img = cv2.flip(img, 1)
+        if blur_k > 0 and blur_k % 2 == 0:
+            blur_k += 1
         if blur_k > 0:
             img = cv2.GaussianBlur(img, (blur_k, blur_k), 0)
         return img
