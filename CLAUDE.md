@@ -14,8 +14,22 @@ python3 mujoco_phase_rl/policies/train_ppo.py
 # PPO 학습 (slot 모드)
 python3 mujoco_phase_rl/policies/train_ppo.py --image-embedding slot --output-dir outputs/ppo_slot
 
-# World model 롤아웃 수집
+# PPO 학습 (slot + rssm_latent 활성화)
+python3 mujoco_phase_rl/policies/train_ppo.py \
+  --image-embedding slot --output-dir outputs/ppo_slot_rssm \
+  --slot-transition-ckpt ../../checkpoints/slot_transition_model/best.pt
+
+# World model 롤아웃 수집 (slot 모드)
 python3 -m mujoco_phase_rl.policies.collect_world_model_rollouts
+
+# World model 학습
+python3 mujoco_phase_rl/world_model/train_world_model.py
+
+# 정책 평가 (rssm_latent 활성화)
+python3 mujoco_phase_rl/policies/evaluate_policy.py \
+  --model outputs/ppo_slot/final_model.zip --episodes 20 \
+  --image-embedding slot \
+  --slot-transition-ckpt ../../checkpoints/slot_transition_model/best.pt
 
 # pytest (이 플래그 필수)
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest test/ -v
@@ -28,6 +42,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest test/ -v
 | SlotEncoder v2 | `checkpoints/stage1_v2/best.pt` | ✅ 현행 |
 | ColorNet v2 | `checkpoints/color_net_v2/best.pt` | ✅ 현행 |
 | SlotDiff | `checkpoints/slot_diff/best.pt` | ✅ 현행 |
+| SlotTransitionModel | `checkpoints/slot_transition_model/best.pt` | ✅ 현행 (val=5.8184 @ep35) |
 | ~~SlotEncoder v1~~ | ~~`checkpoints/stage1/best.pt`~~ | ❌ 구버전, 사용 금지 |
 | ~~ColorNet v1~~ | ~~`checkpoints/color_net/best.pt`~~ | ❌ 구버전, 사용 금지 |
 
@@ -37,23 +52,27 @@ train_ppo.py는 이 경로를 기본값으로 갖고 있어 `--slot-*-ckpt` 생�
 
 ```
 mujoco_phase_rl/
-  envs/           # PhasePickPlaceEnv (101-dim obs)
-  policies/       # train_ppo, collect_world_model_rollouts, scripted_rollout
-  world_model/    # phase_destination, transition_record
+  envs/           # PhasePickPlaceEnv (101-dim / 165-dim obs, rssm_latent 포함 시)
+  policies/       # train_ppo, evaluate_policy, collect_world_model_rollouts
+  world_model/    # SlotTransitionModel, train_world_model, dataset, phase_destination
   tasks/          # PhaseManager, FSM 정의
   perception/     # SlotEmbedder, SlotDiff
   controllers/    # IK, 모터 제어
   bridges/        # ROS2↔MuJoCo 연결
 ```
 
-## Observation Space (101-dim)
+## Observation Space
 
-```
-robot(11) + task(4) + phase(9) + history(13) + slot_diff(64)
-```
+- **기본 (101-dim)**: `robot(11) + task(4) + phase(9) + history(13) + slot_diff(64)`
+- **rssm_latent 활성화 시 (165-dim)**: 위 + `rssm_latent(64)`
 
-- `image_embedding_mode="zeros"`: slot_diff=0, task=GT xy → zeros PPO (빠른 구조 검증)
-- `image_embedding_mode="slot"`: 실제 SlotDiff 사용 → vision-RL
+| `image_embedding_mode` | `slot_transition_ckpt` | slot_diff | rssm_latent | 용도 |
+|---|---|---|---|---|
+| `zeros` | None | 0 | 0 | 구조 검증 (빠름) |
+| `slot` | None | SlotDiff | 0 | vision-RL |
+| `slot` | 경로 지정 | SlotDiff | GRU latent | vision-RL + world model |
+
+PPO 학습 시 rssm_latent 유무가 obs shape을 바꾸므로, **기존 체크포인트와 ckpt 설정을 맞춰야** 한다.
 
 ## 주요 함정
 
@@ -68,7 +87,10 @@ robot(11) + task(4) + phase(9) + history(13) + slot_diff(64)
 |---|---|
 | PPO (zeros) | `src/mujoco_phase_rl/outputs/ppo_phase_pick_place/` |
 | PPO (slot) | `src/mujoco_phase_rl/outputs/ppo_slot/` |
-| World model rollouts | `outputs/world_model_rollouts/{scripted,random}/` |
+| PPO (mixed_zeros) | `src/mujoco_phase_rl/outputs/ppo_mixed_zeros/` |
+| PPO (mixed_slot) | `src/mujoco_phase_rl/outputs/ppo_mixed_slot/` |
+| World model rollouts (zeros) | `outputs/world_model_rollouts/{scripted,random}/` |
+| World model rollouts (slot) | `outputs/world_model_rollouts_slot/{scripted,random}/` |
 
 ## 문서 구조
 

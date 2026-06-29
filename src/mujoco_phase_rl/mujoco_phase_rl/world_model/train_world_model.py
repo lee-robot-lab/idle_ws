@@ -77,7 +77,8 @@ def _run_epoch(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", required=True)
+    _DEFAULT_DATA_DIR = str(Path(__file__).parents[4] / "outputs" / "world_model_rollouts_slot")
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=32)

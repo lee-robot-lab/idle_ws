@@ -40,7 +40,10 @@ class WorldModelDataset(Dataset):
                 for line in f:
                     line = line.strip()
                     if line:
-                        r = json.loads(line)
+                        try:
+                            r = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
                         by_episode[(file_idx, r["episode"])].append(r)
 
         self._episodes: list[list[dict]] = []

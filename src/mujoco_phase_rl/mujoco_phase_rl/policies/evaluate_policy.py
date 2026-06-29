@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from statistics import mean, pstdev
 
 from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
 from mujoco_phase_rl.utils.logging import EpisodeSummary
+
+_CKPT_ROOT = Path(__file__).parents[4] / "checkpoints"
+_DEFAULT_SLOT_STAGE1 = str(_CKPT_ROOT / "stage1_v2" / "best.pt")
+_DEFAULT_SLOT_DIFF = str(_CKPT_ROOT / "slot_diff" / "best.pt")
+_DEFAULT_SLOT_COLOR_NET = str(_CKPT_ROOT / "color_net_v2" / "best.pt")
+_DEFAULT_SLOT_TRANSITION = str(_CKPT_ROOT / "slot_transition_model" / "best.pt")
 
 
 def evaluate_policy(
@@ -24,7 +31,12 @@ def evaluate_policy(
             "Install with: python3 -m pip install --user gymnasium stable-baselines3"
         ) from exc
 
-    model = PPO.load(model_path, device="cpu")
+    try:
+        from mujoco_phase_rl.policies.train_ppo import _make_mixed_policy
+        custom_objects = {"policy_class": _make_mixed_policy()}
+    except Exception:
+        custom_objects = {}
+    model = PPO.load(model_path, device="cpu", custom_objects=custom_objects)
     env = PhasePickPlaceEnv(max_episode_steps=steps, **env_kwargs)
     summaries: list[EpisodeSummary] = []
 
@@ -110,6 +122,11 @@ def main() -> None:
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--no-command-mask", action="store_true")
     parser.add_argument("--image-embedding", choices=["zeros", "slot"], default="zeros")
+    parser.add_argument("--slot-stage1-ckpt", default=_DEFAULT_SLOT_STAGE1)
+    parser.add_argument("--slot-diff-ckpt", default=_DEFAULT_SLOT_DIFF)
+    parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_SLOT_COLOR_NET)
+    parser.add_argument("--slot-transition-ckpt", default=None,
+                        help="World model ckpt. None=zeros (기본), 경로 지정 시 rssm_latent 활성화")
     parser.add_argument("--image-width", type=int, default=64)
     parser.add_argument("--image-height", type=int, default=64)
     parser.add_argument("--image-embedding-interval", type=int, default=1)
@@ -130,6 +147,10 @@ def main() -> None:
         env_kwargs={
             "mask_invalid_commands": not args.no_command_mask,
             "image_embedding_mode": args.image_embedding,
+            "slot_stage1_ckpt": args.slot_stage1_ckpt if args.image_embedding == "slot" else None,
+            "slot_diff_ckpt": args.slot_diff_ckpt if args.image_embedding == "slot" else None,
+            "slot_color_net_ckpt": args.slot_color_net_ckpt if args.image_embedding == "slot" else None,
+            "slot_transition_ckpt": args.slot_transition_ckpt,
             "image_width": args.image_width,
             "image_height": args.image_height,
             "image_embedding_interval": args.image_embedding_interval,

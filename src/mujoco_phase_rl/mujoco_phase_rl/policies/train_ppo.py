@@ -102,6 +102,12 @@ def _make_mixed_policy():
             entropy = dist.entropy()
             return values, log_prob, entropy
 
+        def _predict(self, obs: dict, deterministic: bool = False) -> torch.Tensor:
+            features = self.extract_features(obs)
+            latent_pi, _ = self.mlp_extractor(features)
+            dist = self._get_action_dist_from_latent(latent_pi)
+            return dist.mode() if deterministic else dist.sample()
+
         def predict_values(self, obs: dict) -> torch.Tensor:
             features = self.extract_features(obs)
             _, latent_vf = self.mlp_extractor(features)
@@ -114,6 +120,7 @@ _CKPT_ROOT = Path(__file__).parents[4] / "checkpoints"
 _DEFAULT_SLOT_STAGE1 = str(_CKPT_ROOT / "stage1_v2" / "best.pt")
 _DEFAULT_SLOT_DIFF = str(_CKPT_ROOT / "slot_diff" / "best.pt")
 _DEFAULT_SLOT_COLOR_NET = str(_CKPT_ROOT / "color_net_v2" / "best.pt")
+_DEFAULT_SLOT_TRANSITION = str(_CKPT_ROOT / "slot_transition_model" / "best.pt")
 
 
 def main() -> None:
@@ -145,6 +152,8 @@ def main() -> None:
     parser.add_argument("--slot-diff-ckpt", default=_DEFAULT_SLOT_DIFF)
     parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_SLOT_COLOR_NET)
     parser.add_argument("--slot-device", default="cuda")
+    parser.add_argument("--slot-transition-ckpt", default=None,
+                        help="World model ckpt. None=zeros (기본), 경로 지정 시 rssm_latent 활성화")
     args = parser.parse_args()
 
     try:
@@ -196,6 +205,7 @@ def main() -> None:
                 slot_diff_ckpt=args.slot_diff_ckpt,
                 slot_color_net_ckpt=args.slot_color_net_ckpt,
                 slot_device=args.slot_device,
+                slot_transition_ckpt=args.slot_transition_ckpt,
             )
             env.reset(seed=seed + rank)
             return env
