@@ -101,6 +101,8 @@ def main() -> None:
     parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_COLOR_NET)
     parser.add_argument("--slot-transition-ckpt", default=None)
     parser.add_argument("--slot-device", default="cuda")
+    parser.add_argument("--no-command-mask", action="store_true",
+                        help="Disable phase command safety mask during PPO training")
     parser.add_argument("--no-val-pool", action="store_true",
                         help="val 이미지 pool 없이 순수 sim 랜덤 태스크만 사용")
     args = parser.parse_args()
@@ -126,6 +128,7 @@ def main() -> None:
         def _init():
             env = PhasePickPlaceEnv(
                 max_episode_steps=args.max_episode_steps,
+                mask_invalid_commands=not args.no_command_mask,
                 image_embedding_mode=args.image_embedding,
                 slot_stage1_ckpt=args.slot_stage1_ckpt,
                 slot_diff_ckpt=args.slot_diff_ckpt,
