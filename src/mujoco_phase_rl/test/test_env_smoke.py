@@ -130,6 +130,7 @@ def test_max_phase_failures_sets_terminal_failure():
         env.names,
         np.array([0.80, 0.40, 0.023], dtype=np.float64),
         np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        color=env._pick_color,
     )
     mujoco.mj_forward(env.model, env.data)
 

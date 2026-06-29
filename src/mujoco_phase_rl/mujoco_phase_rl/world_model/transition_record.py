@@ -25,6 +25,7 @@ OBSERVATION_SCHEMA = {
     "history": (13,),
     "slot_diff": (64,),
     "rssm_latent": (64,),
+    "cmd": (9,),
 }
 
 

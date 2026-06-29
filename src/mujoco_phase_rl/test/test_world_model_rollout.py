@@ -184,6 +184,7 @@ def test_build_transition_record_is_json_serializable():
         "history": np.zeros(13, dtype=np.float32),
         "slot_diff": np.zeros(64, dtype=np.float32),
         "rssm_latent": np.zeros(64, dtype=np.float32),
+        "cmd": np.zeros(9, dtype=np.float32),
     }
     obs_tp1 = {key: value + 1.0 for key, value in obs_t.items()}
     dest = encode_phase_destination_2d(phase_id=0, goal_xy_world=(0.1, 0.2))
@@ -242,6 +243,7 @@ def test_build_transition_record_rejects_bad_shapes_and_nonfinite_values():
         "history": np.zeros(13, dtype=np.float32),
         "slot_diff": np.zeros(64, dtype=np.float32),
         "rssm_latent": np.zeros(64, dtype=np.float32),
+        "cmd": np.zeros(9, dtype=np.float32),
     }
     obs_tp1 = {key: value + 1.0 for key, value in obs_t.items()}
     dest = encode_phase_destination_2d(phase_id=0, goal_xy_world=(0.1, 0.2))

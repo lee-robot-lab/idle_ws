@@ -26,7 +26,7 @@ from mujoco_phase_rl.tasks.phase_manager import (
     PhaseManager,
     StepResult,
 )
-from mujoco_phase_rl.tasks.pick_place_task import PickPlaceTask, TaskSample
+from mujoco_phase_rl.tasks.pick_place_task import PickPlaceTask, TaskSample, BLOCK_COLORS
 from mujoco_phase_rl.tasks.reward import FAILURE_STATUSES, compute_phase_reward
 from mujoco_phase_rl.utils.mujoco_loader import load_task_scene, set_freejoint_pose
 from mujoco_phase_rl.utils.spaces import gym, spaces
@@ -76,6 +76,7 @@ class PhasePickPlaceEnv(gym.Env):
         slot_transition_ckpt: str | None = None,
         perturb_prob: float = 0.0,
         perturb_max_m: float = 0.08,
+        stack_prob: float = 0.6,
     ) -> None:
         super().__init__()
         self.render_mode = render_mode
@@ -103,7 +104,10 @@ class PhasePickPlaceEnv(gym.Env):
         self.model = self.scene.model
         self.data = self.scene.data
         self.names = self.scene.names
-        self.task = PickPlaceTask()
+        self.task = PickPlaceTask(stack_prob=stack_prob)
+        self._pick_color: str = "red"
+        self._object_body_id: int = self.names.block_body_ids["red"]
+        self._target_block_body_id: int | None = None
         self.phase_manager = PhaseManager()
         self.observer = SnapshotObserver(self.model, self.data, self.names)
         self.pose_provider = make_pose_provider(
@@ -171,6 +175,7 @@ class PhasePickPlaceEnv(gym.Env):
                 "history": spaces.Box(low=-inf, high=inf, shape=(13,), dtype=np.float32),
                 "slot_diff": spaces.Box(low=-inf, high=inf, shape=(64,), dtype=np.float32),
                 "rssm_latent": spaces.Box(low=-inf, high=inf, shape=(64,), dtype=np.float32),
+                "cmd": spaces.Box(low=0.0, high=1.0, shape=(9,), dtype=np.float32),
             }
         )
 
@@ -215,6 +220,14 @@ class PhasePickPlaceEnv(gym.Env):
             self._wm_h = self._wm_model.init_hidden(1, torch.device("cpu"))
 
         self.current_task = injected if injected is not None else self.task.sample(self.rng)
+        self._pick_color = self.current_task.pick_color
+        self._object_body_id = self.names.block_body_ids[self._pick_color]
+        # PoseProvider가 names.object_body_id를 직접 참조하므로 동기화
+        self.names.object_body_id = self._object_body_id
+        self._target_block_body_id = (
+            self.names.block_body_ids[self.current_task.target_color]
+            if self.current_task.target_color is not None else None
+        )
         self._apply_home_pose()
         self._apply_task_sample(self.current_task)
         mujoco.mj_forward(self.model, self.data)
@@ -306,10 +319,10 @@ class PhasePickPlaceEnv(gym.Env):
             delta = self.rng.uniform(-self.perturb_max_m, self.perturb_max_m, size=2)
 
             if target == "block" and not self.object_grasped:
-                cur = self.data.xpos[self.names.object_body_id][:2].copy()
+                cur = self.data.xpos[self._object_body_id][:2].copy()
                 new_xy = np.clip(cur + delta, _BLOCK_BOUNDS[0], _BLOCK_BOUNDS[1])
                 new_pos = np.array([new_xy[0], new_xy[1], 0.023], dtype=np.float64)
-                set_freejoint_pose(self.data, self.names, new_pos, _IDENTITY_QUAT)
+                set_freejoint_pose(self.data, self.names, new_pos, _IDENTITY_QUAT, color=self._pick_color)
                 mujoco.mj_forward(self.model, self.data)
             elif target == "basket":
                 cur = self.data.xpos[self.names.basket_body_id][:2].copy()
@@ -318,6 +331,14 @@ class PhasePickPlaceEnv(gym.Env):
                 mujoco.mj_forward(self.model, self.data)
                 if self.current_task is not None:
                     self.current_task.target_pos[:2] = new_xy
+
+        # stack: target block 현재 XY + 동적 z 추적
+        if (self.current_task is not None
+                and self.current_task.task_type == "stack"
+                and self._target_block_body_id is not None):
+            tgt_center_z = float(self.data.xpos[self._target_block_body_id][2])
+            self.current_task.target_pos[:2] = self.data.xpos[self._target_block_body_id][:2]
+            self.current_task.target_pos[2] = tgt_center_z + 0.04  # block full height
 
         obs = self._observe()
         info = self._info(
@@ -450,7 +471,7 @@ class PhasePickPlaceEnv(gym.Env):
         if not ik_success:
             return status, sim_steps, False, False, extra_info
         ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
-        object_pos = self.data.xpos[self.names.object_body_id].copy()
+        object_pos = self.data.xpos[self._object_body_id].copy()
         ee_error = float(np.linalg.norm(target_pos - ee_pos))
         pregrasp_xy_error = float(np.linalg.norm(ee_pos[:2] - object_pos[:2]))
         pregrasp_z_delta = float(ee_pos[2] - object_pos[2])
@@ -505,7 +526,7 @@ class PhasePickPlaceEnv(gym.Env):
         self._run_pd_hold(q_hold, self._gripper_closed_q(), 120)
 
         ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
-        object_pos = self.data.xpos[self.names.object_body_id].copy()
+        object_pos = self.data.xpos[self._object_body_id].copy()
         xy_error = float(np.linalg.norm(ee_pos[:2] - object_pos[:2]))
         z_delta = float(ee_pos[2] - object_pos[2])
         distance = float(np.linalg.norm(ee_pos - object_pos))
@@ -531,7 +552,7 @@ class PhasePickPlaceEnv(gym.Env):
         if phase_success:
             self.object_grasped = True
             self.grasp_offset_pos = object_pos - ee_pos
-            self.grasp_object_quat = self.data.xquat[self.names.object_body_id].copy()
+            self.grasp_object_quat = self.data.xquat[self._object_body_id].copy()
             self._update_grasped_object_pose()
             self.phase_manager.set_phase(Phase.LIFT)
             return "GRASPED", move_steps + 120, True, True, extra_info
@@ -570,7 +591,7 @@ class PhasePickPlaceEnv(gym.Env):
         self._update_grasped_object_pose()
 
         ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
-        object_pos = self.data.xpos[self.names.object_body_id].copy()
+        object_pos = self.data.xpos[self._object_body_id].copy()
         ee_error = float(np.linalg.norm(target_pos - ee_pos))
         object_z = float(object_pos[2])
         phase_success = self.object_grasped and object_z >= 0.08 and ee_error <= 0.04
@@ -615,7 +636,7 @@ class PhasePickPlaceEnv(gym.Env):
             return status, sim_steps, False, False, extra_info
         self._update_grasped_object_pose()
 
-        object_pos = self.data.xpos[self.names.object_body_id].copy()
+        object_pos = self.data.xpos[self._object_body_id].copy()
         object_xy_error = float(np.linalg.norm(object_pos[:2] - self.current_task.target_pos[:2]))
         ee_error = float(np.linalg.norm(target_ee_pos - self.data.site_xpos[self.names.ee_site_id]))
         phase_success = self.object_grasped and object_xy_error <= 0.055 and object_pos[2] >= 0.075
@@ -640,13 +661,14 @@ class PhasePickPlaceEnv(gym.Env):
         self._run_pd_hold(q_hold, self._gripper_open_q(), 120)
         placed_pos = self._placed_object_pos()
         self.object_grasped = False
-        set_freejoint_pose(self.data, self.names, placed_pos, self.grasp_object_quat)
+        set_freejoint_pose(self.data, self.names, placed_pos, self.grasp_object_quat,
+                           color=self._pick_color)
         self.data.qvel[self.names.object_dofadr:self.names.object_dofadr + 6] = 0.0
         mujoco.mj_forward(self.model, self.data)
         self._run_pd_hold(q_hold, self._gripper_open_q(), 80)
 
-        object_pos = self.data.xpos[self.names.object_body_id].copy()
-        object_speed = float(np.linalg.norm(self.data.cvel[self.names.object_body_id, :3]))
+        object_pos = self.data.xpos[self._object_body_id].copy()
+        object_speed = float(np.linalg.norm(self.data.cvel[self._object_body_id, :3]))
         object_xy_error = float(np.linalg.norm(object_pos[:2] - self.current_task.target_pos[:2]))
         object_in_target = self._object_in_target()
         finger_q = float(self.data.qpos[self.names.finger_r_qposadr])
@@ -850,22 +872,35 @@ class PhasePickPlaceEnv(gym.Env):
         self.data.qvel[self.names.finger_l_dofadr] = 0.0
 
     def _apply_task_sample(self, sample: TaskSample) -> None:
-        set_freejoint_pose(self.data, self.names, sample.object_pos, sample.object_quat)
-        body_mass = self.model.body_mass[self.names.object_body_id]
+        _ID_QUAT = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+        # 집을 블록
+        set_freejoint_pose(self.data, self.names, sample.object_pos, sample.object_quat,
+                           color=sample.pick_color)
+        # 방관자 블록
+        for color, pos in sample.bystander_poses.items():
+            set_freejoint_pose(self.data, self.names, pos, _ID_QUAT, color=color)
+        # stack: 타겟 블록 (center z = BLOCK_Z, target_pos[2] = STACK_Z)
+        if sample.task_type == "stack" and sample.target_color is not None:
+            tgt_center = np.array([sample.target_pos[0], sample.target_pos[1], 0.023],
+                                   dtype=np.float64)
+            set_freejoint_pose(self.data, self.names, tgt_center, _ID_QUAT,
+                               color=sample.target_color)
+        body_mass = self.model.body_mass[self._object_body_id]
         if body_mass > 0.0:
-            self.model.body_mass[self.names.object_body_id] = sample.object_mass
+            self.model.body_mass[self._object_body_id] = sample.object_mass
 
     def _update_grasped_object_pose(self) -> None:
         if not self.object_grasped:
             return
         ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
         object_pos = ee_pos + self.grasp_offset_pos
-        set_freejoint_pose(self.data, self.names, object_pos, self.grasp_object_quat)
+        set_freejoint_pose(self.data, self.names, object_pos, self.grasp_object_quat,
+                           color=self._pick_color)
         mujoco.mj_forward(self.model, self.data)
 
     def _placed_object_pos(self) -> np.ndarray:
         if self.current_task is None:
-            return self.data.xpos[self.names.object_body_id].copy()
+            return self.data.xpos[self._object_body_id].copy()
         pos = self.current_task.target_pos.copy()
         pos[2] = 0.023
         return pos
@@ -873,8 +908,10 @@ class PhasePickPlaceEnv(gym.Env):
     def _object_in_target(self) -> bool:
         if self.current_task is None:
             return False
-        object_pos = self.data.xpos[self.names.object_body_id]
-        xy_error = np.linalg.norm(object_pos[:2] - self.current_task.target_pos[:2])
+        object_pos = self.data.xpos[self._object_body_id]
+        xy_error = float(np.linalg.norm(object_pos[:2] - self.current_task.target_pos[:2]))
+        if self.current_task.task_type == "stack":
+            return bool(xy_error <= 0.03 and 0.048 <= object_pos[2] <= 0.078)
         return bool(xy_error <= 0.06 and 0.0 <= object_pos[2] <= 0.08)
 
     def _gripper_open_q(self) -> float:
@@ -906,6 +943,13 @@ class PhasePickPlaceEnv(gym.Env):
         obs = self.observer.observe(slot_state, state, slot_diff_emb=slot_diff_emb)
         if self._wm_model is not None and self._wm_h is not None:
             obs["rssm_latent"] = self._wm_step(obs)
+        _COLORS  = ["red", "green", "blue"]
+        _TARGETS = ["red", "green", "blue", "basket"]
+        task_oh = [1.0, 0.0] if self.current_task.task_type == "pick_place" else [0.0, 1.0]
+        obj_oh  = [float(self._pick_color == c) for c in _COLORS]
+        tgt_lbl = self.current_task.target_color if self.current_task.target_color else "basket"
+        tgt_oh  = [float(tgt_lbl == t) for t in _TARGETS]
+        obs["cmd"] = np.array(task_oh + obj_oh + tgt_oh, dtype=np.float32)
         return obs
 
     def _wm_step(self, obs: dict) -> np.ndarray:
