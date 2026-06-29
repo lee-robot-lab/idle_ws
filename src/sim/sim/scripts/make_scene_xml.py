@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -27,6 +28,16 @@ BODY_BY_OBJECT = {
     "basket": "basket",
 }
 
+OBJECT_ALIASES = {
+    "red": "red_block",
+    "green": "green_block",
+    "blue": "blue_block",
+    "red_block": "red_block",
+    "green_block": "green_block",
+    "blue_block": "blue_block",
+    "basket": "basket",
+}
+
 Z_BY_OBJECT = {
     "red_block": 0.028,
     "green_block": 0.028,
@@ -46,17 +57,26 @@ def _find_body(root: ET.Element, body_name: str) -> ET.Element:
     raise ValueError(f"MuJoCo body not found: {body_name}")
 
 
+def _load_yaw(value: dict) -> float:
+    if "yaw" in value:
+        return float(value["yaw"])
+    if "cos_yaw" in value and "sin_yaw" in value:
+        return math.atan2(float(value["sin_yaw"]), float(value["cos_yaw"])) / 4.0
+    return 0.0
+
+
 def load_scene_json(path: Path) -> dict[str, SceneObject]:
     raw = json.loads(path.read_text())
     objects = raw.get("objects", raw)
     scene: dict[str, SceneObject] = {}
     for name, value in objects.items():
-        if name not in BODY_BY_OBJECT:
+        object_name = OBJECT_ALIASES.get(name)
+        if object_name is None:
             continue
-        scene[name] = SceneObject(
+        scene[object_name] = SceneObject(
             x=float(value["x"]),
             y=float(value["y"]),
-            yaw=float(value.get("yaw", 0.0)),
+            yaw=_load_yaw(value),
         )
     return scene
 
@@ -71,6 +91,7 @@ def patch_scene_xml(source_xml: Path, output_xml: Path, scene: dict[str, SceneOb
         body_name = BODY_BY_OBJECT[object_name]
         body = _find_body(root, body_name)
         body.attrib["pos"] = _format_pos(obj.x, obj.y, Z_BY_OBJECT[object_name])
+        body.attrib.pop("quat", None)
         body.attrib["euler"] = f"0 0 {obj.yaw:.6f}"
     output_xml.parent.mkdir(parents=True, exist_ok=True)
     tree.write(output_xml, encoding="utf-8", xml_declaration=False)

@@ -46,6 +46,8 @@
 /tmp/idle_voice_debug.wav                 # Whisper debug audio
 ```
 
+orchestrator 종료 시 출력되는 JSON에는 `timing_ms`가 포함된다. ROS 밖에서 실행되는 자연어 parsing, camera capture, scene inference, XML 생성 시간이 단계별로 찍히므로 지연이 느껴지면 이 값을 먼저 비교한다.
+
 시각화 확인:
 
 ```bash
@@ -152,6 +154,24 @@ ros2 launch idle_launch sim_pickplace.launch.py \
   model_xml:=/tmp/idle_scene_robot.xml
 ```
 
+이미 별도 비전 코드가 아래처럼 짧은 detection JSON을 만든 경우에도 XML 생성기를 직접 사용할 수 있다.
+
+```json
+{
+  "red": {"x": -0.191016, "y": 0.569441, "yaw": -0.301484},
+  "green": {"x": 0.057635, "y": 0.467809, "yaw": -0.038783},
+  "blue": {"x": -0.337240, "y": 0.770269, "yaw": -0.435244},
+  "basket": {"x": 0.413325, "y": 0.584877, "yaw": 0.019362}
+}
+```
+
+```bash
+cd /home/parkshinyoung/idle_ws
+PYTHONPATH=src/sim python3 src/sim/scripts/make_scene_xml.py \
+  --scene-json detected_objects.json \
+  --output-xml /tmp/idle_scene_robot.xml
+```
+
 터미널 3: PickPlaceCommand publish
 
 ```bash
@@ -161,6 +181,72 @@ source install/setup.bash
 
 ros2 topic pub --once /pickplace/command msgs/msg/PickPlaceCommand \
   "$(cat /tmp/idle_pickplace_payload.json)"
+```
+
+## 실행 방법 C: 카메라 없이 저장된 dataset 이미지로 모델 추론
+
+로봇/카메라 워크스페이스가 없는 환경에서는 `data/scenes`에서 원하는 `.jpg`를 눈으로 고르고, 그 이미지를 학습된 모델 입력으로 사용한다. 이 경로는 카메라 캡처만 건너뛰고, scene 좌표/yaw는 `checkpoints/stage4/best.pt` 모델 추론 결과로 만든다.
+
+예를 들어 `scene_000001.jpg`를 골랐다면 아래 3개 터미널로 실행한다.
+
+터미널 1: 저장된 이미지로 모델 추론 + plan/payload/XML 생성
+
+```bash
+cd /home/parkshinyoung/idle_ws
+
+PYTHONPATH=src/ml python3 src/ml/stage4/vision_task_orchestrator.py \
+  --text '파란 블록을 바구니에 넣어줘' \
+  --parser qwen \
+  --qwen-compact \
+  --image-in data/scenes/scene_000001.jpg \
+  --infer-scene-from-snapshot \
+  --scene-source model \
+  --build-sim-xml \
+  --device cuda \
+  --qwen-max-new-tokens 1024
+```
+
+정상 실행 후 아래 파일이 생긴다.
+
+```text
+/tmp/idle_semantic_plan.json
+/tmp/idle_scene_state.json
+/tmp/idle_pickplace_payload.json
+/tmp/idle_scene_robot.xml
+```
+
+터미널 2: generated XML로 MuJoCo sim 실행
+
+```bash
+cd /home/parkshinyoung/idle_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 launch idle_launch sim_pickplace.launch.py \
+  model_xml:=/tmp/idle_scene_robot.xml
+```
+
+터미널 3: Terminal 1에서 만든 PickPlaceCommand payload publish
+
+```bash
+cd /home/parkshinyoung/idle_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 topic pub --once /pickplace/command msgs/msg/PickPlaceCommand \
+  "$(cat /tmp/idle_pickplace_payload.json)"
+```
+
+모델이 아니라 저장된 GT label로 바로 scene을 만들고 싶을 때만 같은 번호의 `.json`을 사용한다.
+
+```bash
+PYTHONPATH=src/ml python3 src/ml/stage4/vision_task_orchestrator.py \
+  --text '파란 블록을 바구니에 넣어줘' \
+  --parser qwen \
+  --qwen-compact \
+  --scene-json-in data/scenes/scene_000001.json \
+  --build-sim-xml \
+  --qwen-max-new-tokens 1024
 ```
 
 ## 카메라 확인

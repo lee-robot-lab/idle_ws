@@ -1,10 +1,12 @@
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from stage4.vision_task_orchestrator import (
     SceneObject,
+    StepTimer,
     build_pickplace_payload,
     build_sim_launch_shell_command,
     choose_quadrant_yaw,
@@ -14,6 +16,7 @@ from stage4.vision_task_orchestrator import (
     render_model_scene_overlay,
     scene_from_collect_labels,
     scene_from_model_outputs,
+    selected_snapshot_path,
     transcribe_audio_with_vad_fallback,
     resolve_step_with_scene_geometry,
     yaw4_to_yaw,
@@ -31,6 +34,31 @@ def test_infer_task_name_maps_place_and_stack():
     assert infer_task_name({"action": "pick_place", "target": "basket"}) == "place"
     assert infer_task_name({"action": "place", "target": "basket"}) == "place"
     assert infer_task_name({"action": "stack", "target": "red_block"}) == "stack"
+
+
+def test_step_timer_records_named_stage_durations_in_ms():
+    times = iter([10.0, 10.125, 10.500, 10.750])
+    timer = StepTimer(clock=lambda: next(times))
+
+    timer.mark("parse")
+    timer.mark("capture")
+    timer.mark("infer")
+
+    assert timer.as_ms() == {
+        "parse": 125.0,
+        "capture": 375.0,
+        "infer": 250.0,
+    }
+
+
+def test_selected_snapshot_path_prefers_image_input_when_not_capturing():
+    args = SimpleNamespace(
+        image_in="data/scenes/scene_000001.jpg",
+        snapshot_out="/tmp/idle_camera_snapshot.jpg",
+        capture_camera=False,
+    )
+
+    assert selected_snapshot_path(args) == Path("data/scenes/scene_000001.jpg")
 
 
 def test_build_pickplace_payload_uses_object_and_target_poses():
@@ -129,6 +157,26 @@ def test_load_scene_json_accepts_objects_wrapper(tmp_path):
     assert scene["red_block"].x == 0.1
     assert scene["red_block"].color == "red"
     assert scene["basket"].yaw == 0.0
+
+
+def test_load_scene_json_accepts_dataset_scene_labels(tmp_path):
+    path = tmp_path / "scene_000001.json"
+    path.write_text(
+        """
+        {
+          "red": {"x": 0.1, "y": 0.2, "cos_yaw": 0.0, "sin_yaw": 1.0},
+          "blue": {"x": 0.3, "y": 0.4, "cos_yaw": 1.0, "sin_yaw": 0.0},
+          "basket": {"x": 0.0, "y": 0.6, "cos_yaw": 1.0, "sin_yaw": 0.0}
+        }
+        """
+    )
+
+    scene = load_scene_json(path)
+
+    assert set(scene) == {"red_block", "blue_block", "basket"}
+    assert scene["red_block"].color == "red"
+    assert round(scene["red_block"].yaw, 6) == round(3.141592653589793 / 8.0, 6)
+    assert scene["blue_block"].yaw == 0.0
 
 
 def test_resolve_direct_step_rejects_unresolved_relation_query():

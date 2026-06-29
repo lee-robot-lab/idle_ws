@@ -209,6 +209,7 @@ def generate_launch_description() -> LaunchDescription:
                     "delta_overclose": 0.06,
                     "q_min_grasp": 0.30,
                     "tau_drop_threshold": 0.0,
+                    "position_drop_detection": False,
                 }],
             ),
             Node(

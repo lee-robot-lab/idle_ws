@@ -404,6 +404,24 @@ def _detect_object_query(text):
     return None
 
 
+def _detect_stack_clause_query(text, role):
+    query = _detect_object_query(text)
+    if query is not None:
+        return query
+    if role == "object" and _contains_any(text, LEFTMOST_WORDS):
+        return _make_object_query("leftmost", None)
+    if role == "object" and _contains_any(text, RIGHTMOST_WORDS):
+        return _make_object_query("rightmost", None)
+    if not ("박스" in text or "블록" in text):
+        return None
+    if role == "target":
+        if _contains_any(text, LEFT_WORDS):
+            return _make_object_query("leftmost", None)
+        if _contains_any(text, RIGHT_WORDS):
+            return _make_object_query("rightmost", None)
+    return None
+
+
 def _split_stack_clauses(text):
     """'<집을 물체>를 <놓을 물체> 위에' 문장을 두 물체 절로 분리한다."""
     connector_positions = [
@@ -422,6 +440,16 @@ def _split_stack_clauses(text):
         if (pos := before_connector.rfind(particle)) != -1
     ]
     if not separator_positions:
+        for words in (RIGHTMOST_WORDS, RIGHT_WORDS, LEFTMOST_WORDS, LEFT_WORDS):
+            positions = [
+                pos for word in words if (pos := before_connector.rfind(word)) > 0
+            ]
+            if positions:
+                separator_pos = max(positions)
+                object_clause = before_connector[:separator_pos]
+                target_clause = before_connector[separator_pos:]
+                if object_clause and target_clause:
+                    return object_clause, target_clause
         return None, None
 
     separator_pos = max(separator_positions)
@@ -507,8 +535,15 @@ def parse_command(text):
     colors = [obj_name for _, _, obj_name, _ in unique_positions]
 
     object_clause, target_clause = _split_stack_clauses(text)
-    object_query = _detect_object_query(object_clause or text)
-    target_query = _detect_object_query(target_clause) if target_clause else None
+    if object_clause:
+        object_query = _detect_stack_clause_query(object_clause, "object")
+    else:
+        object_query = _detect_object_query(text)
+    target_query = (
+        _detect_stack_clause_query(target_clause, "target")
+        if target_clause
+        else None
+    )
 
     action = "unknown"
     obj = None if object_query else (colors[0] if colors else None)
@@ -688,6 +723,12 @@ def _validate_object_query(query, field_name):
             raise ValueError(f"허용되지 않은 기준 물체입니다: {reference}")
 
 
+def _normalize_nullable_value(value):
+    if isinstance(value, str) and value.strip().lower() in {"null", "none"}:
+        return None
+    return value
+
+
 def normalize_llm_plan(plan):
     """LLM 물체 별칭을 canonical 이름으로 바꾸고 중복 합성 관계를 제거한다."""
     if not isinstance(plan, dict):
@@ -696,6 +737,9 @@ def normalize_llm_plan(plan):
     for step in plan.get("steps", []):
         if not isinstance(step, dict):
             continue
+
+        for nullable_name in ("object", "object_query", "target", "target_query"):
+            step[nullable_name] = _normalize_nullable_value(step.get(nullable_name))
 
         step["object"] = OBJECT_NAME_ALIASES.get(
             step.get("object"),
@@ -788,12 +832,26 @@ def align_direct_rule_objects(plan, corrected_text):
     if not isinstance(step, dict) or step.get("action") != rule_step.get("action"):
         return plan
 
+    has_explicit_color = bool(_find_color_positions(corrected_text))
+
     for value_name, query_name in (
         ("object", "object_query"),
         ("target", "target_query"),
     ):
         rule_value = rule_step.get(value_name)
-        if rule_value is None or rule_step.get(query_name) is not None:
+        rule_query = rule_step.get(query_name)
+        if (
+            not has_explicit_color
+            and rule_query is not None
+            and step.get(query_name) is None
+        ):
+            step[value_name] = None
+            step[query_name] = rule_query
+            continue
+        if step.get(value_name) is None and step.get(query_name) is None and rule_query is not None:
+            step[query_name] = rule_query
+            continue
+        if rule_value is None or rule_query is not None:
             continue
         if step.get(value_name) is None and step.get(query_name) is not None:
             step[value_name] = rule_value

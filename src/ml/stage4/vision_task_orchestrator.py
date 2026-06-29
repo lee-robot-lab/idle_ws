@@ -9,13 +9,14 @@ import math
 import os
 import shlex
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import sys
 import tempfile
 import termios
 import tty
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
@@ -76,6 +77,21 @@ class LiveInference:
     relation_model: Any
     input_w: int = 416
     input_h: int = 288
+
+
+class StepTimer:
+    def __init__(self, clock: Callable[[], float] = time.perf_counter):
+        self._clock = clock
+        self._last = clock()
+        self._durations: list[tuple[str, float]] = []
+
+    def mark(self, name: str) -> None:
+        now = self._clock()
+        self._durations.append((name, now - self._last))
+        self._last = now
+
+    def as_ms(self) -> dict[str, float]:
+        return {name: round(seconds * 1000.0, 1) for name, seconds in self._durations}
 
 
 def infer_task_name(step: dict[str, Any]) -> str:
@@ -302,6 +318,16 @@ COLLECT_COLOR_TO_OBJECT = {
     "basket": "basket",
 }
 
+SCENE_OBJECT_ALIASES = {
+    "red": "red_block",
+    "green": "green_block",
+    "blue": "blue_block",
+    "red_block": "red_block",
+    "green_block": "green_block",
+    "blue_block": "blue_block",
+    "basket": "basket",
+}
+
 
 def scene_from_collect_labels(labels: dict[str, dict | None]) -> dict[str, SceneObject]:
     scene: dict[str, SceneObject] = {}
@@ -356,16 +382,28 @@ def write_scene_json(scene: dict[str, SceneObject], output_path: Path) -> None:
     )
 
 
+def load_scene_yaw(value: dict[str, Any]) -> float:
+    if "yaw" in value:
+        return float(value["yaw"])
+    if "cos_yaw" in value and "sin_yaw" in value:
+        return yaw4_to_yaw(float(value["cos_yaw"]), float(value["sin_yaw"]))
+    return 0.0
+
+
 def load_scene_json(path: Path) -> dict[str, SceneObject]:
     raw = json.loads(path.read_text())
     objects = raw.get("objects", raw)
     scene: dict[str, SceneObject] = {}
     for name, value in objects.items():
-        scene[name] = SceneObject(
+        object_name = SCENE_OBJECT_ALIASES.get(name, name)
+        color = value.get("color")
+        if color is None and object_name != "basket":
+            color = object_name.removesuffix("_block")
+        scene[object_name] = SceneObject(
             x=float(value["x"]),
             y=float(value["y"]),
-            yaw=float(value.get("yaw", 0.0)),
-            color=value.get("color"),
+            yaw=load_scene_yaw(value),
+            color=color,
             score=value.get("score"),
         )
     return scene
@@ -949,6 +987,14 @@ def build_sim_launch_shell_command(model_xml: Path) -> str:
     )
 
 
+def selected_snapshot_path(args) -> Path:
+    if getattr(args, "image_in", None) and getattr(args, "capture_camera", False):
+        raise ValueError("--image-in cannot be used with --capture-camera")
+    if getattr(args, "image_in", None):
+        return Path(args.image_in)
+    return Path(args.snapshot_out)
+
+
 def launch_sim(model_xml: Path) -> None:
     subprocess.run(
         ["bash", "-lc", build_sim_launch_shell_command(model_xml)],
@@ -975,6 +1021,10 @@ def main() -> None:
     parser.add_argument("--camera-height", type=int, default=720)
     parser.add_argument("--camera-warmup-frames", type=int, default=10)
     parser.add_argument("--snapshot-out", default=str(DEFAULT_SNAPSHOT_PATH))
+    parser.add_argument(
+        "--image-in",
+        help="Existing image file to use as the snapshot input instead of capturing a camera frame.",
+    )
     parser.add_argument("--camera-raw-out", default=str(DEFAULT_CAMERA_RAW_PATH))
     parser.add_argument("--camera-crop-out", default=str(DEFAULT_CAMERA_CROP_PATH))
     parser.add_argument("--camera-crop-region-out", default=str(DEFAULT_CAMERA_CROP_REGION_PATH))
@@ -1001,11 +1051,13 @@ def main() -> None:
     parser.add_argument("--plan-json-out", default=str(DEFAULT_PLAN_PATH))
     parser.add_argument("--publish", action="store_true")
     args = parser.parse_args()
+    timer = StepTimer()
 
     if args.dry_run_sample:
         raw_text = "sample: red block to basket"
         plan = sample_plan()
         scene = sample_scene()
+        timer.mark("sample_inputs")
     else:
         if args.voice:
             raw_text, plan = parse_voice_command(
@@ -1031,12 +1083,14 @@ def main() -> None:
             )
         else:
             raise SystemExit("--voice, --text, or --dry-run-sample is required")
+        timer.mark("command_parse")
 
         Path(args.raw_command_out).write_text(raw_text)
+        snapshot_path = selected_snapshot_path(args)
         if args.capture_camera:
             capture_camera_once(
                 args.camera_device,
-                Path(args.snapshot_out),
+                snapshot_path,
                 args.camera_width,
                 args.camera_height,
                 args.camera_warmup_frames,
@@ -1044,17 +1098,18 @@ def main() -> None:
                 crop_out=Path(args.camera_crop_out) if args.camera_crop_out else None,
                 crop_region_out=Path(args.camera_crop_region_out) if args.camera_crop_region_out else None,
             )
+            timer.mark("camera_capture")
         inference = None
         if args.infer_scene_from_snapshot:
             if args.scene_source == "collect":
                 scene = infer_collect_scene_from_snapshot(
-                    Path(args.snapshot_out),
+                    snapshot_path,
                     args.camera_width,
                     args.camera_height,
                 )
             else:
                 inference = infer_model_scene_from_snapshot(
-                    Path(args.snapshot_out),
+                    snapshot_path,
                     Path(args.stage4_ckpt),
                     device=args.device,
                     present_thr=args.present_thr,
@@ -1062,8 +1117,10 @@ def main() -> None:
                     model_input_out=Path(args.model_input_out) if args.model_input_out else None,
                 )
                 scene = inference.scene
+            timer.mark("scene_infer")
         elif args.scene_json_in:
             scene = load_scene_json(Path(args.scene_json_in))
+            timer.mark("scene_load")
         else:
             raise SystemExit(
                 "--scene-json-in or --infer-scene-from-snapshot is required"
@@ -1079,24 +1136,31 @@ def main() -> None:
     else:
         step = resolve_step_with_scene_geometry(step, scene)
     payload = build_pickplace_payload(step, scene)
+    timer.mark("task_resolve")
     write_plan_json(plan, Path(args.plan_json_out))
     write_scene_json(scene, Path(args.scene_json_out))
     write_payload_json(payload, Path(args.payload_json_out))
+    timer.mark("write_outputs")
     sim_xml = None
     if args.build_sim_xml or args.launch_sim:
         sim_xml = str(build_sim_xml(Path(args.scene_json_out), Path(args.sim_xml_out)))
+        timer.mark("build_sim_xml")
     if args.publish:
         publish_pickplace_command(payload)
+        timer.mark("publish_command")
     print(
         json.dumps(
             {
                 "plan_json": args.plan_json_out,
                 "raw_text": raw_text,
-                "snapshot": args.snapshot_out if args.capture_camera else None,
+                "snapshot": str(selected_snapshot_path(args))
+                if (args.capture_camera or args.image_in)
+                else None,
                 "scene_json": args.scene_json_out,
                 "sim_xml": sim_xml,
                 "payload_json": args.payload_json_out,
                 "payload": payload,
+                "timing_ms": timer.as_ms(),
             },
             indent=2,
         )
