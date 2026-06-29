@@ -200,6 +200,7 @@ def _prepare_block(root: ET.Element, color: str) -> None:
         geom.set("name", geom_name)
         geom.set("type", "box")
         geom.set("size", "0.02 0.02 0.02")
+        geom.set("rgba", _BLOCK_RGBA[color])
         geom.set("mass", "0.1")
 
 

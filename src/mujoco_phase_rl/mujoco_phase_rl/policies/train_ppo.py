@@ -48,6 +48,9 @@ class _MixedDist:
         onehot.scatter_(1, idx.unsqueeze(1), 1.0)
         return torch.cat([onehot, self._normal.mean], dim=-1)
 
+    def get_actions(self, deterministic: bool = False) -> torch.Tensor:
+        return self.mode() if deterministic else self.sample()
+
 
 def _make_mixed_policy():
     """MixedPhasePolicy: Categorical(7) phase head + Gaussian(7) continuous head."""

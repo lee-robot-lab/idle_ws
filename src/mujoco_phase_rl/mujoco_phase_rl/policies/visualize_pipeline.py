@@ -219,10 +219,25 @@ def run_pipeline(
     H_world2px = np.linalg.inv(_H_DEFAULT)
     aug = SlotAugmentor(val_img, bg_img, dets, H_world2px) if augment else None
 
-    # 예시 이동: y축으로만 살짝 이동 (0.03m) — crop 내에서 유지
+    # 예시 이동: 블록은 +dy y 이동 (crop 안에 들어오도록 자동 조정), 바구니 고정
+    def _safe_shift(x_m, y_m, dy, H_w2p, margin=40):
+        """dy만큼 이동 후 픽셀이 crop + margin 안에 들어오면 적용, 아니면 0."""
+        for shift in [dy, dy * 0.7, dy * 0.4, 0.0]:
+            p = H_w2p @ np.array([x_m, y_m + shift, 1.0])
+            px, py = p[0] / p[2], p[1] / p[2]
+            if (_CROP_X0 + margin <= px <= _CROP_X1 - margin and
+                    _CROP_Y0 + margin <= py <= 720 - margin):
+                return y_m + shift
+        return y_m
+
     example_positions = {}
     for d in dets:
-        example_positions[d["color"]] = (d["x_m"], d["y_m"] + 0.03)
+        if d["color"] == "basket":
+            example_positions[d["color"]] = (d["x_m"], d["y_m"])
+        else:
+            # y를 줄이면 pixel row 증가(화면 아래) → 중앙에 더 잘 보임
+            new_y = _safe_shift(d["x_m"], d["y_m"], -0.12, H_world2px)
+            example_positions[d["color"]] = (d["x_m"], new_y)
     aug_img = aug.compose(example_positions) if aug else val_img.copy()
     aug_emb, _ = embedder.embed_bgr(aug_img)
 
@@ -235,7 +250,13 @@ def run_pipeline(
         from mujoco_phase_rl.tasks.pick_place_task import TaskSample
 
         ts = dets_to_task_sample(dets, block_color)
-        env = PhasePickPlaceEnv(max_episode_steps=steps, image_embedding_mode="slot")
+        env = PhasePickPlaceEnv(
+            max_episode_steps=steps,
+            image_embedding_mode="slot",
+            slot_stage1_ckpt    = str(_ckpt / "stage1_v2"   / "best.pt"),
+            slot_diff_ckpt      = str(_ckpt / "slot_diff"   / "best.pt"),
+            slot_color_net_ckpt = str(_ckpt / "color_net_v2"/ "best.pt"),
+        )
         obs, _ = env.reset(seed=seed, options={"task_sample": ts})
         embedder2 = SlotEmbedder(
             stage1_ckpt    = str(_ckpt / "stage1_v2"   / "best.pt"),
@@ -243,13 +264,14 @@ def run_pipeline(
             color_net_ckpt = str(_ckpt / "color_net_v2"/ "best.pt"),
         )
 
-        model = PPO.load(model_path, env=env)
+        from mujoco_phase_rl.policies.train_ppo import _make_mixed_policy
+        model = PPO.load(model_path, env=env,
+                         custom_objects={"policy_class": _make_mixed_policy()})
         aug2 = SlotAugmentor(val_img, bg_img, dets, H_world2px) if augment else None
 
         for _ in range(steps):
             if aug2:
-                obj_body = env.model.body("object_body")
-                bpos = env.data.xpos[obj_body.id]
+                bpos = env.data.xpos[env.names.object_body_id]
                 tgt  = env.current_task.target_pos
                 aug_frame = aug2.compose({
                     block_color: (bpos[0], bpos[1]),
@@ -261,8 +283,7 @@ def run_pipeline(
             obs, _, term, trunc, info = env.step(action)
 
             phase_log.append(info.get("phase", "IDLE"))
-            b_id = env.model.body("object_body").id
-            obj_traj.append(env.data.xpos[b_id][:2].copy())
+            obj_traj.append(env.data.xpos[env.names.object_body_id][:2].copy())
             emb_traj.append(obs["slot_diff"].copy())
             if term or trunc:
                 break
@@ -307,7 +328,10 @@ def main() -> None:
     ap.add_argument("--block-color", default="red",
                     choices=["red", "green", "blue"])
     ap.add_argument("--bg-image",    default=str(_DATA_DIR / "background.jpg"))
-    ap.add_argument("--model",       default=None, help="PPO zip 경로")
+    _default_model = str(_WS_ROOT / "src" / "mujoco_phase_rl" / "outputs" /
+                         "ppo_mixed_slot" / "checkpoints" /
+                         "ppo_phase_pick_place_174080_steps.zip")
+    ap.add_argument("--model",       default=_default_model, help="PPO zip 경로")
     ap.add_argument("--steps",       type=int, default=64)
     ap.add_argument("--no-augment",  action="store_true")
     args = ap.parse_args()

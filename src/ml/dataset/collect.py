@@ -94,10 +94,12 @@ def next_scene_id(out_dir: Path) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out",    default=Path("/home/su/idle_ws/data/scenes"), type=Path)
-    ap.add_argument("--device", default=1, type=int)
-    ap.add_argument("--w",      default=1280, type=int)
-    ap.add_argument("--h",      default=720,  type=int)
+    ap.add_argument("--out",         default=Path("/home/su/idle_ws/data/scenes"), type=Path)
+    ap.add_argument("--device",      default=1, type=int)
+    ap.add_argument("--w",           default=1280, type=int)
+    ap.add_argument("--h",           default=720,  type=int)
+    ap.add_argument("--allow-empty", action="store_true",
+                    help="물체 미검출 상태에서도 Space로 저장 허용 (배경 촬영용)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -141,7 +143,7 @@ def main():
         if key == ord('q'):
             break
         elif key == ord(' '):
-            if not valid:
+            if not valid and not args.allow_empty:
                 continue
             sid = next_scene_id(args.out)
             cv2.imwrite(str(args.out / f"{sid}.jpg"), frame)
