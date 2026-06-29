@@ -125,6 +125,45 @@ class SlotEmbedder:
         self._prev_slots = curr_slots
         return emb.astype(np.float32), curr_slots
 
+    def embed_bgr(self, img_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
+        """카메라/파일 BGR 이미지 → (slot_diff_emb:(64,), curr_slots dict).
+
+        embed()와 동일 출력 타입. MuJoCo 렌더링 대신 외부 이미지를 사용한다.
+        """
+        import torch
+        import torch.nn.functional as F
+
+        rgb = self._cv2.cvtColor(img_bgr, self._cv2.COLOR_BGR2RGB)
+        img_t = self._preprocess(rgb)  # (1, 3, 288, 416)
+
+        with torch.no_grad():
+            enc_out = self._encoder(img_t.to(self.device))
+            present = torch.sigmoid(enc_out["present"])
+            xy = enc_out["xy"]
+            color_logit, _ = self._color_net(img_t.to(self.device), xy)
+            color_soft = F.softmax(color_logit, dim=-1)
+
+            curr_slots = {
+                "present": present[0].cpu().numpy(),
+                "xy": xy[0].cpu().numpy(),
+                "color_logit": color_logit[0].cpu().numpy(),
+            }
+
+            if self._prev_slots is None:
+                self._prev_slots = curr_slots
+
+            prev_feats = self._to_feats(self._prev_slots)
+            curr_feats = self._to_feats_soft(curr_slots, color_soft[0].cpu().numpy())
+            slot_pairs = torch.tensor(
+                np.concatenate([prev_feats, curr_feats], axis=-1)[np.newaxis],
+                dtype=torch.float32,
+            ).to(self.device)
+
+            emb = self._slot_diff(slot_pairs)[0].cpu().numpy()
+
+        self._prev_slots = curr_slots
+        return emb.astype(np.float32), curr_slots
+
     def close(self) -> None:
         if self._renderer is not None:
             self._renderer.close()

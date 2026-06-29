@@ -34,3 +34,28 @@ def test_reset_without_task_sample_is_unchanged():
     obs, _ = env.reset(seed=42)
     assert obs["robot"].shape == (11,)
     env.close()
+
+
+def test_embed_bgr_preprocess_shape():
+    """_preprocess가 BGR 이미지를 올바른 텐서 shape으로 변환하는지 확인."""
+    import cv2
+
+    # 더미 BGR 이미지 (1280×720)
+    img_bgr = np.zeros((720, 1280, 3), dtype=np.uint8)
+    img_bgr[5:, 90:1120] = 128
+
+    rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+    _CROP_X0, _CROP_X1, _CROP_Y0 = 90, 1120, 5
+    _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    _INPUT_W, _INPUT_H = 416, 288
+
+    import cv2 as _cv2
+    img = rgb[_CROP_Y0:, _CROP_X0:_CROP_X1]
+    img = _cv2.resize(img, (_INPUT_W, _INPUT_H))
+    img = (img.astype(np.float32) / 255.0 - _MEAN) / _STD
+    img_t = img.transpose(2, 0, 1)[np.newaxis]
+
+    assert img_t.shape == (1, 3, 288, 416)
+    assert img_t.dtype == np.float32
