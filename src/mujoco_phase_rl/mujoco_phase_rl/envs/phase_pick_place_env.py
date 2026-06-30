@@ -92,6 +92,7 @@ class PhasePickPlaceEnv(gym.Env):
         recovery_max_delta_m: float = 0.03,
         recovery_slot_diff_mode: str = "learned",
         max_recovery_retries: int = 1,
+        recovery_event_limit_per_episode: int | None = None,
         stack_prob: float = 0.6,
     ) -> None:
         super().__init__()
@@ -211,6 +212,10 @@ class PhasePickPlaceEnv(gym.Env):
         self.recovery_slot_diff_mode = str(recovery_slot_diff_mode)
         if self.recovery_slot_diff_mode not in {"learned", "zero", "oracle"}:
             raise ValueError("recovery_slot_diff_mode must be one of: learned, zero, oracle")
+        self.recovery_event_limit_per_episode = (
+            None if recovery_event_limit_per_episode is None else max(0, int(recovery_event_limit_per_episode))
+        )
+        self._recovery_event_count = 0
         self._last_recovery_event = RecoveryEvent(
             RecoveryEventType.NONE,
             False,
@@ -258,6 +263,7 @@ class PhasePickPlaceEnv(gym.Env):
             "continue",
         )
         self._recovery_retry_count = 0
+        self._recovery_event_count = 0
         self.pose_provider.reset()
         if self._wm_model is not None:
             import torch
@@ -835,6 +841,16 @@ class PhasePickPlaceEnv(gym.Env):
         return "RECOVERED", sim_steps, True, False, extra_info
 
     def _sample_recovery_event(self, phase_before: Phase) -> RecoveryEvent:
+        if (
+            self.recovery_event_limit_per_episode is not None
+            and self._recovery_event_count >= self.recovery_event_limit_per_episode
+        ):
+            return RecoveryEvent(
+                RecoveryEventType.NONE,
+                False,
+                np.zeros(2, dtype=np.float64),
+                "continue",
+            )
         return sample_recovery_event(
             self.rng,
             self.recovery_event_config,
@@ -846,6 +862,7 @@ class PhasePickPlaceEnv(gym.Env):
         self._last_recovery_event = event
         if not event.should_apply:
             return
+        self._recovery_event_count += 1
         if event.event_type in {RecoveryEventType.OBJECT_MOVED_SMALL, RecoveryEventType.OBJECT_MOVED_LARGE}:
             self._move_object_by_delta(event.delta_xy)
         elif event.event_type is RecoveryEventType.TARGET_MOVED:
@@ -1322,6 +1339,7 @@ class PhasePickPlaceEnv(gym.Env):
                 else self.phase_manager.attempt_count
             ),
             "max_phase_failures": int(self.max_phase_failures),
+            "recovery_event_count": int(self._recovery_event_count),
         }
         planner_fail_reason = self._planner_fail_reason(
             valid_command=valid_command,

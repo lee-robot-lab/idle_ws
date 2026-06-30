@@ -268,6 +268,28 @@ def test_recovery_unrecoverable_moves_object_outside_normal_block_bounds(monkeyp
     assert info["recovery_event"] == "UNRECOVERABLE"
 
 
+def test_recovery_event_limit_per_episode_applies_only_once():
+    from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
+
+    env = PhasePickPlaceEnv(
+        max_episode_steps=4,
+        recovery_event_prob=1.0,
+        recovery_event_types="NO_CHANGE",
+        recovery_event_limit_per_episode=1,
+    )
+    try:
+        env.reset(seed=0)
+        _obs, _reward, _terminated, _truncated, first_info = env.step(_invalid_lift_action())
+        _obs, _reward, _terminated, _truncated, second_info = env.step(_invalid_lift_action())
+    finally:
+        env.close()
+
+    assert first_info["recovery_event"] == "NO_CHANGE"
+    assert first_info["recovery_event_count"] == 1
+    assert second_info["recovery_event"] == "NONE"
+    assert second_info["recovery_event_count"] == 1
+
+
 def test_recovery_drop_during_lift_reward_components_include_drop_same_step(monkeypatch):
     from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
     from mujoco_phase_rl.envs.recovery_events import RecoveryEvent, RecoveryEventType
