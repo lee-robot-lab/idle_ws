@@ -94,7 +94,7 @@ plan_diag*.csv
 data/dino_cache/
 
 # 학습 체크포인트 (재현 가능, 공유 시 드라이브)
-checkpoints/
+
 
 # 크롭·리사이즈 미리보기 (crop.py 출력)
 data/preview/

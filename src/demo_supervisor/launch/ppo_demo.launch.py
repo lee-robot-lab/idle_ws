@@ -20,7 +20,7 @@ from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-_WS        = os.path.join(os.path.realpath(os.path.dirname(__file__)), *(['..'] * 3))
+_WS        = os.path.expanduser('~/idle_ws')
 _PPO       = os.path.join(
     _WS, 'src', 'mujoco_phase_rl', 'outputs',
     'ppo_recovery_fixed_s0', 'checkpoints',

@@ -392,15 +392,64 @@ class RealPhaseDiagnosticsNode:
     def _camera_thread(self, device: int) -> None:
         """백그라운드: cv2.VideoCapture → _process_image_bgr() (ROS image_topic 대체)."""
         import cv2
-        cap = cv2.VideoCapture(device)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.logger.info(f"camera thread started: device={device} (bypasses image_topic)")
+        import subprocess
+
+        def _open_camera(dev):
+            # v4l2-ctl로 먼저 해상도 강제 (OpenCV CAP_PROP_FRAME_* 무시하는 카메라 대응)
+            dev_path = f"/dev/video{dev}" if isinstance(dev, int) else dev
+            try:
+                subprocess.run(
+                    ["v4l2-ctl", f"-d{dev_path}",
+                     "--set-fmt-video=width=1280,height=720,pixelformat=MJPG"],
+                    capture_output=True, timeout=3,
+                )
+            except Exception:
+                pass
+
+            for attempt in range(5):
+                c = cv2.VideoCapture(dev)
+                if not c.isOpened():
+                    self.logger.warning(f"camera open failed (attempt {attempt+1}/5), retrying...")
+                    time.sleep(1.0)
+                    continue
+                c.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                c.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                # warm-up
+                for _ in range(5):
+                    c.read()
+                ok, frame = c.read()
+                if not ok:
+                    self.logger.warning(f"camera read failed (attempt {attempt+1}/5), retrying...")
+                    c.release()
+                    time.sleep(1.0)
+                    continue
+                h, w = frame.shape[:2]
+                self.logger.info(f"camera opened: device={dev} actual={w}x{h}")
+                if w < 640 or h < 360:
+                    self.logger.warning(f"camera resolution too low ({w}x{h}), retrying...")
+                    c.release()
+                    time.sleep(1.0)
+                    continue
+                return c
+            return None
+
+        cap = _open_camera(device)
+        if cap is None:
+            self.logger.error(f"camera device={device} failed to open after retries — camera thread exiting")
+            return
+
+        self.logger.info(f"camera thread started: device={device}")
         try:
             while not self._stop_event.is_set():
                 ok, bgr = cap.read()
                 if not ok:
-                    time.sleep(0.01)
+                    self.logger.warning("camera read error, reopening...")
+                    cap.release()
+                    time.sleep(1.0)
+                    cap = _open_camera(device)
+                    if cap is None:
+                        self.logger.error("camera reopen failed — camera thread exiting")
+                        return
                     continue
                 self._process_image_bgr(bgr, time.monotonic())
         finally:
@@ -431,7 +480,7 @@ class RealPhaseDiagnosticsNode:
             self.logger.warning(f"STT thread: /dev/tty 열기 실패 — 키 입력 불가 ({exc})")
             return
 
-        _stt_script = Path(__file__).resolve().parents[4] / "src" / "stt" / "stt.py"
+        _stt_script = Path.home() / "idle_ws" / "src" / "stt" / "stt.py"
 
         WHISPER_INITIAL_PROMPT = (
             "로봇팔에게 내리는 한국어 음성 명령입니다. "
@@ -528,7 +577,10 @@ class RealPhaseDiagnosticsNode:
                             continue
                         step = plan["steps"][0]
                     except Exception as exc:
-                        self.logger.warning(f"STT parse_text error: {exc}")
+                        if not proc.stdout.strip():
+                            print("[STT] 명령 파싱 실패 — 예: '빨간 블록을 바구니에 넣어'", flush=True)
+                        else:
+                            self.logger.warning(f"STT parse_text error: {exc}")
                         continue
 
                     # ── MLPipeline grounding ──────────────────────────
@@ -1208,12 +1260,27 @@ class RealPhaseDiagnosticsNode:
             history[COMMAND_COUNT + int(self.prev_result) - 1] = 1.0
         history[-1] = float(self.prev_reward)
 
+        # cmd: [task_type(2), pick_color(3), target(4)] — 환경 phase_pick_place_env.py와 동일
+        _COLORS  = ["red", "green", "blue"]
+        _TARGETS = ["red", "green", "blue", "basket"]
+        task_type = self.ppo_task_type or ("stack" if self.config.task_mode == "stack" else "pick_place")
+        pick_color = self.ppo_task_object_color or self.config.target_color or "red"
+        tgt_label  = (self.config.stack_target_color if task_type == "stack" else self.config.basket_color) or "basket"
+        cmd = np.array(
+            ([1.0, 0.0] if task_type == "pick_place" else [0.0, 1.0])
+            + [float(pick_color == c) for c in _COLORS]
+            + [float(tgt_label == t) for t in _TARGETS],
+            dtype=np.float32,
+        )  # (9,)
+
         return {
             "robot": robot,
             "task": task,
             "phase": phase,
             "history": history,
             "slot_diff": self._cached_slot_diff_emb.copy(),
+            "rssm_latent": np.zeros(64, dtype=np.float32),
+            "cmd": cmd,
         }
 
     def _runtime_allowed_commands(self, fused: FusedState) -> set[Command]:
@@ -1525,7 +1592,7 @@ def _load_ml_pipeline(config: "BridgeConfig", logger: Any) -> Any:
         return None
     try:
         import sys
-        _ds_root = str(Path(__file__).resolve().parents[4] / "src" / "demo_supervisor")
+        _ds_root = str(Path.home() / "idle_ws" / "src" / "demo_supervisor")
         if _ds_root not in sys.path:
             sys.path.insert(0, _ds_root)
         from demo_supervisor.ml.pipeline import MLPipeline

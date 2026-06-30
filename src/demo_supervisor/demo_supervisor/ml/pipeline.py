@@ -101,6 +101,9 @@ class MLPipeline:
 
     def _preprocess(self, frame_bgr: np.ndarray) -> torch.Tensor:
         m = self._m
+        # 학습 데이터는 1280×720 기준 — 다른 해상도면 먼저 리사이즈
+        if frame_bgr.shape[1] != 1280 or frame_bgr.shape[0] != 720:
+            frame_bgr = cv2.resize(frame_bgr, (1280, 720))
         cropped = frame_bgr[m["CROP_Y0"]:, m["CROP_X0"]: m["CROP_X0"] + m["CROP_W"]]
         resized = cv2.resize(cropped, (self.IMAGE_W, self.IMAGE_H))
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
@@ -123,12 +126,12 @@ class MLPipeline:
         )
 
     def _image_yaw_to_world(self, xy_norm: torch.Tensor, yaw_cos4sin4: torch.Tensor) -> float:
-        arr = yaw_cos4sin4.cpu()
+        arr = yaw_cos4sin4.detach()
         if arr.norm() < 1e-6:
             return 0.0
         image_yaw = torch.atan2(arr[1], arr[0]) / 4.0
         world_yaw = self._m["normalized_xy_yaw_to_world_yaw"](
-            xy_norm.unsqueeze(0), image_yaw.unsqueeze(0)
+            xy_norm.unsqueeze(0), image_yaw.to(xy_norm.device).unsqueeze(0)
         )
         return float(world_yaw[0].item())
 
