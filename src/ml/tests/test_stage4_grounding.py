@@ -60,6 +60,29 @@ def test_block_query_candidate_mask_excludes_basket_and_absent():
     assert mask.tolist() == [True, True, True, False, False, False]
 
 
+def test_place_relation_route_is_relation_mode():
+    """target_query가 있는 step은 DETECT_PLACE에서 relation 모드를 반환해야 한다."""
+    step = {
+        "action": "stack",
+        "object": "red_block",
+        "target_query": {
+            "anchor": "basket",
+            "relation": "farthest_from",
+        },
+    }
+    route = route_step_for_phase(step, "DETECT_PLACE")
+    assert route is not None
+    assert route.mode == "relation"
+
+
+def test_place_direct_route_still_works():
+    """target이 직접 지정된 경우 direct 모드 유지."""
+    step = {"action": "pick_place", "object": "red_block", "target": "basket"}
+    route = route_step_for_phase(step, "DETECT_PLACE")
+    assert route is not None
+    assert route.mode == "direct"
+
+
 def test_direct_target_grounding_uses_target_not_object():
     xy = torch.arange(12, dtype=torch.float32).reshape(6, 2)
     yaw = torch.arange(12, dtype=torch.float32).reshape(6, 2) + 100

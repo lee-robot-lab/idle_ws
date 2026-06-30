@@ -174,8 +174,21 @@ class MLPipeline:
         # place grounding
         place_route = m["route_step_for_phase"](step, "DETECT_PLACE")
         place_result = None
-        if place_route is not None and place_route.mode == "direct":
-            place_result = m["ground_direct_for_route"](step, place_route, xy, yaw, slot_to_color)
+        if place_route is not None:
+            if place_route.mode == "direct":
+                place_result = m["ground_direct_for_route"](step, place_route, xy, yaw, slot_to_color)
+            else:  # relation — is_target 필터 미적용 (basket이 is_target=0일 수 있음)
+                valid_mask = m["valid_candidate_mask"](slot_to_color, present_mask, query_type=None)
+                place_result = m["relation_grounding"](
+                    self._relation_scorer,
+                    slots=slots, color_logits=color_logits, world_xy=world_xy,
+                    xy=xy, yaw=yaw,
+                    relation_id=torch.zeros(1, dtype=torch.long, device=self.device),
+                    query_kind_id=torch.ones(1, dtype=torch.long, device=self.device),
+                    phase_id=torch.tensor([2], dtype=torch.long, device=self.device),
+                    anchor_features=torch.zeros(16, dtype=torch.float32, device=self.device),
+                    valid_mask=valid_mask,
+                )
         if place_result is None:
             return None
 

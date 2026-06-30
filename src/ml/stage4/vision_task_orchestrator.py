@@ -206,8 +206,24 @@ def run(
     # DETECT_PLACE: place target 슬롯 선택
     place_result = None
     place_route = route_step_for_phase(step, "DETECT_PLACE")
-    if place_route is not None and place_route.mode == "direct":
-        place_result = ground_direct_for_route(step, place_route, xy, yaw, slot_to_color)
+    if place_route is not None:
+        if place_route.mode == "direct":
+            place_result = ground_direct_for_route(step, place_route, xy, yaw, slot_to_color)
+        else:  # relation — is_target 필터 미적용 (basket이 is_target=0일 수 있음)
+            valid_mask = valid_candidate_mask(slot_to_color, xy.norm(dim=-1) > 0, query_type=None)
+            place_result = relation_grounding(
+                relation_scorer,
+                slots=encoder(_preprocess(frame_bgr, device))["slots"][0],
+                color_logits=color_net(_preprocess(frame_bgr, device), xy.unsqueeze(0))[0],
+                world_xy=world_xy,
+                xy=xy,
+                yaw=yaw,
+                relation_id=torch.zeros(1, dtype=torch.long, device=device),
+                query_kind_id=torch.ones(1, dtype=torch.long, device=device),
+                phase_id=torch.tensor([2], dtype=torch.long, device=device),
+                anchor_features=torch.zeros(16, dtype=torch.float32, device=device),
+                valid_mask=valid_mask,
+            )
     if place_result is None:
         print("[orchestrator] place target 감지 실패", file=sys.stderr)
         return None
