@@ -340,6 +340,9 @@ def _make_trace_row(
         "object_xy_error": _distance(object_xy, gt_object_xy),
         "target_xy_error": _distance(target_xy, gt_target_xy),
         "slot_diff_norm": float(np.linalg.norm(obs.get("slot_diff", np.zeros(64, dtype=np.float32)))),
+        "recovery_event": info.get("recovery_event", "NONE"),
+        "recovery_expected_response": info.get("recovery_expected_response", "continue"),
+        "recovery_retry_count": _safe_int(info.get("recovery_retry_count", 0)),
     }
     bridge = getattr(env, "slot_state_bridge", None)
     if bridge is not None:
@@ -360,6 +363,13 @@ def _make_trace_row(
         if isinstance(value, (str, bool, int, float)) or value is None:
             row[key] = value
     return row
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _distance(a: np.ndarray, b: np.ndarray) -> float:

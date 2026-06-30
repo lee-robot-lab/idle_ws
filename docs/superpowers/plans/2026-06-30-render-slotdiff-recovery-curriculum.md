@@ -756,7 +756,7 @@ git commit -m "feat: add recovery event reward shaping"
 - Modify: `src/mujoco_phase_rl/mujoco_phase_rl/policies/run_val_sim.py`
 - Modify: `src/mujoco_phase_rl/test/test_run_val_sim.py`
 
-- [ ] **Step 1: Add failing trace test**
+- [x] **Step 1: Add failing trace test**
 
 Append to `test/test_run_val_sim.py`:
 
@@ -801,7 +801,7 @@ def test_trace_row_copies_recovery_event_fields():
     assert row["recovery_retry_count"] == 1
 ```
 
-- [ ] **Step 2: Run test**
+- [x] **Step 2: Run test**
 
 Run:
 
@@ -812,7 +812,7 @@ pytest test/test_run_val_sim.py::test_trace_row_copies_recovery_event_fields -q
 
 Expected: PASS if current generic info copying already handles fields. If it fails, continue to Step 3.
 
-- [ ] **Step 3: Make trace fields explicit when needed**
+- [x] **Step 3: Make trace fields explicit when needed**
 
 In `_make_trace_row`, add after `slot_diff_norm`:
 
@@ -822,7 +822,7 @@ In `_make_trace_row`, add after `slot_diff_norm`:
         "recovery_retry_count": int(info.get("recovery_retry_count", 0)),
 ```
 
-- [ ] **Step 4: Run trace tests**
+- [x] **Step 4: Run trace tests**
 
 Run:
 
@@ -833,7 +833,7 @@ pytest test/test_run_val_sim.py::test_trace_row_copies_recovery_event_fields tes
 
 Expected: selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add test/test_run_val_sim.py mujoco_phase_rl/policies/run_val_sim.py

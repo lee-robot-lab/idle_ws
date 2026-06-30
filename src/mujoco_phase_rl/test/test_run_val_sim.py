@@ -588,3 +588,75 @@ def test_dets_to_task_sample_stack_no_target_color():
     dets = _make_dets_3blocks()
     with pytest.raises(ValueError):
         dets_to_task_sample(dets, pick_color="red", task_type="stack", target_color=None)
+
+
+def test_trace_row_copies_recovery_event_fields():
+    from mujoco_phase_rl.policies.run_val_sim import _make_trace_row
+
+    class DummyEnv:
+        current_task = None
+        slot_state_bridge = None
+        _cached_curr_slots = None
+
+        class Names:
+            object_body_id = 0
+
+        names = Names()
+
+        class Data:
+            xpos = np.array([[0.10, 0.20, 0.03]], dtype=np.float64)
+
+        data = Data()
+
+    obs = {
+        "task": np.array([0.10, 0.20, 0.30, 0.40], dtype=np.float32),
+        "slot_diff": np.ones(64, dtype=np.float32),
+    }
+    info = {
+        "phase_before": "LIFT",
+        "phase": "OBSERVE_OBJECT",
+        "command": "RECOVERY",
+        "raw_command": "RECOVERY",
+        "executor_status": "RECOVERED",
+        "recovery_event": "DROP_DURING_LIFT",
+        "recovery_expected_response": "recover_object",
+        "recovery_retry_count": 1,
+    }
+
+    row = _make_trace_row(DummyEnv(), 1, obs, info, reward=0.0, terminated=False, truncated=False)
+
+    assert row["recovery_event"] == "DROP_DURING_LIFT"
+    assert row["recovery_expected_response"] == "recover_object"
+    assert row["recovery_retry_count"] == 1
+
+
+@pytest.mark.parametrize("retry_count", [None, "bad"])
+def test_trace_row_defaults_malformed_recovery_retry_count(retry_count):
+    from mujoco_phase_rl.policies.run_val_sim import _make_trace_row
+
+    class DummyEnv:
+        current_task = None
+        slot_state_bridge = None
+        _cached_curr_slots = None
+
+        class Names:
+            object_body_id = 0
+
+        names = Names()
+
+        class Data:
+            xpos = np.array([[0.10, 0.20, 0.03]], dtype=np.float64)
+
+        data = Data()
+
+    obs = {
+        "task": np.array([0.10, 0.20, 0.30, 0.40], dtype=np.float32),
+        "slot_diff": np.ones(64, dtype=np.float32),
+    }
+    info = {
+        "recovery_retry_count": retry_count,
+    }
+
+    row = _make_trace_row(DummyEnv(), 1, obs, info, reward=0.0, terminated=False, truncated=False)
+
+    assert row["recovery_retry_count"] == 0
