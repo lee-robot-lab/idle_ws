@@ -846,7 +846,7 @@ git commit -m "feat: expose recovery event trace fields"
 - Create: `src/mujoco_phase_rl/mujoco_phase_rl/policies/finetune_slotdiff_recovery.py`
 - Test: `src/mujoco_phase_rl/test/test_finetune_slotdiff_recovery.py`
 
-- [ ] **Step 1: Write failing parser and env builder tests**
+- [x] **Step 1: Write failing parser and env builder tests**
 
 Create `src/mujoco_phase_rl/test/test_finetune_slotdiff_recovery.py`:
 
@@ -870,7 +870,7 @@ def test_parser_accepts_oracle_ablation():
     assert args.recovery_event_prob == 1.0
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -881,7 +881,7 @@ pytest test/test_finetune_slotdiff_recovery.py -q
 
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Create script**
+- [x] **Step 3: Create script**
 
 Create `mujoco_phase_rl/policies/finetune_slotdiff_recovery.py`:
 
@@ -1003,7 +1003,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: Run parser tests**
+- [x] **Step 4: Run parser tests**
 
 Run:
 
@@ -1014,7 +1014,7 @@ pytest test/test_finetune_slotdiff_recovery.py -q
 
 Expected: `2 passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add test/test_finetune_slotdiff_recovery.py mujoco_phase_rl/policies/finetune_slotdiff_recovery.py
