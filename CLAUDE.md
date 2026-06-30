@@ -44,6 +44,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest test/ -v
 | SlotDiff | `checkpoints/slot_diff/best.pt` | ✅ 현행 |
 | SlotTransitionModel | `checkpoints/slot_transition_model/best.pt` | ✅ 현행 (val=5.8184 @ep35) |
 | PPO (slot, best) | `src/mujoco_phase_rl/outputs/ppo_slot_best.zip` | ✅ 100% success @174k steps |
+| **PPO (recovery, best)** | `src/mujoco_phase_rl/outputs/ppo_recovery_fixed_s0/checkpoints/ppo_recovery_fixed_s0_98304_steps.zip` | ✅ recovery 99.3%, val20-slot 87.2% @98k |
 | ~~SlotEncoder v1~~ | ~~`checkpoints/stage1/best.pt`~~ | ❌ 구버전, 사용 금지 |
 | ~~ColorNet v1~~ | ~~`checkpoints/color_net/best.pt`~~ | ❌ 구버전, 사용 금지 |
 
@@ -92,6 +93,97 @@ PPO 학습 시 rssm_latent 유무가 obs shape을 바꾸므로, **기존 체크�
 | PPO (mixed_slot) | `src/mujoco_phase_rl/outputs/ppo_mixed_slot/` |
 | World model rollouts (zeros) | `outputs/world_model_rollouts/{scripted,random}/` |
 | World model rollouts (slot) | `outputs/world_model_rollouts_slot/{scripted,random}/` |
+
+## 성능 평가
+
+모든 평가는 `cd ~/idle_ws/src/mujoco_phase_rl` 후 실행.
+
+### 1. 빠른 시뮬레이션 평가 (evaluate_policy.py)
+
+```bash
+# zeros 모델
+python3 mujoco_phase_rl/policies/evaluate_policy.py \
+  --model outputs/ppo_recovery_fixed_s0/checkpoints/ppo_recovery_fixed_s0_98304_steps.zip \
+  --image-embedding zeros --episodes 30
+
+# slot + rssm 모델
+python3 mujoco_phase_rl/policies/evaluate_policy.py \
+  --model outputs/ppo_rssm_s0/checkpoints/ppo_rssm_s0_98304_steps.zip \
+  --image-embedding slot \
+  --slot-transition-ckpt ../../checkpoints/slot_transition_model/best.pt \
+  --episodes 30
+```
+
+출력에서 `success_rate`, `final_phases` 확인. steps_mean=5이면 최소 스텝으로 완료(완전 수렴).  
+이 평가는 기본 pick-place만 측정 — stack/recovery는 아래 평가 사용.
+
+### 2. Val 이미지 배치 평가 (run_val_sim_batch) — 주력 평가
+
+```bash
+CKPT=outputs/ppo_recovery_fixed_s0/checkpoints/ppo_recovery_fixed_s0_98304_steps.zip
+
+# GT 포즈 (슬롯 인식 없이 포즈 정확도 기준선)
+PYTHONUNBUFFERED=1 python3 -m mujoco_phase_rl.policies.run_val_sim_batch \
+  --model "$CKPT" --pose-source gt \
+  --max-scenes 20 \
+  --out outputs/.../eval_val20_gt.json
+
+# Slot 인식 (실제 카메라와 가장 유사한 조건)
+PYTHONUNBUFFERED=1 python3 -m mujoco_phase_rl.policies.run_val_sim_batch \
+  --model "$CKPT" --pose-source slot \
+  --max-scenes 20 \
+  --out outputs/.../eval_val20_slot.json
+
+# RSSM 모델은 slot-transition-ckpt 반드시 추가
+#   --slot-transition-ckpt ../../checkpoints/slot_transition_model/best.pt
+# GT 평가 시에도 rssm_latent 계산을 위해 위 인수 필요
+```
+
+**기준선 (val20, slot, 180 케이스):**
+- ppo_stack_followup_fixed_s0 143k: **84.4%**
+- ppo_recovery_fixed_s0 98k: **87.2%** ← 현재 best
+
+결과 JSON 분석 (색상별/씬별 실패 패턴):
+```python
+import json
+from collections import Counter, defaultdict
+with open("eval_val20_slot_*.json") as f:
+    rows = json.load(f)["rows"]
+
+failures = [r for r in rows if not r["success"]]
+print(Counter(r["block_color"] for r in failures))   # 색상별 실패
+print(Counter(r["scene"] for r in failures))         # 씬별 실패
+```
+
+### 3. Recovery 이벤트 평가 (run_recovery_eval_batch)
+
+```bash
+PYTHONUNBUFFERED=1 python3 -m mujoco_phase_rl.policies.run_recovery_eval_batch \
+  --model outputs/ppo_recovery_fixed_s0/checkpoints/ppo_recovery_fixed_s0_98304_steps.zip \
+  --pose-source gt \
+  --out outputs/ppo_recovery_fixed_s0/eval_recovery_gt.json
+```
+
+이벤트 종류: `NO_CHANGE, OBJECT_MOVED_SMALL, TARGET_MOVED, DROP_DURING_LIFT, STACK_COLLAPSE`  
+슬롯 모드 3가지(learned/zero/oracle) × 5 이벤트 × 5 seed × 2 task = 150 케이스.  
+**zeros 학습 모델은 `zero` slot_mode 결과만 완전 신뢰 — learned는 distribution shift 있음.**
+
+**기준선:** ppo_recovery_fixed_s0 98k: overall **99.3%**, DROP 96.7%, STACK_COLLAPSE 100%
+
+### 4. 슬롯 포즈 진단 (diagnose_slot_pose) — 실패 원인 파악
+
+val 평가 실패 후 원인이 SlotEmbedder인지 Policy인지 구분할 때 사용.
+
+```bash
+python3 -m mujoco_phase_rl.policies.diagnose_slot_pose \
+  --scene scene_000410 --scene scene_000202 \
+  --out /tmp/diag.json
+```
+
+결과 해석:
+- `color_grounding_match_rate < 1.0` → **ColorNet 오인식** 문제
+- match=1.0 & `color_xy_error_mean_m > 0.03` → **Stage1 포즈 오차** 문제
+- match=1.0 & 포즈 오차 작음 → **Policy 자체** 문제 (씬 난이도, workspace 경계 등)
 
 ## 문서 구조
 
