@@ -43,7 +43,9 @@ source install/setup.bash
 | Stage4 (RelationScorer) | `checkpoints/stage4/best.pt` |
 
 ---
+sudo ip link set can0 up type can bitrate 1000000
 
+sudo ip link set can0 up
 ## 실행 순서
 
 ### 터미널 1 — CAN 브릿지

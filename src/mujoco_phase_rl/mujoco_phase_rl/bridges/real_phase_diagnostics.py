@@ -407,185 +407,173 @@ class RealPhaseDiagnosticsNode:
             cap.release()
 
     def _stt_thread(self) -> None:
-        """백그라운드: VAD → Whisper → stt.py → MLPipeline → ppo_task 필드 직접 설정."""
+        """백그라운드: Space=녹음 시작, Space=녹음 종료 → Whisper → MLPipeline → ppo_task 필드 설정."""
+        import sys
+        import os
+        import termios
+        import tty
+        import tempfile
+        import subprocess
+        from scipy.io.wavfile import write as wav_write
+
         try:
             import sounddevice as sd
-            import wave
-            import tempfile
-            import subprocess
-            import sys
-            import os
-            from collections import deque
             from faster_whisper import WhisperModel
         except ImportError as exc:
             self.logger.warning(f"STT thread disabled (import error): {exc}")
             return
 
+        # ros2 launch는 stdin을 리다이렉트하므로 /dev/tty를 직접 열어 터미널 접근
+        try:
+            _tty = open("/dev/tty", "rb", buffering=0)
+            _tty_fd = _tty.fileno()
+        except OSError as exc:
+            self.logger.warning(f"STT thread: /dev/tty 열기 실패 — 키 입력 불가 ({exc})")
+            return
+
         _stt_script = Path(__file__).resolve().parents[4] / "src" / "stt" / "stt.py"
 
-        whisper_size = self.config.whisper_model_size
-        compute = "float16" if "cuda" in (self.config.device or "") else "int8"
+        WHISPER_INITIAL_PROMPT = (
+            "로봇팔에게 내리는 한국어 음성 명령입니다. "
+            "주요 단어는 빨간색, 초록색, 파란색, 박스, 블록, 바구니입니다. "
+            "동작 단어는 집어, 잡아, 들어, 넣어, 담아, 놓아, 올려, 쌓아, 옮겨입니다."
+        )
+        SR = 16000
+
         try:
-            whisper = WhisperModel(whisper_size, device="cpu", compute_type="int8")
-            self.logger.info(f"WhisperModel loaded: size={whisper_size}")
+            whisper = WhisperModel(
+                self.config.whisper_model_size, device="cpu", compute_type="int8"
+            )
+            self.logger.info(f"WhisperModel loaded: size={self.config.whisper_model_size}")
         except Exception as exc:
             self.logger.warning(f"STT thread disabled (WhisperModel): {exc}")
             return
 
-        SR = 16000
-        FRAME_MS = 30
-        FRAME = SR * FRAME_MS // 1000  # 480 samples
-        CALIB_S = 1.0
-        ENERGY_MULT = 1.4
-        MIN_ABS_THR = 800.0
-        START_FRAMES = 1
-        END_SILENCE_S = 1.0
-        MAX_S = 8.0
-        PRE_ROLL = 0.3
+        original_settings = termios.tcgetattr(_tty_fd)
 
-        def _rms(f: "np.ndarray") -> float:
-            return float(np.sqrt(np.mean(f.astype(np.float64) ** 2)))
+        def _read_key() -> str:
+            return _tty.read(1).decode("utf-8", errors="replace")
 
-        # ── 환경 노이즈 캘리브레이션 ──────────────────────────────────
-        calib_q: list = []
-        calib_done = threading.Event()
+        def _record_until_space() -> "tuple[np.ndarray | None, bool]":
+            """스페이스 누를 때까지 float32 오디오 수집. (audio, quit_requested)"""
+            frames: list = []
+            started_at = time.monotonic()
+            quit_req = False
 
-        def _calib_cb(indata: Any, frames: int, t: Any, status: Any) -> None:
-            calib_q.append(indata.copy())
-            if len(calib_q) >= int(CALIB_S * 1000 / FRAME_MS):
-                calib_done.set()
+            def _cb(indata: Any, _fc: int, _ti: Any, _st: Any) -> None:
+                frames.append(indata.copy())
+
+            print("\n[STT] 녹음 중... 스페이스바=종료  q=취소", flush=True)
+            with sd.InputStream(samplerate=SR, channels=1, dtype="float32", callback=_cb):
+                while not self._stop_event.is_set():
+                    key = _read_key()
+                    if key.lower() == "q":
+                        quit_req = True
+                        break
+                    if key == " " and time.monotonic() - started_at >= 0.35:
+                        break
+
+            if not frames:
+                return None, quit_req
+            return np.concatenate(frames, axis=0), quit_req
 
         try:
-            with sd.InputStream(samplerate=SR, channels=1, dtype="int16",
-                                blocksize=FRAME, callback=_calib_cb):
-                calib_done.wait(timeout=5.0)
-        except Exception as exc:
-            self.logger.warning(f"STT calibration failed: {exc}")
-            return
+            tty.setcbreak(_tty_fd)
+            while not self._stop_event.is_set():
+                print("\n[STT] 대기 중... 스페이스바=녹음 시작  q=종료", flush=True)
+                key = _read_key()
 
-        calib_rms = float(np.mean([_rms(f) for f in calib_q])) if calib_q else 500.0
-        threshold = max(calib_rms * ENERGY_MULT, MIN_ABS_THR)
-        self.logger.info(f"STT calibrated: ambient={calib_rms:.0f} threshold={threshold:.0f}")
-
-        pre_roll: deque = deque(maxlen=int(PRE_ROLL * 1000 / FRAME_MS))
-        silence_frames_thr = int(END_SILENCE_S * 1000 / FRAME_MS)
-        max_frames = int(MAX_S * 1000 / FRAME_MS)
-
-        while not self._stop_event.is_set():
-            # ── VAD 리스닝 루프 ───────────────────────────────────────
-            audio_buf: list = []
-            triggered = False
-            trigger_count = 0
-            silence_frames = 0
-            frame_q: deque = deque()
-            frame_event = threading.Event()
-
-            def _audio_cb(indata: Any, frames: int, t: Any, status: Any) -> None:
-                frame_q.append(indata.copy())
-                frame_event.set()
-
-            try:
-                with sd.InputStream(samplerate=SR, channels=1, dtype="int16",
-                                    blocksize=FRAME, callback=_audio_cb):
-                    while not self._stop_event.is_set():
-                        frame_event.wait(timeout=0.5)
-                        frame_event.clear()
-                        while frame_q:
-                            frm = frame_q.popleft()
-                            rms = _rms(frm)
-                            is_speech = rms > threshold
-                            if not triggered:
-                                pre_roll.append(frm)
-                                trigger_count = (trigger_count + 1) if is_speech else 0
-                                if trigger_count >= START_FRAMES:
-                                    triggered = True
-                                    audio_buf.extend(pre_roll)
-                                    audio_buf.append(frm)
-                                    self.logger.info("STT: speech start detected")
-                            else:
-                                audio_buf.append(frm)
-                                silence_frames = 0 if is_speech else silence_frames + 1
-                                if silence_frames >= silence_frames_thr or len(audio_buf) >= max_frames:
-                                    break
-                        if triggered and (silence_frames >= silence_frames_thr or len(audio_buf) >= max_frames):
-                            break
-            except Exception as exc:
-                self.logger.warning(f"STT listen error: {exc}")
-                time.sleep(1.0)
-                continue
-
-            if not audio_buf:
-                continue
-
-            # ── WAV 저장 → Whisper 추론 ───────────────────────────────
-            audio_data = np.concatenate(audio_buf, axis=0).flatten().astype(np.int16)
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
-                wav_path = tf.name
-            try:
-                with wave.open(wav_path, "wb") as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(SR)
-                    wf.writeframes(audio_data.tobytes())
-
-                segments, _ = whisper.transcribe(wav_path, language="ko", vad_filter=True)
-                text = " ".join(s.text for s in segments).strip()
-                self.logger.info(f"STT transcribed: '{text}'")
-                if not text:
+                if key.lower() == "q":
+                    print("[STT] 종료", flush=True)
+                    break
+                if key != " ":
                     continue
 
-                # ── 텍스트 → step dict ────────────────────────────────
+                audio, quit_req = _record_until_space()
+                if quit_req:
+                    print("[STT] 종료", flush=True)
+                    break
+                if audio is None or len(audio) < int(SR * 0.2):
+                    print("[STT] 너무 짧음, 다시 시도하세요", flush=True)
+                    continue
+
+                duration = len(audio) / SR
+                print(f"[STT] 녹음 완료 ({duration:.1f}초), 음성 인식 중...", flush=True)
+
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                    wav_path = tf.name
                 try:
-                    proc = subprocess.run(
-                        [sys.executable, str(_stt_script), "--text", text, "--parser", "rule"],
-                        capture_output=True, text=True, timeout=30,
+                    wav_write(wav_path, SR, audio)
+
+                    segments, _ = whisper.transcribe(
+                        wav_path, language="ko", beam_size=5,
+                        initial_prompt=WHISPER_INITIAL_PROMPT,
+                        condition_on_previous_text=False, vad_filter=True,
                     )
-                    plan = json.loads(proc.stdout)
-                    if not plan.get("success") or not plan.get("steps"):
-                        self.logger.info(f"STT parse failed: '{text}'")
+                    text = "".join(s.text for s in segments).strip()
+                    print(f"[STT] 인식: '{text}'", flush=True)
+                    if not text:
+                        print("[STT] 인식 실패", flush=True)
                         continue
-                    step = plan["steps"][0]
-                except Exception as exc:
-                    self.logger.warning(f"STT parse_text error: {exc}")
-                    continue
 
-                # ── MLPipeline grounding ──────────────────────────────
-                if self._ml_pipeline is None:
-                    self.logger.warning("STT: MLPipeline not loaded — check stage4_ckpt")
-                    continue
-                bgr_snap = None
-                if self.last_image_rgb is not None:
-                    bgr_snap = self.last_image_rgb[:, :, ::-1].copy()
-                if bgr_snap is None:
-                    self.logger.warning("STT: no camera frame yet, skipping grounding")
-                    continue
-
-                try:
-                    result = self._ml_pipeline.ground(bgr_snap, step)
-                    if result is None:
-                        self.logger.warning(f"STT: grounding returned None for '{text}'")
+                    # ── 텍스트 → step dict ────────────────────────────
+                    try:
+                        proc = subprocess.run(
+                            [sys.executable, str(_stt_script), "--text", text, "--parser", "rule"],
+                            capture_output=True, text=True, timeout=30,
+                        )
+                        plan = json.loads(proc.stdout)
+                        if not plan.get("success") or not plan.get("steps"):
+                            print(f"[STT] 파싱 실패: '{text}'", flush=True)
+                            continue
+                        step = plan["steps"][0]
+                    except Exception as exc:
+                        self.logger.warning(f"STT parse_text error: {exc}")
                         continue
-                    self.ppo_task_object_color = result.pick_color
-                    self.ppo_task_object_pos = np.array(
-                        [result.x_pick, result.y_pick, 0.015], dtype=np.float32
-                    )
-                    self.ppo_task_target_pos = np.array(
-                        [result.x_place, result.y_place, 0.015], dtype=np.float32
-                    )
-                    self.ppo_task_type = result.task_type
-                    self.logger.info(
-                        f"[stt_grounding] text='{text}' color={result.pick_color} "
-                        f"obj=({result.x_pick:.3f},{result.y_pick:.3f}) "
-                        f"tgt=({result.x_place:.3f},{result.y_place:.3f}) "
-                        f"task={result.task_type}"
-                    )
-                except Exception as exc:
-                    self.logger.warning(f"STT grounding error: {exc}")
-            finally:
-                try:
-                    os.unlink(wav_path)
-                except Exception:
-                    pass
+
+                    # ── MLPipeline grounding ──────────────────────────
+                    if self._ml_pipeline is None:
+                        self.logger.warning("STT: MLPipeline not loaded — check stage4_ckpt")
+                        continue
+                    bgr_snap = None
+                    if self.last_image_rgb is not None:
+                        bgr_snap = self.last_image_rgb[:, :, ::-1].copy()
+                    if bgr_snap is None:
+                        print("[STT] 카메라 프레임 없음", flush=True)
+                        continue
+
+                    try:
+                        result = self._ml_pipeline.ground(bgr_snap, step)
+                        if result is None:
+                            print(f"[STT] grounding 실패: '{text}'", flush=True)
+                            continue
+                        self.ppo_task_object_color = result.pick_color
+                        self.ppo_task_object_pos = np.array(
+                            [result.x_pick, result.y_pick, 0.015], dtype=np.float32
+                        )
+                        self.ppo_task_target_pos = np.array(
+                            [result.x_place, result.y_place, 0.015], dtype=np.float32
+                        )
+                        self.ppo_task_type = result.task_type
+                        self.logger.info(
+                            f"[stt_grounding] text='{text}' color={result.pick_color} "
+                            f"obj=({result.x_pick:.3f},{result.y_pick:.3f}) "
+                            f"tgt=({result.x_place:.3f},{result.y_place:.3f}) "
+                            f"task={result.task_type}"
+                        )
+                    except Exception as exc:
+                        self.logger.warning(f"STT grounding error: {exc}")
+                finally:
+                    try:
+                        os.unlink(wav_path)
+                    except Exception:
+                        pass
+
+        except KeyboardInterrupt:
+            pass
+        finally:
+            termios.tcsetattr(_tty_fd, termios.TCSADRAIN, original_settings)
+            _tty.close()
 
     def _on_boxes(self, msg: Any) -> None:
         if self._slot_embedder is not None:

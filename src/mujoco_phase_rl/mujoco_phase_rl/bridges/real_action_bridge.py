@@ -644,7 +644,7 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
                 [
                     place_x,
                     place_y,
-                    cfg.stack_place_z if self.config.task_mode == 'stack' else cfg.place_z,
+                    cfg.stack_place_z if (self.config.task_mode == 'stack' or self.ppo_task_type == 'stack') else cfg.place_z,
                 ],
                 dtype=np.float32,
             )
