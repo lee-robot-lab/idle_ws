@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,6 +37,7 @@ from stage4.constants import COLOR_TO_ID
 
 _WS_ROOT = Path(__file__).resolve().parents[4]
 _CKPT_ROOT = _WS_ROOT / "checkpoints"
+_STT_SCRIPT = _WS_ROOT / "src" / "stt" / "stt.py"
 _DEFAULT_STAGE1 = str(_CKPT_ROOT / "stage1_vitb14" / "best.pt")
 _DEFAULT_COLOR_NET = str(_CKPT_ROOT / "color_net_v2" / "best.pt")
 _DEFAULT_STAGE4 = str(_CKPT_ROOT / "stage4" / "best.pt")
@@ -121,31 +124,27 @@ def _capture_frame(device_id: int, width: int, height: int) -> np.ndarray:
     return frame
 
 
-def _parse_text_to_step(text: str) -> dict:
-    """텍스트를 간단한 step dict로 변환 (object/target 색상 파싱).
+def _parse_text_to_step(text: str, parser: str = "rule") -> dict:
+    """src/stt/stt.py를 subprocess로 호출해 텍스트 → semantic step dict 변환.
 
-    예: '파란 블록을 바구니에 넣어줘' → {"object": "blue", "target": "basket"}
-    실제 서비스에서는 STT/LLM 파서로 교체한다.
+    반환: {"object": "blue_block", "target": "basket"} 형태 (첫 번째 step).
+    STT 파싱 실패 시 빈 dict 반환.
     """
-    color_map = {
-        "빨간": "red", "빨강": "red", "red": "red",
-        "파란": "blue", "파랑": "blue", "blue": "blue",
-        "초록": "green", "green": "green",
-        "노란": "yellow", "yellow": "yellow",
-    }
-    target_map = {
-        "바구니": "basket", "basket": "basket",
-    }
-    step: dict = {}
-    for k, v in color_map.items():
-        if k in text:
-            step["object"] = v
-            break
-    for k, v in target_map.items():
-        if k in text:
-            step["target"] = v
-            break
-    return step
+    try:
+        result = subprocess.run(
+            [sys.executable, str(_STT_SCRIPT), "--text", text, "--parser", parser],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        plan = json.loads(result.stdout)
+        if not plan.get("success") or not plan.get("steps"):
+            print(f"[orchestrator] STT 파싱 실패: {plan.get('reason')}", file=sys.stderr)
+            return {}
+        return plan["steps"][0]
+    except Exception as exc:
+        print(f"[orchestrator] STT 호출 오류: {exc}", file=sys.stderr)
+        return {}
 
 
 def run(
@@ -158,6 +157,7 @@ def run(
     camera_height: int,
     device: str,
     publish: bool,
+    parser: str = "rule",
 ) -> dict | None:
     encoder, color_net, relation_scorer = _load_models(
         stage1_ckpt, color_net_ckpt, stage4_ckpt, device
@@ -166,7 +166,7 @@ def run(
     frame_bgr = _capture_frame(camera_device, camera_width, camera_height)
     xy, yaw, world_xy, slot_to_color = _infer(frame_bgr, encoder, color_net, device)
 
-    step = _parse_text_to_step(text or "")
+    step = _parse_text_to_step(text or "", parser=parser)
     if not step:
         print("[orchestrator] text 파싱 실패 — object/target을 명시해주세요", file=sys.stderr)
         return None
@@ -272,6 +272,8 @@ def main() -> None:
     parser.add_argument("--camera-height", type=int, default=720)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument("--parser", choices=["rule", "qwen", "hybrid"], default="rule",
+                        help="STT 텍스트 파서 선택 (stt.py에 전달)")
     args = parser.parse_args()
 
     run(
@@ -284,6 +286,7 @@ def main() -> None:
         camera_height=args.camera_height,
         device=args.device,
         publish=args.publish,
+        parser=args.parser,
     )
 
 
