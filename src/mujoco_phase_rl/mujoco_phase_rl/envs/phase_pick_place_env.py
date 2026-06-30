@@ -482,6 +482,9 @@ class PhasePickPlaceEnv(gym.Env):
 
     def _allowed_commands_for_current_context(self) -> set[Command]:
         allowed_commands = set(ALLOWED_COMMANDS[self.phase_manager.phase])
+        # dropped 상태: RECOVERY만 허용 (물체를 다시 집어야 함)
+        if self.dropped and Command.RECOVERY in allowed_commands:
+            return {Command.RECOVERY}
         if Command.RECOVERY in allowed_commands and not self._recovery_is_context_valid():
             allowed_commands.remove(Command.RECOVERY)
         if (
@@ -495,6 +498,9 @@ class PhasePickPlaceEnv(gym.Env):
     def _recovery_is_context_valid(self) -> bool:
         if self._recovery_retry_count >= self.recovery_event_config.max_retries:
             return False
+        # dropped 상태면 항상 RECOVERY 허용
+        if self.dropped:
+            return True
         return (
             self.prev_result in {StepResult.FAILURE, StepResult.TIMEOUT}
             or self.phase_manager.attempt_count > 0
@@ -838,6 +844,7 @@ class PhasePickPlaceEnv(gym.Env):
             self.phase_manager.set_phase(Phase.LIFT)
         else:
             self.phase_manager.set_phase(Phase.OBSERVE_OBJECT)
+        self.dropped = False
         return "RECOVERED", sim_steps, True, False, extra_info
 
     def _sample_recovery_event(self, phase_before: Phase) -> RecoveryEvent:
@@ -1134,7 +1141,9 @@ class PhasePickPlaceEnv(gym.Env):
     def _wm_step(self, obs: dict) -> np.ndarray:
         """GRU hidden state 한 step 업데이트 후 64-dim rssm_latent 반환."""
         import torch
-        phase_id = int(self.phase_manager.phase)
+        from mujoco_phase_rl.world_model.phase_destination import ACTIVE_PHASE_COUNT
+        # DONE/FAILURE 같은 terminal phase는 마지막 active phase(RETREAT)로 클램프
+        phase_id = min(int(self.phase_manager.phase), ACTIVE_PHASE_COUNT - 1)
         task = obs["task"]
         goal_xy = task[:2] if phase_id <= int(Phase.LIFT) else task[2:4]
         phase_dest = encode_phase_destination_2d(phase_id=phase_id, goal_xy_world=goal_xy)

@@ -264,9 +264,8 @@ class PlanNode(Node):
         self.q_max_by_motor = {m: float(_q_hi[i]) for i, m in enumerate(self.motor_ids)}
         self.state_by_motor = {m: MotorSample() for m in self.motor_ids}
         self.active: Optional[_ActiveTrajectory] = None
-        self._hold_q: Optional[dict[int, float]] = None  # 명령용: startup home 완료 후 설정됨
+        self._hold_q: Optional[dict[int, float]] = None  # 궤적 완료 후 설정
         self._hold_target_q: Optional[dict[int, float]] = None  # 로그용 (q_final 기반)
-        self._startup_home_sent: bool = False  # 노드 최초 기동 시 q=0 홈 궤적 전송 여부
         self._last_plan_key: tuple | None = None
 
         self._plan_lock = threading.Lock()
@@ -524,11 +523,6 @@ class PlanNode(Node):
             self.get_logger().warn(f"gravity computation failed: {exc}; skipping tick")
             return
 
-        # 노드 최초 기동 시 q=0 홈 궤적 자동 실행 (startup idle 진동 방지)
-        if not self._startup_home_sent and self._hold_q is None and self.active is None and not self._settling:
-            self._startup_home_sent = True
-            self._send_startup_home(now_s)
-
         pending: Optional[Plan] = None
         with self._plan_lock:
             if self._pending_plan is not None:
@@ -536,6 +530,10 @@ class PlanNode(Node):
                 self._pending_plan = None
         if pending is not None:
             self._commit_plan(pending, now_s)
+
+        # idle: can_bridge의 pre-home이 처리하도록 plan_node는 publish하지 않음
+        if self._hold_q is None and not self._settling and self.active is None:
+            return
 
         if self.active is not None:
             dt_wall = self._now_s() - self._vt_last_wall_s
@@ -753,42 +751,6 @@ class PlanNode(Node):
     # ------------------------------------------------------------------
     # Plan commit — simplified rewarp without collision check
     # ------------------------------------------------------------------
-
-    def _send_startup_home(self, now_s: float) -> None:
-        """노드 최초 기동 시 q=0 홈 궤적 자동 실행."""
-        n = len(self.motor_ids)
-        actual_q = np.array([float(self.state_by_motor[m].q) for m in self.motor_ids])
-        q_zeros = np.zeros(n)
-        v_max_arr = np.array([
-            float(control_params_for_motor(m).get("v_max", self._planner_cfg.v_max))
-            for m in self.motor_ids
-        ])
-        a_max_arr = np.array([
-            float(control_params_for_motor(m).get("a_max", self._planner_cfg.a_max))
-            for m in self.motor_ids
-        ])
-        traj = plan_quintic(
-            q_start=actual_q,
-            q_goal=q_zeros,
-            v_start=np.zeros(n),
-            v_goal=np.zeros(n),
-            v_max=v_max_arr,
-            a_max=a_max_arr,
-            min_duration=self._planner_cfg.min_traj_duration,
-        )
-        plan = Plan(
-            trajectory=traj,
-            start_q=actual_q.copy(),
-            end_q=q_zeros.copy(),
-            duration_s=traj.duration,
-            collision_safe=True,
-            collision_first_sample=-1,
-            target_xyz=np.zeros(3),
-            target_yaw=0.0,
-            metadata={"startup_home": True},
-        )
-        self._commit_plan(plan, now_s)
-        self.get_logger().info(f"[startup] homing to q=0: duration={traj.duration:.1f}s")
 
     def _commit_plan(
         self,
@@ -1056,14 +1018,11 @@ class PlanNode(Node):
 
     def _hold_cmds(self, tau_g_by_motor: dict[int, float]) -> dict[int, dict[str, float]]:
         out: dict[int, dict[str, float]] = {}
-        # startup home 전 idle: setpoint 없으므로 kp=0, gravity comp+damping만 인가
         idle_no_target = self._hold_q is None and not self._settling
         for motor_id in self.motor_ids:
             tuning = control_params_for_motor(motor_id)
             kp = float(tuning.get("kp", 0.0))
             kd = float(tuning.get("kd", 0.0))
-            if idle_no_target:
-                kp = 0.0
             q_des = (
                 self._hold_q[motor_id]
                 if self._hold_q is not None
@@ -1117,10 +1076,12 @@ class PlanNode(Node):
             gbias = float(tuning.get("gravity_bias", 0.0))
             friction = abs(float(tuning.get("friction_ff", 0.0)))
             tau_ff = gscale * tau_g_by_motor[motor_id] + gbias
-            friction_scale = (
-                self.settle_friction_scale if self._settling
-                else self.hold_friction_scale_by_motor.get(int(motor_id), self.hold_friction_scale)
-            )
+            if idle_no_target:
+                friction_scale = 0.0
+            elif self._settling:
+                friction_scale = self.settle_friction_scale
+            else:
+                friction_scale = self.hold_friction_scale_by_motor.get(int(motor_id), self.hold_friction_scale)
             tau_ff += _friction_ff_for_error(
                 q_err,
                 friction,

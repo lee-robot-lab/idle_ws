@@ -135,6 +135,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-episode-steps", type=int, default=64)
     parser.add_argument("--output-dir", default="outputs/ppo_phase_pick_place")
+    parser.add_argument("--load-model", default=None,
+                        help="기존 체크포인트 경로. 지정 시 해당 모델에서 이어서 학습.")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--n-steps", type=int, default=128)
@@ -152,13 +154,24 @@ def main() -> None:
     parser.add_argument("--target-noise-std", type=float, default=0.0)
     parser.add_argument("--pose-dropout-prob", type=float, default=0.0)
     parser.add_argument("--max-phase-failures", type=int, default=8)
-    parser.add_argument("--subproc", action="store_true", help="Use SubprocVecEnv for true CPU parallelism")
+    parser.add_argument("--stack-prob", type=float, default=0.6,
+                        help="stack task 비율 (0.0=pick_place only, 1.0=stack only)")
+    parser.add_argument("--recovery-event-prob", type=float, default=0.0,
+                        help="매 step마다 recovery event 발생 확률 (0.0=비활성화)")
+    parser.add_argument("--recovery-event-types", default="NO_CHANGE",
+                        help="콤마 구분 recovery event 목록 "
+                             "(NO_CHANGE, OBJECT_MOVED_SMALL, DROP_DURING_LIFT, STACK_COLLAPSE, TARGET_MOVED 등)")
+    parser.add_argument("--recovery-max-retries", type=int, default=1,
+                        help="에피소드당 recovery 시도 최대 횟수")
+    parser.add_argument("--perturb-prob", type=float, default=0.0,
+                        help="매 step 물체/바구니 무작위 교란 확률")
+    parser.add_argument("--subproc", action="store_true", help="Use SubprocVecEnv (비권장: DummyVecEnv가 더 빠름)")
     parser.add_argument("--slot-stage1-ckpt", default=_DEFAULT_SLOT_STAGE1)
     parser.add_argument("--slot-diff-ckpt", default=_DEFAULT_SLOT_DIFF)
     parser.add_argument("--slot-color-net-ckpt", default=_DEFAULT_SLOT_COLOR_NET)
     parser.add_argument("--slot-device", default="cuda")
     parser.add_argument("--slot-transition-ckpt", default=None,
-                        help="World model ckpt. None=zeros (기본), 경로 지정 시 rssm_latent 활성화")
+                        help="World model ckpt. None=zeros (기본), 경로 지정 시 rssm_latent 활성화 (165-dim obs)")
     args = parser.parse_args()
 
     try:
@@ -206,6 +219,11 @@ def main() -> None:
                 target_noise_std=args.target_noise_std,
                 pose_dropout_prob=args.pose_dropout_prob,
                 max_phase_failures=args.max_phase_failures,
+                stack_prob=args.stack_prob,
+                recovery_event_prob=args.recovery_event_prob,
+                recovery_event_types=args.recovery_event_types,
+                max_recovery_retries=args.recovery_max_retries,
+                perturb_prob=args.perturb_prob,
                 slot_stage1_ckpt=args.slot_stage1_ckpt,
                 slot_diff_ckpt=args.slot_diff_ckpt,
                 slot_color_net_ckpt=args.slot_color_net_ckpt,
@@ -224,23 +242,40 @@ def main() -> None:
         env = VecCheckNan(env, raise_exception=True)
 
     batch_size = min(args.batch_size, args.n_steps * args.n_envs)
-    model = PPO(
-        _make_mixed_policy(),
-        env,
-        verbose=1,
-        seed=args.seed,
-        device=args.device,
-        learning_rate=args.learning_rate,
-        n_steps=args.n_steps,
-        batch_size=batch_size,
-        gamma=args.gamma,
-        tensorboard_log=args.tensorboard_log,
-    )
+    if args.load_model:
+        print(f"loading model: {args.load_model}")
+        model = PPO.load(
+            args.load_model,
+            env=env,
+            device=args.device,
+            # custom_objects로 덮으면 _setup_model()이 새 값으로 재호출됨
+            custom_objects={
+                "policy_class": _make_mixed_policy(),
+                "n_steps": args.n_steps,
+                "batch_size": batch_size,
+                "learning_rate": args.learning_rate,
+                "gamma": args.gamma,
+            },
+        )
+    else:
+        model = PPO(
+            _make_mixed_policy(),
+            env,
+            verbose=1,
+            seed=args.seed,
+            device=args.device,
+            learning_rate=args.learning_rate,
+            n_steps=args.n_steps,
+            batch_size=batch_size,
+            gamma=args.gamma,
+            tensorboard_log=args.tensorboard_log,
+        )
 
+    ckpt_prefix = output_dir.name
     checkpoint_callback = CheckpointCallback(
         save_freq=max(args.n_steps * args.n_envs, 1),
         save_path=str(output_dir / "checkpoints"),
-        name_prefix="ppo_phase_pick_place",
+        name_prefix=ckpt_prefix,
     )
     info_callback = TrainingInfoCallback(output_dir / "training_info_summary.json")
     callbacks = CallbackList([checkpoint_callback, info_callback])
@@ -270,6 +305,13 @@ def main() -> None:
         "target_noise_std": args.target_noise_std,
         "pose_dropout_prob": args.pose_dropout_prob,
         "max_phase_failures": args.max_phase_failures,
+        "stack_prob": args.stack_prob,
+        "recovery_event_prob": args.recovery_event_prob,
+        "recovery_event_types": args.recovery_event_types,
+        "recovery_max_retries": args.recovery_max_retries,
+        "perturb_prob": args.perturb_prob,
+        "load_model": args.load_model,
+        "slot_transition_ckpt": args.slot_transition_ckpt,
         "model_path": str(model_path),
     }
     (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True))
