@@ -77,6 +77,10 @@ def generate_launch_description():
         DeclareLaunchArgument('stage4_ckpt',        default_value=_STAGE4),
         DeclareLaunchArgument('parser',             default_value='qwen'),
         DeclareLaunchArgument('armed',              default_value='false'),
+        DeclareLaunchArgument('image_device',       default_value='1',
+                              description='cv2.VideoCapture index (-1 = use /image_raw topic)'),
+        DeclareLaunchArgument('whisper_model_size', default_value='',
+                              description='faster_whisper size (e.g. small). 빈값=topic 사용'),
 
         # ── 1. IK 계산 ────────────────────────────────────────────────
         Node(
@@ -151,6 +155,9 @@ def generate_launch_description():
                 '--slot-stage1-ckpt',    LaunchConfiguration('slot_stage1_ckpt'),
                 '--slot-diff-ckpt',      LaunchConfiguration('slot_diff_ckpt'),
                 '--slot-color-net-ckpt', LaunchConfiguration('slot_color_net_ckpt'),
+                '--stage4-ckpt',         LaunchConfiguration('stage4_ckpt'),
+                '--image-device',        LaunchConfiguration('image_device'),
+                '--whisper-model-size',  LaunchConfiguration('whisper_model_size'),
             ],
             condition=IfCondition(PythonExpression(["'", LaunchConfiguration('armed'), "' != 'true'"])),
         ),
@@ -171,6 +178,9 @@ def generate_launch_description():
                 '--slot-stage1-ckpt',    LaunchConfiguration('slot_stage1_ckpt'),
                 '--slot-diff-ckpt',      LaunchConfiguration('slot_diff_ckpt'),
                 '--slot-color-net-ckpt', LaunchConfiguration('slot_color_net_ckpt'),
+                '--stage4-ckpt',         LaunchConfiguration('stage4_ckpt'),
+                '--image-device',        LaunchConfiguration('image_device'),
+                '--whisper-model-size',  LaunchConfiguration('whisper_model_size'),
                 '--armed',
             ],
             condition=IfCondition(LaunchConfiguration('armed')),

@@ -84,6 +84,7 @@ Thumbs.db
 # =========================
 plan_diag*.csv
 *_backup.py
+*.bak
 
 # =========================
 # ML / Stage 1

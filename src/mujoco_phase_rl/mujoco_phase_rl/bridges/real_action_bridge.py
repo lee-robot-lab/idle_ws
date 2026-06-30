@@ -1134,6 +1134,26 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
         default=None,
         help="Append action bridge logs to this file in addition to terminal output.",
     )
+    # ── slot embedder (SlotEmbedder + MLPipeline 공용) ────────────────
+    parser.add_argument("--slot-stage1-ckpt", default=None)
+    parser.add_argument("--slot-diff-ckpt", default=None)
+    parser.add_argument("--slot-color-net-ckpt", default=None)
+    parser.add_argument("--stage4-ckpt", default=None,
+                        help="RelationScorer ckpt (needed with --whisper-model-size).")
+    parser.add_argument("--ppo-task-topic", default="/ppo/task")
+    parser.add_argument("--ppo-done-topic", default="/ppo/done")
+    # ── 직접 입력 (토픽 우회) ─────────────────────────────────────────
+    parser.add_argument(
+        "--image-device",
+        type=int,
+        default=-1,
+        help="cv2.VideoCapture device index (e.g. 1). Bypasses --image-topic when >= 0.",
+    )
+    parser.add_argument(
+        "--whisper-model-size",
+        default="",
+        help="faster_whisper model size (e.g. 'small'). Enables built-in STT+grounding.",
+    )
 
     args, ros_args = parser.parse_known_args(argv)
     pregrasp_z = _float_arg(args.pregrasp_z, args.pregrasp_z_delta, 0.23)
@@ -1173,6 +1193,14 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
         deterministic=not bool(args.stochastic),
         no_command_mask=bool(args.no_command_mask),
         phase_prior_weight=float(np.clip(args.phase_prior_weight, 0.0, 1.0)),
+        slot_stage1_ckpt=args.slot_stage1_ckpt,
+        slot_diff_ckpt=args.slot_diff_ckpt,
+        slot_color_net_ckpt=args.slot_color_net_ckpt,
+        ppo_task_topic=args.ppo_task_topic,
+        ppo_done_topic=args.ppo_done_topic,
+        image_device=args.image_device if args.image_device >= 0 else None,
+        whisper_model_size=args.whisper_model_size or None,
+        stage4_ckpt=args.stage4_ckpt,
     )
     return (
         ActionBridgeConfig(

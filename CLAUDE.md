@@ -205,3 +205,79 @@ ros2 topic pub --once /pickplace/command std_msgs/msg/Float64MultiArray '{data: 
 ```
 
 실기체 코드(CAN 통신·모터) 수정 시 시뮬레이션 먼저 검증 후 진행.
+
+## PPO Demo 실행 (ppo_demo.launch.py)
+
+### 전제 조건 (터미널 1)
+```bash
+source /opt/ros/humble/setup.bash && source ~/idle_ws/install/setup.bash
+ros2 run can_interface can_bridge_node
+```
+
+### 런치 (터미널 2)
+```bash
+source /opt/ros/humble/setup.bash && source ~/idle_ws/install/setup.bash
+
+# dry-run (기본) — 카메라 직접 접근 + STT 내장
+ros2 launch demo_supervisor ppo_demo.launch.py \
+  image_device:=1 \
+  whisper_model_size:=small \
+  task_mode:=basket
+
+# ARMED (실제 모터 제어) — 위에 armed:=true 추가
+ros2 launch demo_supervisor ppo_demo.launch.py \
+  image_device:=1 \
+  whisper_model_size:=small \
+  task_mode:=basket \
+  armed:=true
+
+# stack 태스크 (블록 위에 쌓기)
+ros2 launch demo_supervisor ppo_demo.launch.py \
+  image_device:=1 \
+  whisper_model_size:=small \
+  task_mode:=stack \
+  armed:=true
+```
+
+### 파라미터 요약
+| 파라미터 | 기본값 | 설명 |
+|---|---|---|
+| `image_device` | `1` | cv2.VideoCapture 인덱스. `-1` 이면 `/image_raw` 토픽 사용 |
+| `whisper_model_size` | `''` | `small`/`base`/`medium`. 빈값이면 `/ppo/task` 토픽 사용 |
+| `task_mode` | `basket` | `basket` 또는 `stack` |
+| `armed` | `false` | `true` 이면 실제 모터 명령 발행 |
+| `target_color` | `red` | 집을 블록 색상 (STT 없을 때) |
+| `device` | `cuda` | PyTorch 디바이스 |
+
+### z-height 기본값
+| 단계 | 값 | 파라미터 |
+|---|---|---|
+| pregrasp / carry | 0.23m | `--pregrasp-z` |
+| grasp descent | 0.12m | `--grasp-z` |
+| basket place | 0.23m | `--place-z` |
+| stack place | 0.065m | `--stack-place-z` |
+
+### 직접 실행 (런치 없이)
+```bash
+source /opt/ros/humble/setup.bash && source ~/idle_ws/install/setup.bash
+
+ros2 run mujoco_phase_rl real_action_bridge \
+  --policy-model ~/idle_ws/src/mujoco_phase_rl/outputs/ppo_recovery_fixed_s0/checkpoints/ppo_recovery_fixed_s0_98304_steps.zip \
+  --slot-stage1-ckpt ~/idle_ws/checkpoints/stage1_v2/best.pt \
+  --slot-diff-ckpt ~/idle_ws/checkpoints/slot_diff/best.pt \
+  --slot-color-net-ckpt ~/idle_ws/checkpoints/color_net_v2/best.pt \
+  --stage4-ckpt ~/idle_ws/checkpoints/stage4/best.pt \
+  --device cuda \
+  --image-device 1 \
+  --whisper-model-size small \
+  --task-mode basket \
+  --armed
+```
+
+### 주요 토픽 (모니터링)
+```bash
+# 카메라 확인 (VideoCapture 모드에서는 /image_raw 없음)
+ros2 topic echo /ppo/done      # 태스크 완료 신호
+ros2 topic echo /ppo/task      # STT 직접 모드에서는 발행 안됨
+ros2 topic echo /ee_target     # ARMED 시 발행
+```

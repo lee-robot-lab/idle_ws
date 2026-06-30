@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -154,6 +155,9 @@ class BridgeConfig:
     slot_color_net_ckpt: str | None
     ppo_task_topic: str
     ppo_done_topic: str
+    image_device: int | None = None          # cv2.VideoCapture index; None = use image_topic
+    whisper_model_size: str | None = None    # e.g. "small"; None = use /ppo/task topic
+    stage4_ckpt: str | None = None           # RelationScorer ckpt for MLPipeline (STT mode)
 
 
 @dataclass
@@ -247,12 +251,14 @@ class RealPhaseDiagnosticsNode:
         self.logger = self.node.get_logger()
         self.String = String
 
+        self._stop_event = threading.Event()
         self.vision = _load_vision(config.vision_model, config.device, self.logger)
         self.policy = _load_policy(config.policy_model, config.device, self.logger)
         self._slot_embedder = _load_slot_embedder(config, self.logger)
         self._cached_slot_diff_emb = np.zeros(64, dtype=np.float32)
         self.cv_bridge = _make_cv_bridge(self.logger)
         self.fk = _make_fk_solver(self.logger)
+        self._ml_pipeline = _load_ml_pipeline(config, self.logger)
 
         self.last_image_rgb: np.ndarray | None = None
         self.last_image_stamp_s: float | None = None
@@ -298,12 +304,14 @@ class RealPhaseDiagnosticsNode:
         if config.publish_sim_command:
             self.sim_command_pub = self.node.create_publisher(String, config.sim_command_topic, 10)
 
-        self.node.create_subscription(
-            Image,
-            config.image_topic,
-            self._on_image,
-            qos_profile_sensor_data,
-        )
+        if config.image_device is not None:
+            threading.Thread(
+                target=self._camera_thread, args=(config.image_device,), daemon=True
+            ).start()
+        else:
+            self.node.create_subscription(
+                Image, config.image_topic, self._on_image, qos_profile_sensor_data,
+            )
         self.node.create_subscription(
             String,
             config.boxes_topic,
@@ -326,7 +334,10 @@ class RealPhaseDiagnosticsNode:
         )
         self.node.create_subscription(Bool, config.grasp_topic, self._on_grasp, 10)
         self.node.create_subscription(Bool, config.drop_topic, self._on_drop, 10)
-        self.node.create_subscription(String, config.ppo_task_topic, self._on_ppo_task, 10)
+        if config.whisper_model_size is not None:
+            threading.Thread(target=self._stt_thread, daemon=True).start()
+        else:
+            self.node.create_subscription(String, config.ppo_task_topic, self._on_ppo_task, 10)
         self.ppo_done_pub = self.node.create_publisher(String, config.ppo_done_topic, 10)
         self.node.create_timer(max(0.05, config.log_period_s), self._on_timer)
 
@@ -347,23 +358,17 @@ class RealPhaseDiagnosticsNode:
     def _received_s(self, _msg: Any) -> float:
         return time.monotonic()
 
-    def _on_image(self, msg: Any) -> None:
-        if self.cv_bridge is None:
-            return
-        try:
-            bgr = self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-            rgb = bgr[:, :, ::-1].copy()
-        except Exception as exc:
-            self.last_vision_error = f"image conversion failed: {exc}"
-            return
+    def _process_image_bgr(self, bgr: Any, stamp_s: float) -> None:
+        """BGR numpy 배열 → slot embed 또는 vision inference. 카메라 스레드·ROS 콜백 공용."""
+        rgb = bgr[:, :, ::-1].copy()
         self.last_image_rgb = rgb
-        self.last_image_stamp_s = self._received_s(msg)
+        self.last_image_stamp_s = stamp_s
         if self._slot_embedder is not None:
             try:
                 emb, curr_slots = self._slot_embedder.embed_bgr(bgr)
                 self._cached_slot_diff_emb = emb
-                self.boxes = _slots_to_boxes(curr_slots, self.last_image_stamp_s)
-                self.last_boxes_stamp_s = self.last_image_stamp_s
+                self.boxes = _slots_to_boxes(curr_slots, stamp_s)
+                self.last_boxes_stamp_s = stamp_s
                 self.last_vision_error = None
             except Exception as exc:
                 self.last_vision_error = f"slot embed: {exc}"
@@ -373,6 +378,214 @@ class RealPhaseDiagnosticsNode:
                 self.last_vision_error = None
             except Exception as exc:
                 self.last_vision_error = f"vision inference failed: {exc}"
+
+    def _on_image(self, msg: Any) -> None:
+        if self.cv_bridge is None:
+            return
+        try:
+            bgr = self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        except Exception as exc:
+            self.last_vision_error = f"image conversion failed: {exc}"
+            return
+        self._process_image_bgr(bgr, self._received_s(msg))
+
+    def _camera_thread(self, device: int) -> None:
+        """백그라운드: cv2.VideoCapture → _process_image_bgr() (ROS image_topic 대체)."""
+        import cv2
+        cap = cv2.VideoCapture(device)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.logger.info(f"camera thread started: device={device} (bypasses image_topic)")
+        try:
+            while not self._stop_event.is_set():
+                ok, bgr = cap.read()
+                if not ok:
+                    time.sleep(0.01)
+                    continue
+                self._process_image_bgr(bgr, time.monotonic())
+        finally:
+            cap.release()
+
+    def _stt_thread(self) -> None:
+        """백그라운드: VAD → Whisper → stt.py → MLPipeline → ppo_task 필드 직접 설정."""
+        try:
+            import sounddevice as sd
+            import wave
+            import tempfile
+            import subprocess
+            import sys
+            import os
+            from collections import deque
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            self.logger.warning(f"STT thread disabled (import error): {exc}")
+            return
+
+        _stt_script = Path(__file__).resolve().parents[4] / "src" / "stt" / "stt.py"
+
+        whisper_size = self.config.whisper_model_size
+        compute = "float16" if "cuda" in (self.config.device or "") else "int8"
+        try:
+            whisper = WhisperModel(whisper_size, device="cpu", compute_type="int8")
+            self.logger.info(f"WhisperModel loaded: size={whisper_size}")
+        except Exception as exc:
+            self.logger.warning(f"STT thread disabled (WhisperModel): {exc}")
+            return
+
+        SR = 16000
+        FRAME_MS = 30
+        FRAME = SR * FRAME_MS // 1000  # 480 samples
+        CALIB_S = 1.0
+        ENERGY_MULT = 1.4
+        MIN_ABS_THR = 800.0
+        START_FRAMES = 1
+        END_SILENCE_S = 1.0
+        MAX_S = 8.0
+        PRE_ROLL = 0.3
+
+        def _rms(f: "np.ndarray") -> float:
+            return float(np.sqrt(np.mean(f.astype(np.float64) ** 2)))
+
+        # ── 환경 노이즈 캘리브레이션 ──────────────────────────────────
+        calib_q: list = []
+        calib_done = threading.Event()
+
+        def _calib_cb(indata: Any, frames: int, t: Any, status: Any) -> None:
+            calib_q.append(indata.copy())
+            if len(calib_q) >= int(CALIB_S * 1000 / FRAME_MS):
+                calib_done.set()
+
+        try:
+            with sd.InputStream(samplerate=SR, channels=1, dtype="int16",
+                                blocksize=FRAME, callback=_calib_cb):
+                calib_done.wait(timeout=5.0)
+        except Exception as exc:
+            self.logger.warning(f"STT calibration failed: {exc}")
+            return
+
+        calib_rms = float(np.mean([_rms(f) for f in calib_q])) if calib_q else 500.0
+        threshold = max(calib_rms * ENERGY_MULT, MIN_ABS_THR)
+        self.logger.info(f"STT calibrated: ambient={calib_rms:.0f} threshold={threshold:.0f}")
+
+        pre_roll: deque = deque(maxlen=int(PRE_ROLL * 1000 / FRAME_MS))
+        silence_frames_thr = int(END_SILENCE_S * 1000 / FRAME_MS)
+        max_frames = int(MAX_S * 1000 / FRAME_MS)
+
+        while not self._stop_event.is_set():
+            # ── VAD 리스닝 루프 ───────────────────────────────────────
+            audio_buf: list = []
+            triggered = False
+            trigger_count = 0
+            silence_frames = 0
+            frame_q: deque = deque()
+            frame_event = threading.Event()
+
+            def _audio_cb(indata: Any, frames: int, t: Any, status: Any) -> None:
+                frame_q.append(indata.copy())
+                frame_event.set()
+
+            try:
+                with sd.InputStream(samplerate=SR, channels=1, dtype="int16",
+                                    blocksize=FRAME, callback=_audio_cb):
+                    while not self._stop_event.is_set():
+                        frame_event.wait(timeout=0.5)
+                        frame_event.clear()
+                        while frame_q:
+                            frm = frame_q.popleft()
+                            rms = _rms(frm)
+                            is_speech = rms > threshold
+                            if not triggered:
+                                pre_roll.append(frm)
+                                trigger_count = (trigger_count + 1) if is_speech else 0
+                                if trigger_count >= START_FRAMES:
+                                    triggered = True
+                                    audio_buf.extend(pre_roll)
+                                    audio_buf.append(frm)
+                                    self.logger.info("STT: speech start detected")
+                            else:
+                                audio_buf.append(frm)
+                                silence_frames = 0 if is_speech else silence_frames + 1
+                                if silence_frames >= silence_frames_thr or len(audio_buf) >= max_frames:
+                                    break
+                        if triggered and (silence_frames >= silence_frames_thr or len(audio_buf) >= max_frames):
+                            break
+            except Exception as exc:
+                self.logger.warning(f"STT listen error: {exc}")
+                time.sleep(1.0)
+                continue
+
+            if not audio_buf:
+                continue
+
+            # ── WAV 저장 → Whisper 추론 ───────────────────────────────
+            audio_data = np.concatenate(audio_buf, axis=0).flatten().astype(np.int16)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                wav_path = tf.name
+            try:
+                with wave.open(wav_path, "wb") as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(SR)
+                    wf.writeframes(audio_data.tobytes())
+
+                segments, _ = whisper.transcribe(wav_path, language="ko", vad_filter=True)
+                text = " ".join(s.text for s in segments).strip()
+                self.logger.info(f"STT transcribed: '{text}'")
+                if not text:
+                    continue
+
+                # ── 텍스트 → step dict ────────────────────────────────
+                try:
+                    proc = subprocess.run(
+                        [sys.executable, str(_stt_script), "--text", text, "--parser", "rule"],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    plan = json.loads(proc.stdout)
+                    if not plan.get("success") or not plan.get("steps"):
+                        self.logger.info(f"STT parse failed: '{text}'")
+                        continue
+                    step = plan["steps"][0]
+                except Exception as exc:
+                    self.logger.warning(f"STT parse_text error: {exc}")
+                    continue
+
+                # ── MLPipeline grounding ──────────────────────────────
+                if self._ml_pipeline is None:
+                    self.logger.warning("STT: MLPipeline not loaded — check stage4_ckpt")
+                    continue
+                bgr_snap = None
+                if self.last_image_rgb is not None:
+                    bgr_snap = self.last_image_rgb[:, :, ::-1].copy()
+                if bgr_snap is None:
+                    self.logger.warning("STT: no camera frame yet, skipping grounding")
+                    continue
+
+                try:
+                    result = self._ml_pipeline.ground(bgr_snap, step)
+                    if result is None:
+                        self.logger.warning(f"STT: grounding returned None for '{text}'")
+                        continue
+                    self.ppo_task_object_color = result.pick_color
+                    self.ppo_task_object_pos = np.array(
+                        [result.x_pick, result.y_pick, 0.015], dtype=np.float32
+                    )
+                    self.ppo_task_target_pos = np.array(
+                        [result.x_place, result.y_place, 0.015], dtype=np.float32
+                    )
+                    self.ppo_task_type = result.task_type
+                    self.logger.info(
+                        f"[stt_grounding] text='{text}' color={result.pick_color} "
+                        f"obj=({result.x_pick:.3f},{result.y_pick:.3f}) "
+                        f"tgt=({result.x_place:.3f},{result.y_place:.3f}) "
+                        f"task={result.task_type}"
+                    )
+                except Exception as exc:
+                    self.logger.warning(f"STT grounding error: {exc}")
+            finally:
+                try:
+                    os.unlink(wav_path)
+                except Exception:
+                    pass
 
     def _on_boxes(self, msg: Any) -> None:
         if self._slot_embedder is not None:
@@ -1315,6 +1528,30 @@ def _box_pose_from_json(item: dict[str, Any], stamp_s: float) -> BoxPose | None:
         center_px=center_px,
         stamp_s=stamp_s,
     )
+
+
+def _load_ml_pipeline(config: "BridgeConfig", logger: Any) -> Any:
+    """STT 모드용 MLPipeline 로드. whisper_model_size와 stage4_ckpt가 모두 있어야 로드."""
+    if not (config.whisper_model_size and config.stage4_ckpt
+            and config.slot_stage1_ckpt and config.slot_color_net_ckpt):
+        return None
+    try:
+        import sys
+        _ds_root = str(Path(__file__).resolve().parents[4] / "src" / "demo_supervisor")
+        if _ds_root not in sys.path:
+            sys.path.insert(0, _ds_root)
+        from demo_supervisor.ml.pipeline import MLPipeline
+        pipeline = MLPipeline(
+            stage1_ckpt=config.slot_stage1_ckpt,
+            color_net_ckpt=config.slot_color_net_ckpt,
+            stage4_ckpt=config.stage4_ckpt,
+            device=config.device,
+        )
+        logger.info(f"MLPipeline loaded for STT grounding (stage4={config.stage4_ckpt})")
+        return pipeline
+    except Exception as exc:
+        logger.warning(f"MLPipeline disabled: {exc}")
+        return None
 
 
 def _load_slot_embedder(config: "BridgeConfig", logger: Any) -> Any:
