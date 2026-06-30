@@ -46,6 +46,9 @@ source install/setup.bash
 sudo ip link set can0 up type can bitrate 1000000
 
 sudo ip link set can0 up
+
+v4l2-ctl --list-devices
+
 ## 실행 순서
 
 ### 터미널 1 — CAN 브릿지
@@ -75,14 +78,16 @@ ros2 launch demo_supervisor ppo_demo.launch.py \
 
 #### Armed (실제 모터 제어)
 
+~/idle_ws/logs/run_ppo.sh armed:=true image_device:=4 whisper_model_size:=small
+
+
 ```bash
 ros2 launch demo_supervisor ppo_demo.launch.py \
-  image_device:=1 \
+  image_device:=4 \
   whisper_model_size:=small \
-  task_mode:=basket \
   armed:=true
 ```
-
+  
 > `armed:=true` 이면 `/ee_target` 토픽이 실제로 발행되고 모터가 움직입니다.
 
 #### Stack 태스크 (블록 위에 쌓기)

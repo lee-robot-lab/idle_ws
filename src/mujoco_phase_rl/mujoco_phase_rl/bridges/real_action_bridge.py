@@ -97,6 +97,7 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
         self.inflight: TargetCommand | None = None
         self.inflight_started_s = 0.0
         self.inflight_stage = "IDLE"
+        self.gripper_stage_started_s = 0.0
         self.last_command_sent_s = 0.0
         self.last_plan_status = "none"
         self.last_plan_fail_reason = ""
@@ -261,7 +262,7 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
                 if gripper_state_id == 5:  # GripperState.FAIL
                     self._finish_transaction(False, "gripper_state_failed")
                     return
-            if now - self.inflight_started_s > self.action_config.gripper_timeout_s:
+            if now - self.gripper_stage_started_s > self.action_config.gripper_timeout_s:
                 self._finish_transaction(False, "gripper_timeout")
             return
         # HOME은 robot_home 신호로만 완료 판정 — plan 길이가 가변이므로 타임아웃 미적용
@@ -374,6 +375,7 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
             return
         if self.inflight.gripper_after_plan == "close":
             self.inflight_stage = "WAIT_GRIPPER"
+            self.gripper_stage_started_s = time.monotonic()
             self._call_gripper("close")
             return
         if self.inflight.gripper_after_plan == "open":
@@ -1166,12 +1168,12 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
     )
 
     args, ros_args = parser.parse_known_args(argv)
-    pregrasp_z = _float_arg(args.pregrasp_z, args.pregrasp_z_delta, 0.23)
+    pregrasp_z = _float_arg(args.pregrasp_z, args.pregrasp_z_delta, 0.3)
     grasp_z = _float_arg(args.grasp_z, args.grasp_z_delta, 0.12)
-    carry_z = _float_arg(args.carry_z, args.move_place_z_delta, args.lift_height_default, 0.23)
+    carry_z = _float_arg(args.carry_z, args.move_place_z_delta, args.lift_height_default, 0.3)
     place_z = _float_arg(args.place_z, args.place_z_delta, 0.23)
-    stack_place_z = _float_arg(args.stack_place_z, 0.065)
-    prehome_z = _float_arg(args.prehome_z, 0.30)
+    stack_place_z = _float_arg(args.stack_place_z, 0.016)
+    prehome_z = _float_arg(args.prehome_z, 0.35)
     diagnostics = BridgeConfig(
         node_name="mujoco_phase_rl_real_action_bridge",
         vision_model=args.vision_model,

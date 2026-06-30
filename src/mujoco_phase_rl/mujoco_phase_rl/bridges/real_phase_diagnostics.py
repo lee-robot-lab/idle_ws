@@ -35,7 +35,7 @@ _SLOT_COLOR_NAMES = {0: "red", 1: "green", 2: "blue", 3: "basket"}
 _SLOT_PRESENT_THRESH = 0.35
 # 팔 등 비블록 물체가 색상 슬롯을 탈취하지 못하도록 최소 color confidence 요구.
 # uniform(4색)=0.25이므로 0.40이면 "확실히 한 색" 슬롯만 통과.
-_SLOT_MIN_COLOR_CONF = 0.40
+_SLOT_MIN_COLOR_CONF = 0.0  # 실기체 color_cc 측정 중 — 측정 후 재조정
 
 
 def _slot_world_xy(x_norm: float, y_norm: float) -> tuple[float, float]:
@@ -79,7 +79,7 @@ def _slots_to_boxes(curr_slots: dict, stamp_s: float) -> list:
         color_id = int(np.argmax(color_soft[i]))
         max_conf = float(color_soft[i, color_id])
         if max_conf < _SLOT_MIN_COLOR_CONF:
-            continue  # 팔·배경 등 저신뢰 슬롯 제외
+            continue
         score = float(present[i]) * max_conf
         if score > best.get(color_id, (-1, 0.0))[1]:
             best[color_id] = (i, score)

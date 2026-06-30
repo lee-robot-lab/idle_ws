@@ -60,14 +60,14 @@ class GripperNode(Node):
 
         # Parameters — tune via YAML or CLI
         self.q_open = float(declare_typed(self, "q_open", 0.0))
-        self.q_closed_min = float(declare_typed(self, "q_closed_min", 0.80))
+        self.q_closed_min = float(declare_typed(self, "q_closed_min", 0.90))
         self.delta_overclose = float(declare_typed(self, "delta_overclose", 0.05))
-        self.tau_drop_threshold = float(declare_typed(self, "tau_drop_threshold", 0.1))
+        self.tau_drop_threshold = float(declare_typed(self, "tau_drop_threshold", 0.5))
         self.grasp_settle_ticks = int(declare_typed(self, "grasp_settle_ticks", 200))
         self.q_min_grasp = float(declare_typed(self, "q_min_grasp", 0.4))
         self.control_hz = float(declare_typed(self, "control_hz", 250.0))
         self.state_timeout_s = float(declare_typed(self, "state_timeout_s", 0.5))
-        self.kp = float(declare_typed(self, "kp", 1.0))
+        self.kp = float(declare_typed(self, "kp", 1.3))
         self.kd = float(declare_typed(self, "kd", 0.1))
         self.tau_limit = 1.6  # Motor 7 hardware limit [Nm]
 

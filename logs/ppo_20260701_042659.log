@@ -1,0 +1,944 @@
+[INFO] [launch]: All log files can be found below /home/su/.ros/log/2026-07-01-04-26-59-834597-mee-245161
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [real_action_bridge-4]: process started with pid [245176]
+[INFO] [plan_compute_node-1]: process started with pid [245170]
+[INFO] [plan_node-2]: process started with pid [245172]
+[INFO] [gripper_node-3]: process started with pid [245174]
+[gripper_node-3] [INFO] [1782847620.207018072] [gripper_node]: gripper_node ready: q_open=0.000 q_closed_min=0.900 delta=0.050 kp=2.5
+[plan_node-2] [INFO] [1782847620.360309422] [plan_node]: plan_node (ctrl) initialized: hz=250.0 motors=[1, 2, 3, 4, 5, 6] warp_lo=0.120 warp_hi=0.400 rad diag_csv=/home/su/idle_ws/logs/ppo_20260701_042659_plan.csv
+[real_action_bridge-4] /home/su/.local/lib/python3.10/site-packages/matplotlib/projections/__init__.py:63: UserWarning: Unable to import Axes3D. This may be due to multiple versions of Matplotlib being installed (e.g. as a system package and as a pip package). As a result, the 3D projection is not available.
+[real_action_bridge-4]   warnings.warn("Unable to import Axes3D. This may be due to multiple versions of "
+[plan_compute_node-1] [INFO] [1782847623.633800510] [plan_compute_node]: plan_compute_node initialized: target_frame=gripper v_max=1.0 a_max=1.0 motors=[1, 2, 3, 4, 5, 6] home_q=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+[real_action_bridge-4] [0m[INFO] [1782847625.697002264] [ppo_action_bridge]: SlotEmbedder loaded: stage1=/home/su/idle_ws/checkpoints/stage1_v2/best.pt slot_diff=/home/su/idle_ws/checkpoints/slot_diff/best.pt color_net=/home/su/idle_ws/checkpoints/color_net_v2/best.pt[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] A module that was compiled using NumPy 1.x cannot be run in
+[real_action_bridge-4] NumPy 2.2.6 as it may crash. To support both 1.x and 2.x
+[real_action_bridge-4] versions of NumPy, modules must be compiled with NumPy 2.0.
+[real_action_bridge-4] Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+[real_action_bridge-4] 
+[real_action_bridge-4] If you are a user of the module, the easiest solution will be to
+[real_action_bridge-4] downgrade to 'numpy<2' or try to upgrade the affected module.
+[real_action_bridge-4] We expect that some modules will need time to support NumPy 2.
+[real_action_bridge-4] 
+[real_action_bridge-4] Traceback (most recent call last):  File "/home/su/idle_ws/install/mujoco_phase_rl/lib/mujoco_phase_rl/real_action_bridge", line 33, in <module>
+[real_action_bridge-4]     sys.exit(load_entry_point('mujoco-phase-rl==0.0.0', 'console_scripts', 'real_action_bridge')())
+[real_action_bridge-4]   File "/home/su/idle_ws/install/mujoco_phase_rl/lib/python3.10/site-packages/mujoco_phase_rl/bridges/real_action_bridge.py", line 1265, in main
+[real_action_bridge-4]     bridge = RealActionBridgeNode(rclpy, config)
+[real_action_bridge-4]   File "/home/su/idle_ws/install/mujoco_phase_rl/lib/python3.10/site-packages/mujoco_phase_rl/bridges/real_action_bridge.py", line 113, in __init__
+[real_action_bridge-4]     super().__init__(rclpy_module, config.diagnostics)
+[real_action_bridge-4]   File "/home/su/idle_ws/install/mujoco_phase_rl/lib/python3.10/site-packages/mujoco_phase_rl/bridges/real_phase_diagnostics.py", line 268, in __init__
+[real_action_bridge-4]     self.cv_bridge = _make_cv_bridge(self.logger)
+[real_action_bridge-4]   File "/home/su/idle_ws/install/mujoco_phase_rl/lib/python3.10/site-packages/mujoco_phase_rl/bridges/real_phase_diagnostics.py", line 1683, in _make_cv_bridge
+[real_action_bridge-4]     from cv_bridge import CvBridge
+[real_action_bridge-4]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/cv_bridge/__init__.py", line 6, in <module>
+[real_action_bridge-4]     from cv_bridge.boost.cv_bridge_boost import cvtColorForDisplay, getCvType
+[real_action_bridge-4] AttributeError: _ARRAY_API not found
+[real_action_bridge-4] [0m[INFO] [1782847626.104508688] [ppo_action_bridge]: MLPipeline loaded for STT grounding (stage4=/home/su/idle_ws/checkpoints/stage4/best.pt)[0m
+[real_action_bridge-4] [0m[INFO] [1782847626.115397789] [ppo_action_bridge]: real_phase_diagnostics ready: image=/image_raw boxes=/idle_vision/box_poses motor=/motor_state_array gripper=/gripper/state policy=/home/su/idle_ws/src/mujoco_phase_rl/outputs/ppo_recovery_fixed_s0/checkpoints/ppo_recovery_fixed_s0_98304_steps.zip vision=disabled sim_command=disabled[0m
+[gripper_node-3] [INFO] [1782847626.182378452] [gripper_node]: gripper: open commanded
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.000,+0.620,+0.009) mode=basket target_label=basket target_src=configured
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=none box=none mot=0.00s grip=0.17s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.000,+0.620,+0.009) mode=basket target_label=basket target_src=configured
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=none box=none mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.000,+0.620,+0.009) mode=basket target_label=basket target_src=configured
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=none box=none mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.000,+0.620,+0.009) mode=basket target_label=basket target_src=configured
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=none box=none mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] [0m[INFO] [1782847628.233139411] [ppo_action_bridge]: camera opened: device=4 actual=1280x720[0m
+[real_action_bridge-4] [0m[INFO] [1782847628.233612218] [ppo_action_bridge]: camera thread started: device=4[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.000,+0.620,+0.009) mode=basket target_label=basket target_src=configured
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.35s box=none mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.11s box=0.15s mot=0.00s grip=0.08s plan=none
+[real_action_bridge-4] [0m[INFO] [1782847629.166201928] [ppo_action_bridge]: WhisperModel loaded: size=small[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] [STT] 대기 중... 스페이스바=녹음 시작  q=종료
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.03s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.002,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.04s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.002,+0.333,+0.159) target=(+0.242,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.04s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [STT] 녹음 중... 스페이스바=종료  q=취소
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.04s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.05s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.002,+0.333,+0.159) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.002,+0.333,+0.159) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.03s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.04s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] [STT] 녹음 완료 (2.9초), 음성 인식 중...
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.22s box=0.27s mot=0.00s grip=0.18s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.07s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.27s box=0.31s mot=0.01s grip=0.01s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.77s box=0.81s mot=0.01s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.002,+0.333,+0.159) target=(+0.242,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=1.27s box=1.27s mot=0.01s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.47s box=1.77s mot=0.01s grip=0.01s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.98s box=2.27s mot=0.01s grip=0.01s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=1.48s box=2.77s mot=0.01s grip=0.01s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.31s box=1.98s mot=0.01s grip=0.01s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.81s box=2.47s mot=0.01s grip=0.01s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=1.31s box=2.97s mot=0.01s grip=0.01s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=1.81s box=3.47s mot=0.01s grip=0.01s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.243,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.05s box=0.09s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.08s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.05s box=0.05s mot=0.00s grip=0.00s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.35 ok=0
+[real_action_bridge-4]   reason no target object pose
+[real_action_bridge-4]   state  obj=missing src=missing/none ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy skip(missing object pose)
+[real_action_bridge-4]   target -
+[real_action_bridge-4]   exec   hold: missing object pose stage=IDLE plan=none fail=-
+[real_action_bridge-4]   age    img=0.04s box=0.09s mot=0.00s grip=0.01s plan=none
+[real_action_bridge-4] [STT] 인식: '초록색, 박스를 바구니에 넣어줘요.'
+[real_action_bridge-4] [0m[INFO] [1782847643.491000801] [ppo_action_bridge]: [stt_grounding] text='초록색, 박스를 바구니에 넣어줘요.' color=green obj=(-0.152,0.642) tgt=(0.242,0.728) task=pick_place[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] [STT] 대기 중... 스페이스바=녹음 시작  q=종료
+[plan_compute_node-1] [INFO] [1782847643.755908297] [plan_compute_node]: planning [1]: xyz=[-0.17307648062705994, 0.6273991465568542, 0.23000000417232513] yaw=+4.0°
+[real_action_bridge-4] [33m[WARN] [1782847643.755952349] [ppo_action_bridge]: ARMED publish /ee_target command=MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) yaw=4.0deg line=False note=object pregrasp[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=1
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.151,+0.642,+0.009) src=vision/0.03s ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.022,-0.015,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) yaw=+4.0(object) line=0 after=-
+[real_action_bridge-4]   exec   object pregrasp stage=WAIT_PLAN plan=none fail=-
+[real_action_bridge-4]   age    img=0.14s box=0.17s mot=0.14s grip=0.14s plan=none
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.150,+0.643,+0.009) src=vision/0.05s ee=(-0.003,+0.333,+0.159) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.022,-0.015,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.348m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.01s grip=0.01s plan=0.36s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.150,+0.643,+0.009) src=vision/0.03s ee=(-0.003,+0.333,+0.159) target=(+0.241,+0.729,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.023,-0.015,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.348m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.04s box=0.04s mot=0.00s grip=0.00s plan=0.86s
+[plan_node-2] [INFO] [1782847645.036317689] [plan_node]: [84] plan received: duration=3.79s
+[plan_node-2] [INFO] [1782847645.051952038] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847645.052328394] [plan_node]: [target 84] xyz=[-0.17307648062705994, 0.6273991465568542, 0.23000000417232513] yaw=+4.0° duration=3.79s
+[plan_node-2] [INFO] [1782847645.052673972] [plan_node]: plan committed: xyz=[-0.17307648062705994, 0.6273991465568542, 0.23000000417232513] yaw=+4.0° duration=3.79s drift=0.0007rad
+[plan_compute_node-1] [INFO] [1782847645.056479929] [plan_compute_node]: [1] plan ready: duration=3.79s timing(total=1.273s ik=0.434s build=0.000s collision=0.836s cost=0.003s checked=2 safe=2 cand=0/3 j6_dq=0.444rad)
+[plan_node-2] [INFO] [1782847645.059873293] [plan_node]: [1] plan received: duration=3.79s
+[plan_node-2] [INFO] [1782847645.067045283] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847645.067614140] [plan_node]: [target 1] xyz=[-0.17307648062705994, 0.6273991465568542, 0.23000000417232513] yaw=+4.0° duration=3.79s
+[plan_node-2] [INFO] [1782847645.068216569] [plan_node]: plan committed: xyz=[-0.17307648062705994, 0.6273991465568542, 0.23000000417232513] yaw=+4.0° duration=3.79s drift=0.0007rad
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.150,+0.643,+0.009) src=vision/0.05s ee=(-0.002,+0.333,+0.159) target=(+0.243,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.023,-0.015,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.348m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.00s grip=0.00s plan=0.05s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.153,+0.642,+0.009) src=vision/0.05s ee=(-0.006,+0.333,+0.159) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=1 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.023,-0.015,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.346m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.00s grip=0.01s plan=0.55s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.152,+0.640,+0.009) src=vision/0.04s ee=(-0.024,+0.335,+0.157) target=(+0.241,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.022,-0.015,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.336m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.01s grip=0.01s plan=1.05s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.151,+0.633,+0.009) src=vision/0.06s ee=(-0.068,+0.354,+0.151) target=(+0.241,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.021,-0.015,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.303m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.06s mot=0.00s grip=0.00s plan=1.55s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision/0.04s ee=(-0.127,+0.411,+0.151) target=(+0.239,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.020,-0.014,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.235m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.05s mot=0.01s grip=0.01s plan=2.05s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/0.54s ee=(-0.175,+0.510,+0.183) target=(+0.238,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.019,-0.015,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.127m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.06s mot=0.00s grip=0.00s plan=2.55s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/1.04s ee=(-0.183,+0.593,+0.224) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.019,-0.014,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.036m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.06s mot=0.00s grip=0.00s plan=3.05s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=OBSERVE_OBJECT conf=0.75 ok=0
+[real_action_bridge-4]   reason object visible and not grasped
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/1.54s ee=(-0.176,+0.626,+0.242) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=- return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=MOVE_TO_PREGRASP prior=MOVE_TO_PREGRASP raw=MOVE_TO_PREGRASP exec=MOVE_TO_PREGRASP blocked=0 grip=open dxyz=(-0.018,-0.014,-0.040)
+[real_action_bridge-4]   target MOVE_TO_PREGRASP xyz=(-0.173,+0.627,+0.230) err=0.012m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: MOVE_TO_PREGRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.04s mot=0.00s grip=0.00s plan=3.55s
+[plan_node-2] [INFO] [1782847648.864569795] [plan_node]: hold q_final target(rad): j1=+1.0413  j2=-0.5580  j3=-1.6105  j4=-0.5183  j5=-1.5708  j6=-0.4591
+[plan_node-2] [INFO] [1782847648.864903431] [plan_node]: hold start actual(rad): j1=+1.0337  j2=-0.5398  j3=-1.6113  j4=-0.5187  j5=-1.5695  j6=-0.4577
+[plan_node-2] [INFO] [1782847648.865262835] [plan_node]: hold start err(rad): j1=-0.0076  j2=+0.0182  j3=-0.0008  j4=-0.0004  j5=+0.0013  j6=+0.0014
+[plan_node-2] [INFO] [1782847648.865818417] [plan_node]: trajectory complete — settling toward q_final
+[plan_node-2] [INFO] [1782847648.907394665] [plan_node]: settled in 0.44s: max_err=0.0182rad vel=0.0732rad/s — DONE
+[plan_node-2] [INFO] [1782847648.907818880] [plan_node]: hold keeps q_final after settled: max_err=0.0182rad threshold=0.0080rad
+[real_action_bridge-4] [33m[WARN] [1782847648.909266946] [ppo_action_bridge]: phase override set: command=MOVE_TO_PREGRASP -> phase=GRASP reason=plan_done[0m
+[real_action_bridge-4] [33m[WARN] [1782847648.910119054] [ppo_action_bridge]: transaction SUCCESS: command=MOVE_TO_PREGRASP reason=plan_done[0m
+[real_action_bridge-4] [33m[WARN] [1782847649.117884447] [ppo_action_bridge]: ARMED publish /ee_target command=GRASP xyz=(-0.131,+0.660,+0.120) yaw=4.1deg line=True note=lower then close gripper[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.85 ok=1
+[real_action_bridge-4]   reason command-confirmed GRASP; sensor=OBSERVE_OBJECT (object visible and not grasped); MOVE_TO_PREGRASP success (plan_done)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/2.04s ee=(-0.178,+0.626,+0.243) target=(+0.243,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.060,+0.051,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) yaw=+4.1(object) line=1 after=close
+[real_action_bridge-4]   exec   lower then close gripper stage=WAIT_PLAN plan=DONE fail=-
+[real_action_bridge-4]   age    img=0.04s box=0.04s mot=0.00s grip=0.00s plan=0.21s
+[plan_compute_node-1] [INFO] [1782847649.118169762] [plan_compute_node]: planning [2] (straight line): [-0.17818167092366796, 0.6264585890060683, 0.2426730914337546] → [-0.13068431615829468, 0.6603408455848694, 0.11999999731779099] duration=1.00s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 0.5/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/2.55s ee=(-0.179,+0.627,+0.244) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.060,+0.051,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.137m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.20s box=0.24s mot=0.04s grip=0.03s plan=0.53s
+[plan_node-2] [INFO] [1782847649.965501705] [plan_node]: [hold 1/3 +1.0s] err(rad): j1=-0.0087  j2=+0.0197  j3=+0.0000  j4=-0.0046  j5=+0.0013  j6=+0.0010  max=0.0197  worst=j2 q=-0.5382 q_des=-0.5580 qd=+0.0473 kp=55.0 kd=4.8 pd_tau=-1.311 tau_ff=+16.431 tau_meas=+15.118
+[plan_node-2] [INFO] [1782847649.969763317] [plan_node]: [hold diag j3] err=+0.0000 q=-1.6105 q_des=-1.6105 qd=-0.0718 kp=40.0 kd=4.8 pd_tau=+0.346 tau_ff=-8.290 total=-7.944 tau_meas=-8.120
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 1.0/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/3.04s ee=(-0.180,+0.629,+0.247) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.060,+0.051,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.140m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.69s box=0.74s mot=0.03s grip=0.03s plan=1.02s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 1.5/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/3.55s ee=(-0.179,+0.627,+0.243) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.059,+0.050,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.137m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=1.20s box=1.20s mot=0.03s grip=0.03s plan=1.53s
+[plan_node-2] [INFO] [1782847650.970193984] [plan_node]: [hold 2/3 +2.0s] err(rad): j1=-0.0072  j2=+0.0189  j3=-0.0034  j4=-0.0046  j5=+0.0009  j6=+0.0010  max=0.0189  worst=j2 q=-0.5390 q_des=-0.5580 qd=-0.1450 kp=55.0 kd=4.8 pd_tau=-0.346 tau_ff=+15.658 tau_meas=+14.840
+[plan_node-2] [INFO] [1782847650.975415186] [plan_node]: [hold diag j3] err=-0.0034 q=-1.6140 q_des=-1.6105 qd=+0.0436 kp=40.0 kd=4.8 pd_tau=-0.073 tau_ff=-7.850 total=-7.924 tau_meas=-7.880
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 2.0/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/4.05s ee=(-0.180,+0.627,+0.245) target=(+0.242,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.058,+0.049,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.138m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.48s box=1.71s mot=0.04s grip=0.04s plan=2.04s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 2.5/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/4.54s ee=(-0.179,+0.627,+0.245) target=(+0.242,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.057,+0.048,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.137m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.97s box=2.20s mot=0.04s grip=0.04s plan=2.53s
+[plan_node-2] [INFO] [1782847651.840909096] [plan_node]: [56] plan received: duration=1.00s
+[plan_compute_node-1] [INFO] [1782847651.860929441] [plan_compute_node]: [2] straight-line plan ready: duration=1.00s timing(total=2.661s ik=- build=- collision=- cost=- checked=- safe=- cand=- j6_dq=-)
+[plan_node-2] [INFO] [1782847651.921080682] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847651.926302214] [plan_node]: [target 56] xyz=[-0.13068431615829468, 0.6603408455848694, 0.11999999731779099] yaw=+4.1° duration=1.16s
+[plan_node-2] [INFO] [1782847651.931308983] [plan_node]: plan committed: xyz=[-0.13068431615829468, 0.6603408455848694, 0.11999999731779099] yaw=+4.1° duration=1.16s drift=0.0094rad
+[plan_node-2] [INFO] [1782847651.988649924] [plan_node]: [85] plan received: duration=1.00s
+[plan_node-2] [INFO] [1782847652.151295593] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847652.157137318] [plan_node]: [target 85] xyz=[-0.13068431615829468, 0.6603408455848694, 0.11999999731779099] yaw=+4.1° duration=1.16s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 3.0/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/5.05s ee=(-0.179,+0.626,+0.246) target=(+0.241,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.055,+0.046,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.139m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.26s box=1.48s mot=0.04s grip=0.04s plan=0.24s
+[plan_node-2] [INFO] [1782847652.162726700] [plan_node]: plan committed: xyz=[-0.13068431615829468, 0.6603408455848694, 0.11999999731779099] yaw=+4.1° duration=1.16s drift=0.0060rad
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 3.5/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/5.54s ee=(-0.180,+0.635,+0.238) target=(+0.241,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.052,+0.044,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.131m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.75s box=1.97s mot=0.03s grip=0.03s plan=0.48s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 4.0/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/6.04s ee=(-0.147,+0.669,+0.168) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.049,+0.043,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.13s box=1.25s mot=0.04s grip=0.04s plan=0.98s
+[plan_node-2] [INFO] [1782847653.336694065] [plan_node]: hold q_final target(rad): j1=+1.1239  j2=-0.7667  j3=-1.5991  j4=-0.7383  j5=-1.5708  j6=-0.3762
+[plan_node-2] [INFO] [1782847653.341192932] [plan_node]: hold start actual(rad): j1=+1.1085  j2=-0.7097  j3=-1.6255  j4=-0.7415  j5=-1.5702  j6=-0.3841
+[plan_node-2] [INFO] [1782847653.345131809] [plan_node]: hold start err(rad): j1=-0.0154  j2=+0.0570  j3=-0.0263  j4=-0.0031  j5=+0.0006  j6=-0.0079
+[plan_node-2] [INFO] [1782847653.349718019] [plan_node]: trajectory complete — settling toward q_final
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 4.5/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/6.54s ee=(-0.147,+0.672,+0.167) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.046,+0.040,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.62s box=1.75s mot=0.03s grip=0.03s plan=1.48s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 5.0/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/7.05s ee=(-0.146,+0.672,+0.167) target=(+0.242,+0.728,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.043,+0.037,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=1.13s box=1.13s mot=0.04s grip=0.04s plan=1.98s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 5.5/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory/7.54s ee=(-0.146,+0.672,+0.167) target=(+0.241,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.039,+0.034,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.43s box=1.60s mot=0.01s grip=0.01s plan=2.45s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=0
+[real_action_bridge-4]   reason held GRASP for 6.0/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory_occluded/8.04s ee=(-0.146,+0.672,+0.167) target=(+0.240,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=GRASP return_home=0 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.036,+0.032,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.131,+0.660,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.03s mot=0.00s grip=0.00s plan=2.95s
+[plan_node-2] [WARN] [1782847655.435418093] [plan_node]: settle timeout 2.5s: max_err=0.0532rad vel=0.0812rad/s — DONE anyway
+[plan_node-2] [INFO] [1782847655.435869900] [plan_node]: hold keeps q_final after timeout: max_err=0.0532rad threshold=0.0080rad
+[gripper_node-3] [INFO] [1782847655.437044333] [gripper_node]: gripper: close commanded
+[real_action_bridge-4] [33m[WARN] [1782847655.618397752] [ppo_action_bridge]: failure recovery armed: command=GRASP -> phase=RETREAT reason=gripper_timeout[0m
+[real_action_bridge-4] [33m[WARN] [1782847655.618942454] [ppo_action_bridge]: transaction FAIL: command=GRASP reason=gripper_timeout[0m
+[real_action_bridge-4] [33m[WARN] [1782847655.619914487] [ppo_action_bridge]: ARMED publish /ee_target command=GRASP xyz=(-0.140,+0.652,+0.120) yaw=4.1deg line=True note=lower then close gripper[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=GRASP conf=0.75 ok=1
+[real_action_bridge-4]   reason held GRASP for 6.5/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped)
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory_occluded/8.54s ee=(-0.146,+0.672,+0.167) target=(+0.240,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=1 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=GRASP prior=GRASP raw=GRASP exec=GRASP blocked=0 grip=close dxyz=(+0.032,+0.029,+0.040)
+[real_action_bridge-4]   target GRASP xyz=(-0.140,+0.652,+0.120) yaw=+4.1(object) line=1 after=close
+[real_action_bridge-4]   exec   lower then close gripper stage=WAIT_PLAN plan=DONE fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.01s grip=0.01s plan=0.18s
+[plan_compute_node-1] [INFO] [1782847655.620341728] [plan_compute_node]: planning [3] (straight line): [-0.1456171849729548, 0.6725779197165974, 0.16715659940135702] → [-0.1403561532497406, 0.6524817943572998, 0.11999999731779099] duration=1.00s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=GRASP (held GRASP for 7.0/8.0s; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=vision_memory_occluded/9.04s ee=(-0.145,+0.673,+0.167) target=(+0.240,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=1 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.028,+0.031,+0.036)
+[real_action_bridge-4]   target GRASP xyz=(-0.140,+0.652,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.07s mot=0.00s grip=0.00s plan=0.49s
+[plan_node-2] [INFO] [1782847656.207811411] [plan_node]: [57] plan received: duration=1.00s
+[plan_node-2] [INFO] [1782847656.214902950] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847656.215421142] [plan_node]: [target 57] xyz=[-0.1403561532497406, 0.6524817943572998, 0.11999999731779099] yaw=+4.1° duration=1.00s
+[plan_node-2] [INFO] [1782847656.215847351] [plan_node]: plan committed: xyz=[-0.1403561532497406, 0.6524817943572998, 0.11999999731779099] yaw=+4.1° duration=1.00s drift=0.0047rad
+[plan_node-2] [INFO] [1782847656.223024831] [plan_node]: [86] plan received: duration=1.00s
+[plan_compute_node-1] [INFO] [1782847656.224023824] [plan_compute_node]: [3] straight-line plan ready: duration=1.00s timing(total=0.603s ik=- build=- collision=- cost=- checked=- safe=- cand=- j6_dq=-)
+[plan_node-2] [INFO] [1782847656.230532400] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847656.230935205] [plan_node]: [target 86] xyz=[-0.1403561532497406, 0.6524817943572998, 0.11999999731779099] yaw=+4.1° duration=1.00s
+[plan_node-2] [INFO] [1782847656.231273860] [plan_node]: plan committed: xyz=[-0.1403561532497406, 0.6524817943572998, 0.11999999731779099] yaw=+4.1° duration=1.00s drift=0.0048rad
+[gripper_node-3] [INFO] [1782847656.233502630] [gripper_node]: grasped: q_actual=0.3020
+[plan_node-2] [INFO] [1782847656.235252331] [plan_node]: [57] plan received: duration=1.00s
+[plan_node-2] [INFO] [1782847656.242731587] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847656.243119754] [plan_node]: [target 57] xyz=[-0.1403561532497406, 0.6524817943572998, 0.11999999731779099] yaw=+4.1° duration=1.00s
+[plan_node-2] [INFO] [1782847656.243458139] [plan_node]: plan committed: xyz=[-0.1403561532497406, 0.6524817943572998, 0.11999999731779099] yaw=+4.1° duration=1.00s drift=0.0048rad
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=LIFT (object is grasped but not lifted obj_z=0.009 ee_z=0.169))
+[real_action_bridge-4]   state  obj=(-0.164,+0.598,+0.009) src=grasp_fk/0.00s ee=(-0.148,+0.671,+0.169) target=(+0.240,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=1 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=LIFT prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.014,+0.035,+0.007)
+[real_action_bridge-4]   target GRASP xyz=(-0.140,+0.652,+0.120) err=0.053m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.00s grip=0.00s plan=0.38s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=LIFT (object is grasped but not lifted obj_z=0.007 ee_z=0.167))
+[real_action_bridge-4]   state  obj=(-0.166,+0.596,+0.007) src=grasp_fk/0.00s ee=(-0.149,+0.670,+0.167) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=1 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=LIFT prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.012,+0.033,+0.004)
+[real_action_bridge-4]   target GRASP xyz=(-0.140,+0.652,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.01s box=0.04s mot=0.00s grip=0.00s plan=0.87s
+[plan_node-2] [INFO] [1782847657.244972122] [plan_node]: hold q_final target(rad): j1=+1.1053  j2=-0.7559  j3=-1.5761  j4=-0.7506  j5=-1.5708  j6=-0.3948
+[plan_node-2] [INFO] [1782847657.245435742] [plan_node]: hold start actual(rad): j1=+1.1054  j2=-0.7097  j3=-1.6159  j4=-0.7588  j5=-1.5695  j6=-0.3875
+[plan_node-2] [INFO] [1782847657.245801628] [plan_node]: hold start err(rad): j1=+0.0002  j2=+0.0462  j3=-0.0398  j4=-0.0082  j5=+0.0013  j6=+0.0073
+[plan_node-2] [INFO] [1782847657.246229240] [plan_node]: trajectory complete — settling toward q_final
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=LIFT (object is grasped but not lifted obj_z=0.007 ee_z=0.167))
+[real_action_bridge-4]   state  obj=(-0.166,+0.596,+0.007) src=grasp_fk/0.00s ee=(-0.149,+0.670,+0.167) target=(+0.240,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=1 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=LIFT prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.010,+0.031,+0.001)
+[real_action_bridge-4]   target GRASP xyz=(-0.140,+0.652,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.01s grip=0.01s plan=1.38s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=LIFT (object is grasped but not lifted obj_z=0.007 ee_z=0.167))
+[real_action_bridge-4]   state  obj=(-0.166,+0.596,+0.007) src=grasp_fk/0.00s ee=(-0.149,+0.670,+0.167) target=(+0.240,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=1 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=LIFT prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.008,+0.029,-0.003)
+[real_action_bridge-4]   target GRASP xyz=(-0.140,+0.652,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.05s mot=0.00s grip=0.00s plan=1.87s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=LIFT (object is grasped but not lifted obj_z=0.007 ee_z=0.167))
+[real_action_bridge-4]   state  obj=(-0.166,+0.596,+0.007) src=grasp_fk/0.00s ee=(-0.149,+0.670,+0.167) target=(+0.240,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=1 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=LIFT prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.006,+0.027,-0.006)
+[real_action_bridge-4]   target GRASP xyz=(-0.140,+0.652,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.04s box=0.04s mot=0.00s grip=0.00s plan=2.37s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=LIFT (object is grasped but not lifted obj_z=0.007 ee_z=0.167))
+[real_action_bridge-4]   state  obj=(-0.166,+0.596,+0.007) src=grasp_fk/0.00s ee=(-0.149,+0.670,+0.167) target=(+0.240,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=1 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=LIFT prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.004,+0.024,-0.010)
+[real_action_bridge-4]   target GRASP xyz=(-0.140,+0.652,+0.120) err=0.051m tol=0.070 after=close
+[real_action_bridge-4]   exec   inflight: GRASP/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.01s grip=0.01s plan=2.88s
+[plan_node-2] [WARN] [1782847659.349394082] [plan_node]: settle timeout 2.5s: max_err=0.0458rad vel=0.0705rad/s — DONE anyway
+[plan_node-2] [INFO] [1782847659.349840479] [plan_node]: hold keeps q_final after timeout: max_err=0.0458rad threshold=0.0080rad
+[gripper_node-3] [INFO] [1782847659.351056590] [gripper_node]: gripper: close commanded
+[real_action_bridge-4] [33m[WARN] [1782847659.621887583] [ppo_action_bridge]: failure recovery armed: command=GRASP -> phase=RETREAT reason=gripper_timeout[0m
+[real_action_bridge-4] [33m[WARN] [1782847659.622899190] [ppo_action_bridge]: transaction FAIL: command=GRASP reason=gripper_timeout[0m
+[real_action_bridge-4] [33m[WARN] [1782847659.624295959] [ppo_action_bridge]: ARMED publish /ee_target command=RECOVERY xyz=(-0.149,+0.670,+0.300) yaw=4.1deg line=True note=pre-home vertical retreat[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=1
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.166,+0.596,+0.007) src=vision_memory/0.50s ee=(-0.149,+0.670,+0.167) target=(+0.240,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=2 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.013,+0.018,+0.008)
+[real_action_bridge-4]   target RECOVERY xyz=(-0.149,+0.670,+0.300) yaw=+4.1(object) line=1 after=-
+[real_action_bridge-4]   exec   pre-home vertical retreat stage=WAIT_PLAN plan=DONE fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.01s grip=0.01s plan=0.27s
+[plan_compute_node-1] [INFO] [1782847659.624640906] [plan_compute_node]: planning [4] (straight line): [-0.14909953280593102, 0.6699679235909825, 0.16690550977363805] → [-0.14908231794834137, 0.6699337363243103, 0.30000001192092896] duration=1.00s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.166,+0.596,+0.007) src=vision_memory/1.00s ee=(-0.149,+0.670,+0.167) target=(+0.240,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=2 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.011,+0.014,+0.003)
+[real_action_bridge-4]   target RECOVERY xyz=(-0.149,+0.670,+0.300) err=0.133m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: RECOVERY/WAIT_PLAN stage=WAIT_PLAN plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.04s box=0.09s mot=0.00s grip=0.00s plan=0.49s
+[gripper_node-3] [INFO] [1782847660.149649653] [gripper_node]: grasped: q_actual=0.3028
+[plan_compute_node-1] [INFO] [1782847660.227593799] [plan_compute_node]: [4] straight-line plan ready: duration=1.00s timing(total=0.601s ik=- build=- collision=- cost=- checked=- safe=- cand=- j6_dq=-)
+[plan_node-2] [INFO] [1782847660.228666241] [plan_node]: [4] plan received: duration=1.00s
+[plan_node-2] [INFO] [1782847660.234576895] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847660.234946007] [plan_node]: [target 4] xyz=[-0.14908231794834137, 0.6699337363243103, 0.30000001192092896] yaw=+4.1° duration=1.32s
+[plan_node-2] [INFO] [1782847660.235342490] [plan_node]: plan committed: xyz=[-0.14908231794834137, 0.6699337363243103, 0.30000001192092896] yaw=+4.1° duration=1.32s drift=0.0018rad
+[plan_node-2] [INFO] [1782847660.242471670] [plan_node]: [58] plan received: duration=1.00s
+[plan_node-2] [INFO] [1782847660.248846514] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847660.249192773] [plan_node]: [target 58] xyz=[-0.14908231794834137, 0.6699337363243103, 0.30000001192092896] yaw=+4.1° duration=1.32s
+[plan_node-2] [INFO] [1782847660.249489941] [plan_node]: plan committed: xyz=[-0.14908231794834137, 0.6699337363243103, 0.30000001192092896] yaw=+4.1° duration=1.32s drift=0.0018rad
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=LIFT (object is grasped but not lifted obj_z=0.025 ee_z=0.184))
+[real_action_bridge-4]   state  obj=(-0.170,+0.597,+0.025) src=grasp_fk/0.00s ee=(-0.153,+0.671,+0.184) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=2 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.001,+0.016,-0.020)
+[real_action_bridge-4]   target RECOVERY xyz=(-0.149,+0.670,+0.300) err=0.116m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: RECOVERY/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.03s mot=0.00s grip=0.00s plan=0.37s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (held RETREAT for 5.0/8.0s; instant=MOVE_TO_PLACE (object is lifted/grasped obj_z=0.109 ee_z=0.268))
+[real_action_bridge-4]   state  obj=(-0.172,+0.599,+0.109) src=grasp_fk/0.00s ee=(-0.155,+0.673,+0.268) target=(+0.241,+0.727,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=2 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.003,+0.013,-0.023)
+[real_action_bridge-4]   target RECOVERY xyz=(-0.149,+0.670,+0.300) err=0.032m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: RECOVERY/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.06s mot=0.00s grip=0.00s plan=0.87s
+[plan_node-2] [INFO] [1782847661.578109556] [plan_node]: hold q_final target(rad): j1=+1.1053  j2=-0.5752  j3=-1.8704  j4=-0.2756  j5=-1.5708  j6=-0.3948
+[plan_node-2] [INFO] [1782847661.578482606] [plan_node]: hold start actual(rad): j1=+1.0993  j2=-0.5724  j3=-1.8644  j4=-0.2844  j5=-1.5702  j6=-0.3891
+[plan_node-2] [INFO] [1782847661.578872777] [plan_node]: hold start err(rad): j1=-0.0060  j2=+0.0028  j3=+0.0060  j4=-0.0087  j5=+0.0006  j6=+0.0058
+[plan_node-2] [INFO] [1782847661.579229887] [plan_node]: trajectory complete — settling toward q_final
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (held RETREAT for 5.5/8.0s; instant=MOVE_TO_PLACE (object is lifted/grasped obj_z=0.141 ee_z=0.300))
+[real_action_bridge-4]   state  obj=(-0.170,+0.595,+0.141) src=grasp_fk/0.00s ee=(-0.153,+0.668,+0.300) target=(+0.242,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=2 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.003,+0.012,-0.024)
+[real_action_bridge-4]   target RECOVERY xyz=(-0.149,+0.670,+0.300) err=0.004m tol=0.070 after=-
+[real_action_bridge-4]   exec   inflight: RECOVERY/WAIT_PLAN stage=WAIT_PLAN plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.06s mot=0.00s grip=0.00s plan=1.37s
+[plan_node-2] [INFO] [1782847661.634950078] [plan_node]: settled in 0.45s: max_err=0.0067rad vel=0.0839rad/s — DONE
+[plan_node-2] [INFO] [1782847661.635327125] [plan_node]: hold actual_q latched after settled: max_q_final_err=0.0067rad threshold=0.0080rad settle_vel=0.0839rad/s
+[real_action_bridge-4] [33m[WARN] [1782847661.636917828] [ppo_action_bridge]: transaction SUCCESS: command=RECOVERY reason=plan_done[0m
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=1
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (held RETREAT for 6.0/8.0s; instant=MOVE_TO_PLACE (object is lifted/grasped obj_z=0.142 ee_z=0.301))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=grasp_fk/0.00s ee=(-0.155,+0.667,+0.301) target=(+0.241,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=1 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.005,+0.006,-0.033)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) yaw=+0.0(object) line=0 after=open
+[real_action_bridge-4]   exec   go_home service stage=WAIT_HOME plan=DONE fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.06s mot=0.00s grip=0.00s plan=0.48s
+[gripper_node-3] [INFO] [1782847662.118849951] [gripper_node]: gripper: open commanded
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/0.50s ee=(-0.156,+0.667,+0.302) target=(+0.241,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.001,-0.000,-0.024)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=PLANNING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.07s mot=0.00s grip=0.00s plan=0.49s
+[plan_node-2] [INFO] [1782847662.639292942] [plan_node]: [hold 1/3 +1.0s] err(rad): j1=-0.0117  j2=+0.0082  j3=+0.0098  j4=-0.0099  j5=+0.0009  j6=+0.0065  max=0.0117  worst=j1 q=+1.0936 q_des=+1.0989 qd=-0.0248 kp=35.0 kd=5.0 pd_tau=+0.312 tau_ff=-0.142 tau_meas=+0.112
+[plan_node-2] [INFO] [1782847662.639696208] [plan_node]: [hold diag j3] err=+0.0031 q=-1.8606 q_des=-1.8636 qd=+0.1135 kp=40.0 kd=4.8 pd_tau=-0.671 tau_ff=-8.014 total=-8.685 tau_meas=-8.494
+[plan_compute_node-1] [INFO] [1782847662.920031773] [plan_compute_node]: [5] go_home 2-leg: wrist_fold=8.03s home=7.36s total=15.39s
+[plan_node-2] [INFO] [1782847662.923757750] [plan_node]: [59] plan received: duration=8.03s + leg2=7.36s
+[plan_node-2] [INFO] [1782847662.929353233] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847662.929735320] [plan_node]: [target 59] xyz=[0.0, 0.0, 0.0] yaw=+0.0° duration=8.03s
+[plan_node-2] [INFO] [1782847662.930092880] [plan_node]: plan committed: xyz=[0.0, 0.0, 0.0] yaw=+0.0° duration=8.03s drift=0.0035rad
+[plan_node-2] [WARN] [1782847662.936480439] [plan_node]: [59] duplicate identical plan ignored
+[plan_node-2] [INFO] [1782847662.940131956] [plan_node]: [88] plan received: duration=8.03s + leg2=7.36s
+[plan_node-2] [INFO] [1782847662.945966708] [plan_node]: ================================================================
+[plan_node-2] [INFO] [1782847662.946307868] [plan_node]: [target 88] xyz=[0.0, 0.0, 0.0] yaw=+0.0° duration=8.03s
+[plan_node-2] [INFO] [1782847662.946604173] [plan_node]: plan committed: xyz=[0.0, 0.0, 0.0] yaw=+0.0° duration=8.03s drift=0.0036rad
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/1.00s ee=(-0.158,+0.666,+0.303) target=(+0.241,+0.726,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(+0.000,-0.001,-0.024)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.07s mot=0.00s grip=0.00s plan=0.17s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/1.50s ee=(-0.158,+0.666,+0.303) target=(+0.242,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.001,-0.002,-0.025)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.12s box=0.12s mot=0.03s grip=0.03s plan=0.70s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/2.00s ee=(-0.154,+0.658,+0.299) target=(+0.242,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.002,-0.002,-0.026)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.47s box=0.62s mot=0.04s grip=0.04s plan=1.20s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/2.50s ee=(-0.145,+0.638,+0.285) target=(+0.242,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.002,-0.003,-0.027)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.98s box=1.13s mot=0.05s grip=0.05s plan=1.71s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/3.01s ee=(-0.134,+0.616,+0.278) target=(+0.241,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.003,-0.004,-0.027)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.31s box=1.50s mot=0.07s grip=0.07s plan=2.23s
+[plan_node-2] [WARN] [1782847665.432692046] [plan_node]: [warp=0.97 vt=2.4/8.0s 30%] worst=j4(0.073rad)  j1=+0.005  j2=+0.016  j3=+0.002  j4=+0.073  j5=+0.000  j6=+0.000  q=+0.217 q_des=+0.290 qd=+0.397 qd_des=+0.553 pd_tau=+2.57 tau_ff=-0.54
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/3.51s ee=(-0.102,+0.556,+0.268) target=(+0.241,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.004,-0.005,-0.028)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.79s box=1.98s mot=0.05s grip=0.05s plan=2.71s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/4.00s ee=(-0.070,+0.495,+0.276) target=(+0.242,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.004,-0.005,-0.028)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.13s box=1.27s mot=0.02s grip=0.02s plan=3.19s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/4.50s ee=(-0.039,+0.437,+0.307) target=(+0.242,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.004,-0.006,-0.028)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.65s box=1.78s mot=0.03s grip=0.03s plan=3.70s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/5.00s ee=(-0.015,+0.391,+0.357) target=(+0.242,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.004,-0.006,-0.029)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=1.15s box=2.29s mot=0.04s grip=0.04s plan=4.20s
+[plan_node-2] [WARN] [1782847667.449195753] [plan_node]: [warp=0.55 vt=4.3/8.0s 54%] worst=j4(0.057rad)  j1=+0.007  j2=+0.024  j3=+0.006  j4=+0.057  j5=+0.000  j6=+0.001  q=+1.624 q_des=+1.681 qd=+0.671 qd_des=+0.434 pd_tau=+1.12 tau_ff=+0.42
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/5.51s ee=(-0.002,+0.364,+0.426) target=(+0.241,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.004,-0.007,-0.029)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.27s box=1.65s mot=0.04s grip=0.03s plan=4.71s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/6.01s ee=(+0.001,+0.359,+0.500) target=(+0.241,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.004,-0.008,-0.029)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.77s box=2.15s mot=0.03s grip=0.03s plan=5.20s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(-0.171,+0.593,+0.142) src=vision_memory/6.50s ee=(-0.007,+0.377,+0.568) target=(+0.241,+0.725,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.004,-0.008,-0.029)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=1.24s box=1.24s mot=0.01s grip=0.01s plan=5.67s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(+0.028,+0.367,+0.009) src=vision/0.06s ee=(-0.024,+0.409,+0.620) target=(+0.240,+0.723,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.005,-0.006,-0.029)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.03s mot=0.00s grip=0.00s plan=6.17s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(+0.028,+0.367,+0.009) src=vision_memory/0.56s ee=(-0.039,+0.436,+0.647) target=(+0.236,+0.722,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.006,-0.008,-0.031)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.02s box=0.05s mot=0.01s grip=0.01s plan=6.67s
+[real_action_bridge-4] 
+[real_action_bridge-4] [REAL ACTION ARMED] phase=RETREAT conf=0.85 ok=0
+[real_action_bridge-4]   reason return-home after failed command; sensor=RETREAT (guarded late-task phase RETREAT; instant=OBSERVE_OBJECT (object visible and not grasped))
+[real_action_bridge-4]   state  obj=(+0.028,+0.367,+0.009) src=vision_memory/1.06s ee=(-0.050,+0.457,+0.661) target=(+0.237,+0.724,+0.009) mode=basket target_label=basket target_src=vision
+[real_action_bridge-4]   flags  home=0 grasp=0 in_target=0 drop=0 attempts=0 phase_override=RETREAT return_home=1 placed=0
+[real_action_bridge-4]   policy ppo=HOME prior=HOME raw=HOME exec=HOME blocked=0 grip=open dxyz=(-0.005,-0.007,-0.030)
+[real_action_bridge-4]   target HOME xyz=(+0.000,+0.000,+0.000) err=- tol=0.070 after=open
+[real_action_bridge-4]   exec   inflight: HOME/WAIT_HOME stage=WAIT_HOME plan=EXECUTING fail=-
+[real_action_bridge-4]   age    img=0.03s box=0.03s mot=0.00s grip=0.00s plan=7.17s

@@ -10,6 +10,7 @@
 # 전제:
 #   ros2 run can_interface can_bridge_node  (별도 터미널)
 # ================================================================
+import datetime
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -31,6 +32,9 @@ _STAGE1    = os.path.join(_CKPT, 'stage1_v2', 'best.pt')
 _COLOR_NET = os.path.join(_CKPT, 'color_net_v2', 'best.pt')
 _SLOT_DIFF = os.path.join(_CKPT, 'slot_diff', 'best.pt')
 _STAGE4    = os.path.join(_CKPT, 'stage4', 'best.pt')
+_LOG_TS    = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+_LOG_DIR   = os.path.expanduser('~/idle_ws/logs')
+_PLAN_CSV  = os.path.join(_LOG_DIR, f'ppo_{_LOG_TS}_plan.csv')
 
 
 def generate_launch_description():
@@ -53,15 +57,15 @@ def generate_launch_description():
         DeclareLaunchArgument('hold_friction_scale',             default_value='0.0'),
         DeclareLaunchArgument('hold_friction_scale_by_motor_json', default_value='{"2": 0}'),
         DeclareLaunchArgument('hold_friction_deadband_rad',      default_value='0.00'),
-        DeclareLaunchArgument('hold_kp_scale_by_motor_json',     default_value='{"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0}'),
-        DeclareLaunchArgument('hold_kd_scale_by_motor_json',     default_value='{"1": 0.0, "2": 0.0, "3": 0.0, "4": 0.0, "5": 0.0, "6": 0.0}'),
+        DeclareLaunchArgument('hold_kp_scale_by_motor_json',     default_value='{}'),
+        DeclareLaunchArgument('hold_kd_scale_by_motor_json',     default_value='{}'),
         DeclareLaunchArgument('hold_latch_actual_q_after_settle', default_value='true'),
-        DeclareLaunchArgument('hold_latch_max_err_rad',          default_value='0.008'),
+        DeclareLaunchArgument('hold_latch_max_err_rad',          default_value='0.055'),
         DeclareLaunchArgument('settle_vel_rad_s',                default_value='0.12'),
         DeclareLaunchArgument('settle_kd_scale',                 default_value='0.7'),
         DeclareLaunchArgument('hold_qd_lpf_alpha',               default_value='0.95'),
         DeclareLaunchArgument('settle_qd_lpf_alpha',             default_value='0.7'),
-        DeclareLaunchArgument('plan_diag_csv_path',              default_value=''),
+        DeclareLaunchArgument('plan_diag_csv_path',              default_value=_PLAN_CSV),
         DeclareLaunchArgument('plan_diag_hz',                    default_value='100.0'),
 
         # ── PPO 브릿지 파라미터 ────────────────────────────────────────
@@ -81,6 +85,8 @@ def generate_launch_description():
                               description='cv2.VideoCapture index (-1 = use /image_raw topic)'),
         DeclareLaunchArgument('whisper_model_size', default_value='',
                               description='faster_whisper size (e.g. small). 빈값=topic 사용'),
+        DeclareLaunchArgument('yaw_mode', default_value='object',
+                              description='fixed=0deg, object=슬롯 yaw, object_policy=슬롯+PPO dyaw'),
 
         # ── 1. IK 계산 ────────────────────────────────────────────────
         Node(
@@ -137,6 +143,11 @@ def generate_launch_description():
             executable='gripper_node',
             name='gripper_node',
             output='screen',
+            parameters=[{
+                'q_min_grasp': 0.1,   # default 0.40 — 블록 닿으면 멈추는 위치 허용
+                'kp':          2.5,    # default 1.0  — 쥐는 힘 증가
+                'kd':          0.2,    # default 0.1
+            }],
         ),
 
         # ── 4. PPO real_action_bridge (dry-run 기본) ──────────────────
@@ -160,6 +171,8 @@ def generate_launch_description():
                 '--stage4-ckpt',         LaunchConfiguration('stage4_ckpt'),
                 '--image-device',        LaunchConfiguration('image_device'),
                 '--whisper-model-size',  LaunchConfiguration('whisper_model_size'),
+                '--yaw-mode',            LaunchConfiguration('yaw_mode'),
+                '--command-timeout',     '60',
             ],
             condition=IfCondition(PythonExpression(["'", LaunchConfiguration('armed'), "' != 'true'"])),
         ),
@@ -184,6 +197,8 @@ def generate_launch_description():
                 '--stage4-ckpt',         LaunchConfiguration('stage4_ckpt'),
                 '--image-device',        LaunchConfiguration('image_device'),
                 '--whisper-model-size',  LaunchConfiguration('whisper_model_size'),
+                '--yaw-mode',            LaunchConfiguration('yaw_mode'),
+                '--command-timeout',     '60',
                 '--armed',
             ],
             condition=IfCondition(LaunchConfiguration('armed')),
