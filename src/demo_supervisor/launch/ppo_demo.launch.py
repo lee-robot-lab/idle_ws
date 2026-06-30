@@ -68,7 +68,7 @@ def generate_launch_description():
         DeclareLaunchArgument('policy_model',       default_value=_PPO),
         DeclareLaunchArgument('device',             default_value='cuda'),
         DeclareLaunchArgument('camera_topic',       default_value='/image_raw'),
-        DeclareLaunchArgument('target_color',       default_value='red'),
+        DeclareLaunchArgument('target_color',       default_value=''),
         DeclareLaunchArgument('task_mode',          default_value='basket'),
         DeclareLaunchArgument('phase_prior_weight', default_value='0.8'),
         DeclareLaunchArgument('slot_stage1_ckpt',   default_value=_STAGE1),

@@ -247,6 +247,9 @@ class SlotEmbedder:
         """RGB (H, W, 3) uint8 → tensor (1, 3, 288, 416) ImageNet-normalized."""
         import torch
 
+        # 학습 데이터는 1280×720 기준 — 다른 해상도면 먼저 리사이즈
+        if rgb.shape[1] != 1280 or rgb.shape[0] != 720:
+            rgb = self._cv2.resize(rgb, (1280, 720))
         img = rgb[_CROP_Y0:, _CROP_X0:_CROP_X1]  # crop
         img = self._cv2.resize(img, (_INPUT_W, _INPUT_H))
         img = (img.astype(np.float32) / 255.0 - _MEAN) / _STD

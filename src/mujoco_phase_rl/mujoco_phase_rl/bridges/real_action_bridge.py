@@ -264,11 +264,13 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
             if now - self.inflight_started_s > self.action_config.gripper_timeout_s:
                 self._finish_transaction(False, "gripper_timeout")
             return
-        if now - self.inflight_started_s > self.action_config.command_timeout_s:
-            err = self._target_error(fused)
-            suffix = "" if err is None else f" target_err={err:.3f}m"
-            self._finish_transaction(False, "command_timeout" + suffix)
-            return
+        # HOME은 robot_home 신호로만 완료 판정 — plan 길이가 가변이므로 타임아웃 미적용
+        if self.inflight.command != Command.HOME:
+            if now - self.inflight_started_s > self.action_config.command_timeout_s:
+                err = self._target_error(fused)
+                suffix = "" if err is None else f" target_err={err:.3f}m"
+                self._finish_transaction(False, "command_timeout" + suffix)
+                return
         if self.inflight_stage == "WAIT_TARGET_VERIFY":
             self._advance_after_plan_done("target_verified")
             return
@@ -510,7 +512,7 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
         note = command.name
 
         if command == Command.HOME:
-            if fused.ee_pos is not None and float(fused.ee_pos[2]) < cfg.prehome_z - 0.01:
+            if not fused.robot_home and fused.ee_pos is not None and float(fused.ee_pos[2]) < cfg.prehome_z - 0.01:
                 xyz = np.array(
                     [float(fused.ee_pos[0]), float(fused.ee_pos[1]), cfg.prehome_z],
                     dtype=np.float32,

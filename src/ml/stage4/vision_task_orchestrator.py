@@ -20,7 +20,7 @@ import numpy as np
 import torch
 import torchvision.transforms.functional as TF
 
-from stage1.dataset import CROP_H, CROP_W, CROP_X0, CROP_Y0
+from stage1.dataset import CROP_H, CROP_W, CROP_X0, CROP_Y0, _MEAN as _IMAGENET_MEAN, _STD as _IMAGENET_STD
 from stage1.model import SlotEncoder
 from stage2.color_net_v2 import ColorNetV2 as ColorNet
 from stage4.features import normalized_xy_to_world, normalized_xy_yaw_to_world_yaw
@@ -69,11 +69,14 @@ def _load_models(stage1_ckpt: str, color_net_ckpt: str, stage4_ckpt: str, device
 
 
 def _preprocess(frame_bgr: np.ndarray, device: str) -> torch.Tensor:
-    """BGR frame → crop → resize → (1, 3, H, W) tensor in [0,1]."""
+    """BGR frame → 1280×720 → crop → resize → ImageNet-normalized tensor."""
+    if frame_bgr.shape[1] != 1280 or frame_bgr.shape[0] != 720:
+        frame_bgr = cv2.resize(frame_bgr, (1280, 720))
     cropped = frame_bgr[CROP_Y0:, CROP_X0: CROP_X0 + CROP_W]
     resized = cv2.resize(cropped, (_IMAGE_W, _IMAGE_H))
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    t = torch.from_numpy(rgb.transpose(2, 0, 1)).float() / 255.0
+    arr = (rgb.astype(np.float32) / 255.0 - _IMAGENET_MEAN) / _IMAGENET_STD
+    t = torch.from_numpy(arr.transpose(2, 0, 1)).float()
     return t.unsqueeze(0).to(device)
 
 

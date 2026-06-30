@@ -412,6 +412,7 @@ class RealPhaseDiagnosticsNode:
                     self.logger.warning(f"camera open failed (attempt {attempt+1}/5), retrying...")
                     time.sleep(1.0)
                     continue
+                c.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
                 c.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 c.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                 # warm-up
@@ -425,11 +426,21 @@ class RealPhaseDiagnosticsNode:
                     continue
                 h, w = frame.shape[:2]
                 self.logger.info(f"camera opened: device={dev} actual={w}x{h}")
-                if w < 640 or h < 360:
-                    self.logger.warning(f"camera resolution too low ({w}x{h}), retrying...")
-                    c.release()
-                    time.sleep(1.0)
-                    continue
+                if w != 1280 or h != 720:
+                    if attempt < 4:
+                        self.logger.warning(f"camera not 1280x720 ({w}x{h}), retrying...")
+                        c.release()
+                        time.sleep(1.0)
+                        try:
+                            subprocess.run(
+                                ["v4l2-ctl", f"-d{dev_path}",
+                                 "--set-fmt-video=width=1280,height=720,pixelformat=MJPG"],
+                                capture_output=True, timeout=3,
+                            )
+                        except Exception:
+                            pass
+                        continue
+                    self.logger.warning(f"camera gave {w}x{h} after retries — using as-is (preprocess will resize)")
                 return c
             return None
 
@@ -1264,7 +1275,7 @@ class RealPhaseDiagnosticsNode:
         _COLORS  = ["red", "green", "blue"]
         _TARGETS = ["red", "green", "blue", "basket"]
         task_type = self.ppo_task_type or ("stack" if self.config.task_mode == "stack" else "pick_place")
-        pick_color = self.ppo_task_object_color or self.config.target_color or "red"
+        pick_color = self.ppo_task_object_color or self.config.target_color or ""
         tgt_label  = (self.config.stack_target_color if task_type == "stack" else self.config.basket_color) or "basket"
         cmd = np.array(
             ([1.0, 0.0] if task_type == "pick_place" else [0.0, 1.0])

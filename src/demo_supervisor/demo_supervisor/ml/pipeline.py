@@ -14,6 +14,9 @@ import torch
 
 _ML_ROOT = Path(__file__).resolve().parents[4] / "src" / "ml"
 
+_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
 
 def _import_ml():
     """src/ml을 sys.path에 추가 후 Stage1/2/4 모듈 임포트."""
@@ -107,7 +110,8 @@ class MLPipeline:
         cropped = frame_bgr[m["CROP_Y0"]:, m["CROP_X0"]: m["CROP_X0"] + m["CROP_W"]]
         resized = cv2.resize(cropped, (self.IMAGE_W, self.IMAGE_H))
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        t = torch.from_numpy(rgb.transpose(2, 0, 1)).float() / 255.0
+        t = (rgb.astype(np.float32) / 255.0 - _IMAGENET_MEAN) / _IMAGENET_STD
+        t = torch.from_numpy(t.transpose(2, 0, 1)).float()
         return t.unsqueeze(0).to(self.device)
 
     @torch.no_grad()
@@ -201,7 +205,7 @@ class MLPipeline:
         place_world_xy = m["normalized_xy_to_world"](place_xy_norm.unsqueeze(0))[0]
         place_world_yaw = self._image_yaw_to_world(place_xy_norm, place_yaw_vec)
 
-        pick_color = step.get("object", "unknown").replace("_block", "")
+        pick_color = (step.get("object") or "unknown").replace("_block", "")
 
         return GroundingResult(
             x_pick=float(pick_world_xy[0].item()),
