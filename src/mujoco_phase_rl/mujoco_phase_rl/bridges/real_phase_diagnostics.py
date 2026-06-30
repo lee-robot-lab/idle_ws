@@ -94,6 +94,7 @@ def _slots_to_boxes(curr_slots: dict, stamp_s: float) -> list:
         img_yaw = math.atan2(float(yaw_vec[slot_idx, 1]), float(yaw_vec[slot_idx, 0])) / 4.0
         wx, wy = _slot_world_xy(x_n, y_n)
         w_yaw = _slot_world_yaw(x_n, y_n, img_yaw)
+        color_conf = float(color_soft[slot_idx, color_id])
         boxes.append(BoxPose(
             color_key=color_name,
             color=color_name,
@@ -101,6 +102,7 @@ def _slots_to_boxes(curr_slots: dict, stamp_s: float) -> list:
             yaw_rad=w_yaw,
             center_px=None,
             stamp_s=stamp_s,
+            color_conf=color_conf,
         ))
     return boxes
 
@@ -174,6 +176,7 @@ class BoxPose:
     yaw_rad: float
     center_px: tuple[float, float] | None
     stamp_s: float
+    color_conf: float = 1.0  # ColorNet max softmax prob (threshold=_SLOT_MIN_COLOR_CONF)
 
 
 @dataclass
@@ -1554,7 +1557,8 @@ class RealPhaseDiagnosticsNode:
                 (
                     f"  flags home={int(fused.robot_home)} grasp={int(fused.object_grasped)} "
                     f"target={int(fused.object_in_target)} grip_state={self._gripper_state_id()} "
-                    f"obj_px={_fmt_box_px(object_box)}"
+                    f"obj_px={_fmt_box_px(object_box)} "
+                    f"color_cc={'%.2f' % object_box.color_conf if object_box else 'None'}"
                 ),
                 f"  vision {_compact_vision(vision_line)}",
                 f"  action {action_text}",
