@@ -57,6 +57,8 @@ def compute_phase_reward(
     if bool(extra_info.get("max_attempts_exceeded", False)):
         components["max_attempts_exceeded"] = -2.0
 
+    _add_recovery_event_components(components, command, extra_info)
+
     if phase == Phase.OBSERVE_OBJECT and command == Command.MOVE_TO_PREGRASP:
         _add_pregrasp_components(components, extra_info)
     elif phase == Phase.GRASP and command == Command.GRASP:
@@ -95,6 +97,39 @@ def compute_skeleton_reward(
     if timeout:
         components["timeout"] = -5.0
     return _total(components), components
+
+
+def _add_recovery_event_components(
+    components: dict[str, float],
+    command: Command,
+    info: dict,
+) -> None:
+    event = str(info.get("recovery_event", "NONE"))
+    expected = str(info.get("recovery_expected_response", "continue"))
+    retry_count = int(info.get("recovery_retry_count", 0) or 0)
+    if retry_count > 1:
+        components["recovery_retry_loop"] = -0.20 * float(retry_count - 1)
+    if event in {"NONE"} or not bool(info.get("recovery_should_apply", True)):
+        return
+
+    is_recovery_command = command == Command.RECOVERY
+    is_observe_command = command == Command.MOVE_TO_PREGRASP
+    if expected == "continue":
+        if is_recovery_command:
+            components["recovery_unnecessary"] = -0.35
+        return
+    if expected == "recover_object":
+        if is_recovery_command:
+            components["recovery_correct_response"] = 0.35
+        else:
+            components["recovery_stale_phase"] = -0.45
+    if expected in {"reobserve_object", "reobserve_target"}:
+        if is_observe_command:
+            components["recovery_correct_response"] = 0.35
+        else:
+            components["recovery_stale_phase"] = -0.45
+    if expected == "fail_fast" and not is_recovery_command:
+        components["recovery_fail_fast"] = 0.10
 
 
 def _add_pregrasp_components(components: dict[str, float], info: dict) -> None:

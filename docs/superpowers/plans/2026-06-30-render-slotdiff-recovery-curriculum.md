@@ -635,7 +635,7 @@ git commit -m "feat: wire render recovery events into env"
 - Modify: `src/mujoco_phase_rl/mujoco_phase_rl/tasks/reward.py`
 - Create: `src/mujoco_phase_rl/test/test_recovery_reward.py`
 
-- [ ] **Step 1: Write failing reward tests**
+- [x] **Step 1: Write failing reward tests**
 
 Create `src/mujoco_phase_rl/test/test_recovery_reward.py`:
 
@@ -683,7 +683,7 @@ def test_no_change_penalizes_unnecessary_recovery():
     assert reward < 0.0
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -694,7 +694,7 @@ pytest test/test_recovery_reward.py -q
 
 Expected: FAIL with missing `recovery_correct_response`/`recovery_stale_phase`/`recovery_unnecessary`.
 
-- [ ] **Step 3: Add reward helper**
+- [x] **Step 3: Add reward helper**
 
 In `reward.py`, after the base recovery penalty block:
 
@@ -732,7 +732,7 @@ def _add_recovery_event_components(
         components["recovery_retry_loop"] = -0.20 * float(retry_count - 1)
 ```
 
-- [ ] **Step 4: Run reward tests and existing reward tests**
+- [x] **Step 4: Run reward tests and existing reward tests**
 
 Run:
 
@@ -743,7 +743,7 @@ pytest test/test_recovery_reward.py test/test_stack_reward.py -q
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add test/test_recovery_reward.py mujoco_phase_rl/tasks/reward.py
