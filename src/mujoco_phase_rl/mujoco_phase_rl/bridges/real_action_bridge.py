@@ -55,6 +55,7 @@ class ActionBridgeConfig:
     grasp_z: float
     carry_z: float
     place_z: float
+    stack_place_z: float
     place_xy_mode: str
     prehome_z: float
     recovery_z_delta: float
@@ -643,7 +644,7 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
                 [
                     place_x,
                     place_y,
-                    cfg.place_z,
+                    cfg.stack_place_z if self.config.task_mode == 'stack' else cfg.place_z,
                 ],
                 dtype=np.float32,
             )
@@ -1095,6 +1096,12 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
         help="Absolute world z for place descent before opening gripper.",
     )
     parser.add_argument(
+        "--stack-place-z",
+        type=float,
+        default=None,
+        help="Absolute world z for PLACE when task-mode=stack. Defaults to place-z if omitted.",
+    )
+    parser.add_argument(
         "--place-xy-mode",
         choices=["current", "target"],
         default="current",
@@ -1133,6 +1140,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
     grasp_z = _float_arg(args.grasp_z, args.grasp_z_delta, 0.12)
     carry_z = _float_arg(args.carry_z, args.move_place_z_delta, args.lift_height_default, 0.23)
     place_z = _float_arg(args.place_z, args.place_z_delta, 0.12)
+    stack_place_z = _float_arg(args.stack_place_z, place_z)
     prehome_z = _float_arg(args.prehome_z, 0.30)
     diagnostics = BridgeConfig(
         node_name="mujoco_phase_rl_real_action_bridge",
@@ -1191,6 +1199,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
             grasp_z=float(grasp_z),
             carry_z=float(carry_z),
             place_z=float(place_z),
+            stack_place_z=float(stack_place_z),
             place_xy_mode=str(args.place_xy_mode),
             prehome_z=float(prehome_z),
             recovery_z_delta=float(args.recovery_z_delta),
