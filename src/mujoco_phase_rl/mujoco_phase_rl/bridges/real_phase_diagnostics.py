@@ -21,6 +21,83 @@ from mujoco_phase_rl.tasks.phase_manager import (
 )
 
 
+# ── SlotEmbedder 비전 상수 ─────────────────────────────────────────
+_SLOT_H = np.array([
+    [0.0009504612, -2.1327e-06, -0.5866006127],
+    [1.9451e-06, -0.0009616124, 0.928124009],
+    [-6.2509e-06, -2.12835e-05, 1.0],
+], dtype=np.float64)
+_SLOT_CROP_X0, _SLOT_CROP_X1, _SLOT_CROP_Y0 = 90, 1120, 5
+_SLOT_CROP_W = _SLOT_CROP_X1 - _SLOT_CROP_X0
+_SLOT_CROP_H = 720 - _SLOT_CROP_Y0
+_SLOT_COLOR_NAMES = {0: "red", 1: "green", 2: "blue", 3: "basket"}
+_SLOT_PRESENT_THRESH = 0.35
+
+
+def _slot_world_xy(x_norm: float, y_norm: float) -> tuple[float, float]:
+    u = x_norm * _SLOT_CROP_W + _SLOT_CROP_X0
+    v = y_norm * _SLOT_CROP_H + _SLOT_CROP_Y0
+    q = _SLOT_H @ np.array([u, v, 1.0], dtype=np.float64)
+    return float(q[0] / q[2]), float(q[1] / q[2])
+
+
+def _slot_world_yaw(x_norm: float, y_norm: float, image_yaw: float, d: float = 50.0) -> float:
+    u1 = x_norm * _SLOT_CROP_W + _SLOT_CROP_X0
+    v1 = y_norm * _SLOT_CROP_H + _SLOT_CROP_Y0
+    u2 = u1 + math.cos(image_yaw) * d
+    v2 = v1 + math.sin(image_yaw) * d
+    q1 = _SLOT_H @ np.array([u1, v1, 1.0], dtype=np.float64)
+    q2 = _SLOT_H @ np.array([u2, v2, 1.0], dtype=np.float64)
+    dw = q2[:2] / q2[2] - q1[:2] / q1[2]
+    return math.atan2(float(dw[1]), float(dw[0]))
+
+
+def _slots_to_boxes(curr_slots: dict, stamp_s: float) -> list:
+    """SlotEmbedder curr_slots → BoxPose 목록 (color별 best 슬롯)."""
+    try:
+        import torch
+        import torch.nn.functional as F
+    except ImportError:
+        return []
+
+    present = curr_slots["present"][:, 0]  # (N,)
+    xy = curr_slots["xy"]  # (N, 2)
+    yaw_vec = curr_slots["yaw"]  # (N, 2): cos4/sin4
+    color_logit = curr_slots["color_logit"]  # (N, 4)
+    color_soft = F.softmax(
+        torch.tensor(color_logit, dtype=torch.float32), dim=-1
+    ).numpy()  # (N, 4)
+
+    best: dict[int, tuple[int, float]] = {}  # color_id → (slot_idx, score)
+    for i in range(len(present)):
+        if float(present[i]) < _SLOT_PRESENT_THRESH:
+            continue
+        color_id = int(np.argmax(color_soft[i]))
+        score = float(present[i]) * float(color_soft[i, color_id])
+        if score > best.get(color_id, (-1, 0.0))[1]:
+            best[color_id] = (i, score)
+
+    boxes = []
+    for color_id, (slot_idx, _) in best.items():
+        color_name = _SLOT_COLOR_NAMES.get(color_id)
+        if color_name is None:
+            continue
+        x_n = float(xy[slot_idx, 0])
+        y_n = float(xy[slot_idx, 1])
+        img_yaw = math.atan2(float(yaw_vec[slot_idx, 1]), float(yaw_vec[slot_idx, 0])) / 4.0
+        wx, wy = _slot_world_xy(x_n, y_n)
+        w_yaw = _slot_world_yaw(x_n, y_n, img_yaw)
+        boxes.append(BoxPose(
+            color_key=color_name,
+            color=color_name,
+            pos=np.array([wx, wy, 0.009], dtype=np.float32),
+            yaw_rad=w_yaw,
+            center_px=None,
+            stamp_s=stamp_s,
+        ))
+    return boxes
+
+
 FINGER_CLOSED_Q = 0.0447
 GRIPPER_MOTOR_CLOSED_Q = 0.80
 DEFAULT_TARGET_POS = np.array([0.0, 0.62, 0.009], dtype=np.float32)
@@ -72,6 +149,11 @@ class BridgeConfig:
     deterministic: bool
     no_command_mask: bool
     phase_prior_weight: float
+    slot_stage1_ckpt: str | None
+    slot_diff_ckpt: str | None
+    slot_color_net_ckpt: str | None
+    ppo_task_topic: str
+    ppo_done_topic: str
 
 
 @dataclass
@@ -167,6 +249,8 @@ class RealPhaseDiagnosticsNode:
 
         self.vision = _load_vision(config.vision_model, config.device, self.logger)
         self.policy = _load_policy(config.policy_model, config.device, self.logger)
+        self._slot_embedder = _load_slot_embedder(config, self.logger)
+        self._cached_slot_diff_emb = np.zeros(64, dtype=np.float32)
         self.cv_bridge = _make_cv_bridge(self.logger)
         self.fk = _make_fk_solver(self.logger)
 
@@ -205,6 +289,11 @@ class RealPhaseDiagnosticsNode:
         self.command_seq = 0
         self.printed_once = False
         self.stop_requested = False
+        self.ppo_task_object_color: str | None = None
+        self.ppo_task_object_pos: np.ndarray | None = None
+        self.ppo_task_target_pos: np.ndarray | None = None
+        self.ppo_task_type: str | None = None
+        self._ppo_prev_done_phase: Phase | None = None
         self.sim_command_pub = None
         if config.publish_sim_command:
             self.sim_command_pub = self.node.create_publisher(String, config.sim_command_topic, 10)
@@ -237,6 +326,8 @@ class RealPhaseDiagnosticsNode:
         )
         self.node.create_subscription(Bool, config.grasp_topic, self._on_grasp, 10)
         self.node.create_subscription(Bool, config.drop_topic, self._on_drop, 10)
+        self.node.create_subscription(String, config.ppo_task_topic, self._on_ppo_task, 10)
+        self.ppo_done_pub = self.node.create_publisher(String, config.ppo_done_topic, 10)
         self.node.create_timer(max(0.05, config.log_period_s), self._on_timer)
 
         self.logger.info(
@@ -267,7 +358,16 @@ class RealPhaseDiagnosticsNode:
             return
         self.last_image_rgb = rgb
         self.last_image_stamp_s = self._received_s(msg)
-        if self.vision is not None:
+        if self._slot_embedder is not None:
+            try:
+                emb, curr_slots = self._slot_embedder.embed_bgr(bgr)
+                self._cached_slot_diff_emb = emb
+                self.boxes = _slots_to_boxes(curr_slots, self.last_image_stamp_s)
+                self.last_boxes_stamp_s = self.last_image_stamp_s
+                self.last_vision_error = None
+            except Exception as exc:
+                self.last_vision_error = f"slot embed: {exc}"
+        elif self.vision is not None:
             try:
                 self.last_vision = self.vision.predict(rgb, target_color=self.config.target_color)
                 self.last_vision_error = None
@@ -275,6 +375,8 @@ class RealPhaseDiagnosticsNode:
                 self.last_vision_error = f"vision inference failed: {exc}"
 
     def _on_boxes(self, msg: Any) -> None:
+        if self._slot_embedder is not None:
+            return  # SlotEmbedder가 _on_image에서 boxes를 관리
         try:
             payload = json.loads(str(msg.data))
         except json.JSONDecodeError as exc:
@@ -288,6 +390,31 @@ class RealPhaseDiagnosticsNode:
             if pose is not None:
                 boxes.append(pose)
         self.boxes = boxes
+
+    def _on_ppo_task(self, msg: Any) -> None:
+        try:
+            payload = json.loads(str(msg.data))
+        except json.JSONDecodeError:
+            return
+        color = payload.get("object_color")
+        if color:
+            self.ppo_task_object_color = str(color)
+        opos = payload.get("object_pos")
+        if opos and len(opos) >= 2:
+            self.ppo_task_object_pos = np.array(
+                [opos[0], opos[1], opos[2] if len(opos) > 2 else 0.009],
+                dtype=np.float32,
+            )
+        tpos = payload.get("target_pos")
+        if tpos and len(tpos) >= 2:
+            self.ppo_task_target_pos = np.array(
+                [tpos[0], tpos[1], tpos[2] if len(tpos) > 2 else 0.009],
+                dtype=np.float32,
+            )
+        ttype = payload.get("task_type")
+        if ttype:
+            self.ppo_task_type = str(ttype)
+        self.logger.info(f"[ppo_task] color={color} obj={opos} tgt={tpos}")
 
     def _on_motor_state(self, msg: Any) -> None:
         self.last_motor_stamp_s = self._received_s(msg)
@@ -324,21 +451,36 @@ class RealPhaseDiagnosticsNode:
         if fused.phase != self.prev_phase:
             self.prev_phase = fused.phase
             self.phase_started_s = time.monotonic()
+            if self._slot_embedder is not None and fused.phase == Phase.OBSERVE_OBJECT:
+                self._slot_embedder.reset()
         policy_intent, policy_note = self._predict_policy_intent(fused)
         print(self._format_log(fused, policy_intent, policy_note), flush=True)
         self._publish_sim_command(fused, policy_intent, policy_note)
+        terminal_phases = {Phase.DONE, Phase.FAILURE}
+        if fused.phase in terminal_phases and fused.phase != self._ppo_prev_done_phase:
+            self._ppo_prev_done_phase = fused.phase
+            done_msg = self.String()
+            done_msg.data = json.dumps({
+                "success": fused.phase == Phase.DONE,
+                "phase": fused.phase.name,
+                "reason": fused.reason,
+            })
+            self.ppo_done_pub.publish(done_msg)
+        elif fused.phase not in terminal_phases:
+            self._ppo_prev_done_phase = None
         self.printed_once = True
         if self.config.once:
             self.stop_requested = True
 
     def _build_fused_state(self) -> FusedState:
+        effective_target_color = self.ppo_task_object_color or self.config.target_color
         if self.config.task_mode == "stack":
             target_key = self.config.stack_target_color
             target_box = self._select_box(self.config.stack_target_color, allow_basket=False)
         else:
             target_key = self.config.basket_color
             target_box = self._select_box(self.config.basket_color, allow_basket=True)
-        object_box = self._select_box(self.config.target_color, allow_basket=False)
+        object_box = self._select_box(effective_target_color, allow_basket=False)
         target_pos, target_available, target_pose_source = self._resolve_target_pose(target_box, target_key)
 
         q = self._joint_vector()
@@ -541,6 +683,8 @@ class RealPhaseDiagnosticsNode:
             )
 
         self.grasp_object_offset = None
+        if self.ppo_task_object_pos is not None:
+            return self.ppo_task_object_pos.copy(), 0.0, "ppo_task_injected", 0.0
         return None, 0.0, "missing", None
 
     def _resolve_target_pose(self, target_box: BoxPose | None, target_key: str) -> tuple[np.ndarray, bool, str]:
@@ -576,6 +720,9 @@ class RealPhaseDiagnosticsNode:
 
         if memory_recent:
             return self.last_target_pos.astype(np.float32).copy(), True, "vision_memory"
+
+        if self.ppo_task_target_pos is not None:
+            return self.ppo_task_target_pos.copy(), True, "ppo_task_injected"
 
         if self.config.task_mode != "stack":
             return self.config.target_pos.copy(), True, "configured"
@@ -831,44 +978,41 @@ class RealPhaseDiagnosticsNode:
         return self._action_intent(action, fused), "ok"
 
     def _build_policy_obs(self, fused: FusedState) -> dict[str, np.ndarray]:
-        object_quat = _yaw_to_quat_wxyz(fused.object_yaw)
-        robot = np.concatenate(
-            [
-                fused.q,
-                fused.qd,
-                fused.ee_pos,
-                fused.ee_quat,
-                np.array([fused.gripper_opening, float(fused.object_grasped)], dtype=np.float32),
-            ]
-        ).astype(np.float32)
-        task = np.concatenate(
-            [
-                fused.object_pos,
-                object_quat,
-                fused.target_pos,
-                np.array([0.0], dtype=np.float32),
-                fused.object_pos - fused.ee_pos,
-                fused.target_pos - fused.object_pos,
-                fused.target_pos - fused.ee_pos,
-            ]
-        ).astype(np.float32)
-        phase = np.zeros(PHASE_COUNT + 2, dtype=np.float32)
-        phase[int(fused.phase)] = 1.0
-        phase[PHASE_COUNT] = float(time.monotonic() - self.phase_started_s)
-        phase[PHASE_COUNT + 1] = float(self.attempt_count)
-        history = np.zeros(COMMAND_COUNT + RESULT_COUNT + 1, dtype=np.float32)
+        # obs layout must match PhasePickPlaceEnv / SnapshotObserver exactly
+        _ACTIVE_PHASE_COUNT = 7   # OBSERVE_OBJECT..RETREAT (ids 0-6)
+        _ACTIVE_RESULT_COUNT = 4  # SUCCESS/FAILURE/INVALID/TIMEOUT; NONE(0)→all zeros
+        _SLOT_DIFF_DIM = 64
+
+        robot = np.concatenate([
+            fused.q[:6],
+            fused.ee_pos,
+            np.array([fused.gripper_opening, float(fused.object_grasped)], dtype=np.float32),
+        ]).astype(np.float32)  # (11,)
+
+        task = np.concatenate([
+            fused.object_pos[:2],
+            fused.target_pos[:2],
+        ]).astype(np.float32)  # (4,)
+
+        phase = np.zeros(_ACTIVE_PHASE_COUNT + 2, dtype=np.float32)  # (9,)
+        if int(fused.phase) < _ACTIVE_PHASE_COUNT:
+            phase[int(fused.phase)] = 1.0
+        phase[_ACTIVE_PHASE_COUNT] = float(time.monotonic() - self.phase_started_s)
+        phase[_ACTIVE_PHASE_COUNT + 1] = float(self.attempt_count)
+
+        history = np.zeros(COMMAND_COUNT + _ACTIVE_RESULT_COUNT + 1, dtype=np.float32)  # (13,)
         if self.prev_command is not None:
             history[int(self.prev_command)] = 1.0
-        history[COMMAND_COUNT + int(self.prev_result)] = 1.0
+        if int(self.prev_result) > 0:  # NONE=0 → all zeros
+            history[COMMAND_COUNT + int(self.prev_result) - 1] = 1.0
         history[-1] = float(self.prev_reward)
-        embeddings = np.zeros(25, dtype=np.float32)
-        embeddings[-1] = 1.0 if fused.object_grasped else 0.0
+
         return {
             "robot": robot,
             "task": task,
             "phase": phase,
             "history": history,
-            "embeddings": embeddings,
+            "slot_diff": self._cached_slot_diff_emb.copy(),
         }
 
     def _runtime_allowed_commands(self, fused: FusedState) -> set[Command]:
@@ -1173,6 +1317,27 @@ def _box_pose_from_json(item: dict[str, Any], stamp_s: float) -> BoxPose | None:
     )
 
 
+def _load_slot_embedder(config: "BridgeConfig", logger: Any) -> Any:
+    if not (config.slot_stage1_ckpt and config.slot_diff_ckpt and config.slot_color_net_ckpt):
+        return None
+    try:
+        from mujoco_phase_rl.perception.image_embedding import SlotEmbedder
+        embedder = SlotEmbedder(
+            stage1_ckpt=config.slot_stage1_ckpt,
+            slot_diff_ckpt=config.slot_diff_ckpt,
+            color_net_ckpt=config.slot_color_net_ckpt,
+            device=config.device,
+        )
+        logger.info(
+            "SlotEmbedder loaded: stage1=%s slot_diff=%s color_net=%s"
+            % (config.slot_stage1_ckpt, config.slot_diff_ckpt, config.slot_color_net_ckpt)
+        )
+        return embedder
+    except Exception as exc:
+        logger.warning(f"SlotEmbedder disabled: {exc}")
+        return None
+
+
 def _load_vision(model_path: str | None, device: str, logger: Any) -> VisionRuntime | None:
     if not model_path:
         return None
@@ -1188,8 +1353,13 @@ def _load_policy(model_path: str | None, device: str, logger: Any):
         return None
     try:
         from stable_baselines3 import PPO
+        from mujoco_phase_rl.policies.train_ppo import _make_mixed_policy
 
-        return PPO.load(model_path, device=device)
+        return PPO.load(
+            model_path,
+            device=device,
+            custom_objects={"policy_class": _make_mixed_policy()},
+        )
     except Exception as exc:
         logger.warning(f"policy model disabled: {exc}")
         return None
@@ -1358,6 +1528,9 @@ def _parse_args(argv: list[str] | None = None) -> tuple[BridgeConfig, list[str]]
     )
     parser.add_argument("--vision-model", default=None)
     parser.add_argument("--policy-model", default=None)
+    parser.add_argument("--slot-stage1-ckpt", default=None)
+    parser.add_argument("--slot-diff-ckpt", default=None)
+    parser.add_argument("--slot-color-net-ckpt", default=None)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--image-topic", default="/image_raw")
     parser.add_argument("--boxes-topic", default="/idle_vision/box_poses")
@@ -1422,6 +1595,8 @@ def _parse_args(argv: list[str] | None = None) -> tuple[BridgeConfig, list[str]]
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--no-command-mask", action="store_true")
+    parser.add_argument("--ppo-task-topic", default="/ppo/task")
+    parser.add_argument("--ppo-done-topic", default="/ppo/done")
     parser.add_argument(
         "--phase-prior-weight",
         type=float,
@@ -1463,6 +1638,11 @@ def _parse_args(argv: list[str] | None = None) -> tuple[BridgeConfig, list[str]]
         deterministic=not bool(args.stochastic),
         no_command_mask=bool(args.no_command_mask),
         phase_prior_weight=float(np.clip(args.phase_prior_weight, 0.0, 1.0)),
+        slot_stage1_ckpt=args.slot_stage1_ckpt,
+        slot_diff_ckpt=args.slot_diff_ckpt,
+        slot_color_net_ckpt=args.slot_color_net_ckpt,
+        ppo_task_topic=args.ppo_task_topic,
+        ppo_done_topic=args.ppo_done_topic,
     )
     return config, ros_args
 
