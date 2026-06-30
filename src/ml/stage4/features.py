@@ -26,6 +26,38 @@ def normalized_xy_to_world(xy: torch.Tensor, H: torch.Tensor | None = None) -> t
     return q[..., :2] / q[..., 2:].clamp_min(1e-8)
 
 
+def normalized_xy_yaw_to_world_yaw(
+    xy: torch.Tensor,
+    yaw_img: torch.Tensor,
+    H: torch.Tensor | None = None,
+    direction_len_px: float = 50.0,
+) -> torch.Tensor:
+    """Convert crop-normalized image yaw to world yaw through homography.
+
+    image yaw를 그대로 쓰면 homography 왜곡 때문에 robot/world yaw가 틀어지므로,
+    중심 pixel과 yaw 방향 pixel 두 점을 world 좌표로 변환해 atan2로 다시 계산한다.
+    """
+    Hm = DEFAULT_H.to(device=xy.device, dtype=xy.dtype) if H is None else H.to(xy.device, xy.dtype)
+
+    u1 = xy[..., 0] * CROP_W + CROP_X0
+    v1 = xy[..., 1] * CROP_H + CROP_Y0
+
+    u2 = u1 + torch.cos(yaw_img) * direction_len_px
+    v2 = v1 + torch.sin(yaw_img) * direction_len_px
+
+    ones = torch.ones_like(u1)
+    p1 = torch.stack([u1, v1, ones], dim=-1)
+    p2 = torch.stack([u2, v2, ones], dim=-1)
+
+    q1 = torch.matmul(p1, Hm.t())
+    q2 = torch.matmul(p2, Hm.t())
+    w1 = q1[..., :2] / q1[..., 2:].clamp_min(1e-8)
+    w2 = q2[..., :2] / q2[..., 2:].clamp_min(1e-8)
+
+    delta = w2 - w1
+    return torch.atan2(delta[..., 1], delta[..., 0])
+
+
 def _point_anchor_features(label: dict, is_robot: bool = False) -> torch.Tensor:
     x = float(label["x"])
     y = float(label["y"])
