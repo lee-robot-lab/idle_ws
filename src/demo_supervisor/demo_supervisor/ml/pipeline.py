@@ -60,6 +60,7 @@ class GroundingResult(NamedTuple):
     yaw_place: float
     confidence: float   # 0~1, grounding 신뢰도 (slot score 기반)
     task_type: str      # "pick_place" | "stack"
+    pick_color: str = "unknown"  # pick 대상 색상 (PPO task 전달용)
 
 
 class MLPipeline:
@@ -197,6 +198,8 @@ class MLPipeline:
         place_world_xy = m["normalized_xy_to_world"](place_xy_norm.unsqueeze(0))[0]
         place_world_yaw = self._image_yaw_to_world(place_xy_norm, place_yaw_vec)
 
+        pick_color = step.get("object", "unknown").replace("_block", "")
+
         return GroundingResult(
             x_pick=float(pick_world_xy[0].item()),
             y_pick=float(pick_world_xy[1].item()),
@@ -206,4 +209,5 @@ class MLPipeline:
             yaw_place=place_world_yaw,
             confidence=confidence,
             task_type=task_type,
+            pick_color=pick_color,
         )
