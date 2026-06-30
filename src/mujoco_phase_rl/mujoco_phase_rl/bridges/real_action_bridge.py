@@ -580,10 +580,18 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
                 "object pregrasp",
             )
         if command == Command.GRASP:
+            # ppo_task_object_pos (initial STT grounding)를 우선 사용.
+            # 팔이 카메라 프레임에 들어오면 헝가리안 매칭이 팔을 블록으로 오인해
+            # 연속 슬롯 감지 위치가 최대 10cm 이동하는 문제를 방지.
+            grasp_base = (
+                self.ppo_task_object_pos.astype(np.float32)
+                if self.ppo_task_object_pos is not None
+                else fused.object_pos
+            )
             xyz = np.array(
                 [
-                    float(fused.object_pos[0] + 0.35 * dx),
-                    float(fused.object_pos[1] + 0.35 * dy),
+                    float(grasp_base[0] + 0.35 * dx),
+                    float(grasp_base[1] + 0.35 * dy),
                     cfg.grasp_z,
                 ],
                 dtype=np.float32,
