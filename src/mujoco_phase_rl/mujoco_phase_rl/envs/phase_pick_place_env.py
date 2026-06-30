@@ -11,6 +11,14 @@ from mujoco_phase_rl.controllers.trajectory_controller import (
     PdJointTrajectoryExecutor,
     make_joint_space_trajectory,
 )
+from mujoco_phase_rl.envs.recovery_events import (
+    RecoveryEvent,
+    RecoveryEventConfig,
+    RecoveryEventType,
+    oracle_slot_diff,
+    parse_event_types,
+    sample_recovery_event,
+)
 from mujoco_phase_rl.perception.image_embedding import SlotEmbedder, IMAGE_EMBEDDING_SIZE
 from mujoco_phase_rl.perception.pose_provider import (
     PoseEstimate,
@@ -78,6 +86,12 @@ class PhasePickPlaceEnv(gym.Env):
         slot_transition_ckpt: str | None = None,
         perturb_prob: float = 0.0,
         perturb_max_m: float = 0.08,
+        recovery_event_prob: float = 0.0,
+        recovery_event_types: str = "NO_CHANGE",
+        recovery_min_delta_m: float = 0.01,
+        recovery_max_delta_m: float = 0.03,
+        recovery_slot_diff_mode: str = "learned",
+        max_recovery_retries: int = 1,
         stack_prob: float = 0.6,
     ) -> None:
         super().__init__()
@@ -187,6 +201,23 @@ class PhasePickPlaceEnv(gym.Env):
 
         self.perturb_prob = float(perturb_prob)
         self.perturb_max_m = float(perturb_max_m)
+        self.recovery_event_config = RecoveryEventConfig(
+            prob=float(recovery_event_prob),
+            types=parse_event_types(recovery_event_types.split(",")),
+            min_delta_m=float(recovery_min_delta_m),
+            max_delta_m=float(recovery_max_delta_m),
+            max_retries=int(max_recovery_retries),
+        )
+        self.recovery_slot_diff_mode = str(recovery_slot_diff_mode)
+        if self.recovery_slot_diff_mode not in {"learned", "zero", "oracle"}:
+            raise ValueError("recovery_slot_diff_mode must be one of: learned, zero, oracle")
+        self._last_recovery_event = RecoveryEvent(
+            RecoveryEventType.NONE,
+            False,
+            np.zeros(2, dtype=np.float64),
+            "continue",
+        )
+        self._recovery_retry_count = 0
 
         self.rng = np.random.default_rng()
         self.step_count = 0
@@ -220,6 +251,13 @@ class PhasePickPlaceEnv(gym.Env):
         self.slot_state_bridge_grounded = False
         self._cached_slot_diff_emb = np.zeros(IMAGE_EMBEDDING_SIZE, dtype=np.float32)
         self._cached_curr_slots = None
+        self._last_recovery_event = RecoveryEvent(
+            RecoveryEventType.NONE,
+            False,
+            np.zeros(2, dtype=np.float64),
+            "continue",
+        )
+        self._recovery_retry_count = 0
         self.pose_provider.reset()
         if self._wm_model is not None:
             import torch
@@ -301,27 +339,27 @@ class PhasePickPlaceEnv(gym.Env):
                 self.phase_manager.set_phase(Phase.FAILURE)
                 phase_failure = True
 
-        terminated = self.phase_manager.phase in {Phase.DONE, Phase.FAILURE}
-        if terminated and self.phase_manager.phase == Phase.FAILURE:
-            truncated = False
+        if decoded.command == Command.RECOVERY and executor_status == "RECOVERED":
+            self._recovery_retry_count += 1
 
-        reward, reward_components = compute_phase_reward(
-            phase=phase_before,
-            command=decoded.command,
-            valid_command=valid_command,
-            phase_success=phase_success,
-            phase_failure=phase_failure,
-            dropped=self.dropped,
-            timeout=timeout,
-            executor_status=executor_status,
-            extra_info=extra_info,
-            task_type=self.current_task.task_type if self.current_task is not None else "pick_place",
-        )
-        self.prev_reward = reward
-        self.prev_command_id = int(decoded.command)
+        recovery_event = self._sample_recovery_event(phase_before)
+        self._apply_recovery_event(recovery_event)
+        if recovery_event.event_type is RecoveryEventType.UNRECOVERABLE:
+            self.prev_result = StepResult.FAILURE
+            phase_failure = True
+            phase_success = False
+            extra_info["terminal_failure_reason"] = "unrecoverable_recovery_event"
+            extra_info["recovery_unrecoverable"] = True
+            self.phase_manager.set_phase(Phase.FAILURE)
+        extra_info.update(self._last_recovery_event.as_info())
+        extra_info["recovery_retry_count"] = int(self._recovery_retry_count)
 
         # mid-episode perturbation
-        if self.perturb_prob > 0 and self.rng.random() < self.perturb_prob:
+        if (
+            self.perturb_prob > 0
+            and recovery_event.event_type is RecoveryEventType.NONE
+            and self.rng.random() < self.perturb_prob
+        ):
             _BLOCK_BOUNDS = np.array([[-0.15, 0.35], [0.15, 0.45]], dtype=np.float64)
             _BASKET_BOUNDS = np.array([[-0.30, 0.50], [0.30, 0.80]], dtype=np.float64)
             _IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
@@ -350,6 +388,25 @@ class PhasePickPlaceEnv(gym.Env):
             tgt_center_z = float(self.data.xpos[self._target_block_body_id][2])
             self.current_task.target_pos[:2] = self.data.xpos[self._target_block_body_id][:2]
             self.current_task.target_pos[2] = tgt_center_z + 0.04  # block full height
+
+        terminated = self.phase_manager.phase in {Phase.DONE, Phase.FAILURE}
+        if terminated and self.phase_manager.phase == Phase.FAILURE:
+            truncated = False
+
+        reward, reward_components = compute_phase_reward(
+            phase=phase_before,
+            command=decoded.command,
+            valid_command=valid_command,
+            phase_success=phase_success,
+            phase_failure=phase_failure,
+            dropped=self.dropped,
+            timeout=timeout,
+            executor_status=executor_status,
+            extra_info=extra_info,
+            task_type=self.current_task.task_type if self.current_task is not None else "pick_place",
+        )
+        self.prev_reward = reward
+        self.prev_command_id = int(decoded.command)
 
         obs = self._observe()
         info = self._info(
@@ -430,6 +487,8 @@ class PhasePickPlaceEnv(gym.Env):
         return allowed_commands
 
     def _recovery_is_context_valid(self) -> bool:
+        if self._recovery_retry_count >= self.recovery_event_config.max_retries:
+            return False
         return (
             self.prev_result in {StepResult.FAILURE, StepResult.TIMEOUT}
             or self.phase_manager.attempt_count > 0
@@ -775,6 +834,87 @@ class PhasePickPlaceEnv(gym.Env):
             self.phase_manager.set_phase(Phase.OBSERVE_OBJECT)
         return "RECOVERED", sim_steps, True, False, extra_info
 
+    def _sample_recovery_event(self, phase_before: Phase) -> RecoveryEvent:
+        return sample_recovery_event(
+            self.rng,
+            self.recovery_event_config,
+            task_type=self.current_task.task_type if self.current_task is not None else "pick_place",
+            phase=phase_before,
+        )
+
+    def _apply_recovery_event(self, event: RecoveryEvent) -> None:
+        self._last_recovery_event = event
+        if not event.should_apply:
+            return
+        if event.event_type in {RecoveryEventType.OBJECT_MOVED_SMALL, RecoveryEventType.OBJECT_MOVED_LARGE}:
+            self._move_object_by_delta(event.delta_xy)
+        elif event.event_type is RecoveryEventType.TARGET_MOVED:
+            self._move_target_by_delta(event.delta_xy)
+        elif event.event_type is RecoveryEventType.GRASP_MISS:
+            self.object_grasped = False
+        elif event.event_type is RecoveryEventType.DROP_DURING_LIFT:
+            self.object_grasped = False
+            self.dropped = True
+            self._move_object_by_delta(event.delta_xy)
+        elif event.event_type is RecoveryEventType.STACK_COLLAPSE:
+            self.object_grasped = False
+            self.dropped = True
+            self._move_object_by_delta(event.delta_xy)
+        elif event.event_type is RecoveryEventType.UNRECOVERABLE:
+            self._move_object_outside_normal_bounds()
+
+    def _move_object_by_delta(self, delta_xy: np.ndarray) -> None:
+        if self.object_grasped:
+            return
+        block_bounds = np.array([[-0.15, 0.35], [0.15, 0.45]], dtype=np.float64)
+        cur = self.data.xpos[self._object_body_id].copy()
+        new_xy = np.clip(cur[:2] + np.asarray(delta_xy, dtype=np.float64), block_bounds[0], block_bounds[1])
+        new_pos = np.array([new_xy[0], new_xy[1], cur[2]], dtype=np.float64)
+        quat = self.data.xquat[self._object_body_id].copy()
+        set_freejoint_pose(self.data, self.names, new_pos, quat, color=self._pick_color)
+        self.data.qvel[self.names.block_dofadr[self._pick_color]:self.names.block_dofadr[self._pick_color] + 6] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+        if self.current_task is not None:
+            self.current_task.object_pos[:2] = new_xy
+
+    def _move_object_outside_normal_bounds(self) -> None:
+        cur = self.data.xpos[self._object_body_id].copy()
+        new_pos = np.array([0.40, cur[1], cur[2]], dtype=np.float64)
+        quat = self.data.xquat[self._object_body_id].copy()
+        set_freejoint_pose(self.data, self.names, new_pos, quat, color=self._pick_color)
+        self.data.qvel[self.names.block_dofadr[self._pick_color]:self.names.block_dofadr[self._pick_color] + 6] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+        if self.current_task is not None:
+            self.current_task.object_pos[:2] = new_pos[:2]
+
+    def _move_target_by_delta(self, delta_xy: np.ndarray) -> None:
+        if self.current_task is None:
+            return
+        delta = np.asarray(delta_xy, dtype=np.float64)
+        if self.current_task.task_type == "stack" and self._target_block_body_id is not None:
+            block_bounds = np.array([[-0.15, 0.35], [0.15, 0.45]], dtype=np.float64)
+            cur = self.data.xpos[self._target_block_body_id].copy()
+            new_xy = np.clip(cur[:2] + delta, block_bounds[0], block_bounds[1])
+            new_pos = np.array([new_xy[0], new_xy[1], cur[2]], dtype=np.float64)
+            quat = self.data.xquat[self._target_block_body_id].copy()
+            target_color = self.current_task.target_color
+            if target_color is not None:
+                set_freejoint_pose(self.data, self.names, new_pos, quat, color=target_color)
+                self.data.qvel[
+                    self.names.block_dofadr[target_color]:self.names.block_dofadr[target_color] + 6
+                ] = 0.0
+                mujoco.mj_forward(self.model, self.data)
+                self.current_task.target_pos[:2] = new_xy
+                self.current_task.target_pos[2] = float(new_pos[2] + 0.04)
+            return
+
+        basket_bounds = np.array([[-0.30, 0.50], [0.30, 0.80]], dtype=np.float64)
+        cur = self.data.xpos[self.names.basket_body_id][:2].copy()
+        new_xy = np.clip(cur + delta, basket_bounds[0], basket_bounds[1])
+        self.model.body_pos[self.names.basket_body_id][:2] = new_xy
+        mujoco.mj_forward(self.model, self.data)
+        self.current_task.target_pos[:2] = new_xy
+
     def _move_ee_to_target(
         self,
         target_pos: np.ndarray,
@@ -956,7 +1096,12 @@ class PhasePickPlaceEnv(gym.Env):
             contact_probability=1.0 if self.object_grasped else 0.0,
         )
         slot_state = self._build_slot_state()
-        slot_diff_emb = self._cached_slot_diff_emb
+        if self.recovery_slot_diff_mode == "zero":
+            slot_diff_emb = np.zeros(IMAGE_EMBEDDING_SIZE, dtype=np.float32)
+        elif self.recovery_slot_diff_mode == "oracle":
+            slot_diff_emb = oracle_slot_diff(self._last_recovery_event.event_type)
+        else:
+            slot_diff_emb = self._cached_slot_diff_emb
         obs = self.observer.observe(slot_state, state, slot_diff_emb=slot_diff_emb)
         if self._wm_model is not None and self._wm_h is not None:
             obs["rssm_latent"] = self._wm_step(obs)

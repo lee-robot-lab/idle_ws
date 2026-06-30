@@ -357,7 +357,7 @@ git commit -m "feat: add recovery event contract"
 - Modify: `src/mujoco_phase_rl/mujoco_phase_rl/envs/phase_pick_place_env.py`
 - Modify: `src/mujoco_phase_rl/test/test_perturbation.py`
 
-- [ ] **Step 1: Add failing env tests for event application and info**
+- [x] **Step 1: Add failing env tests for event application and info**
 
 Append to `src/mujoco_phase_rl/test/test_perturbation.py`:
 
@@ -417,7 +417,7 @@ def test_recovery_no_change_event_records_info_without_motion(monkeypatch):
     assert info["recovery_expected_response"] == "continue"
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -428,7 +428,7 @@ pytest test/test_perturbation.py::test_recovery_object_moved_event_updates_info_
 
 Expected: FAIL with `TypeError: __init__() got an unexpected keyword argument 'recovery_event_prob'`.
 
-- [ ] **Step 3: Add constructor args and state**
+- [x] **Step 3: Add constructor args and state**
 
 In `phase_pick_place_env.py`, add imports:
 
@@ -488,7 +488,7 @@ Reset these fields in `reset()`:
         self._recovery_retry_count = 0
 ```
 
-- [ ] **Step 4: Add event sampling and application helpers**
+- [x] **Step 4: Add event sampling and application helpers**
 
 Add methods to `PhasePickPlaceEnv` near the existing perturb block helpers:
 
@@ -564,7 +564,7 @@ Add methods to `PhasePickPlaceEnv` near the existing perturb block helpers:
         mujoco.mj_forward(self.model, self.data)
 ```
 
-- [ ] **Step 5: Call recovery event path in `step()` and attach info**
+- [x] **Step 5: Call recovery event path in `step()` and attach info**
 
 Replace the legacy mid-episode perturb block with this order:
 
@@ -592,7 +592,7 @@ Increment retry count when recovery is used:
             self._recovery_retry_count += 1
 ```
 
-- [ ] **Step 6: Apply slot_diff ablation mode in `_observe()`**
+- [x] **Step 6: Apply slot_diff ablation mode in `_observe()`**
 
 In `_observe()`, before calling `self.observer.observe(...)`, replace:
 
@@ -611,7 +611,7 @@ with:
             slot_diff_emb = self._cached_slot_diff_emb
 ```
 
-- [ ] **Step 7: Run env tests**
+- [x] **Step 7: Run env tests**
 
 Run:
 
@@ -622,7 +622,7 @@ pytest test/test_perturbation.py test/test_env_smoke.py::test_slot_diff_obs_is_z
 
 Expected: all selected tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add test/test_perturbation.py mujoco_phase_rl/envs/phase_pick_place_env.py

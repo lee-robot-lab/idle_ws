@@ -75,6 +75,45 @@ def test_sample_recovery_event_selects_enabled_type():
     assert event.expected_response == "reobserve_target"
 
 
+def test_sample_recovery_event_drop_during_lift_has_bounded_delta():
+    rng = np.random.default_rng(0)
+    config = RecoveryEventConfig(
+        prob=1.0,
+        types=("DROP_DURING_LIFT",),
+        min_delta_m=0.02,
+        max_delta_m=0.04,
+    )
+    event = sample_recovery_event(rng, config, task_type="pick_place", phase=Phase.LIFT)
+    norm = float(np.linalg.norm(event.delta_xy))
+
+    assert event.event_type is RecoveryEventType.DROP_DURING_LIFT
+    assert 0.02 <= norm <= 0.04 + 1e-9
+
+
+def test_sample_recovery_event_stack_collapse_has_bounded_delta():
+    rng = np.random.default_rng(0)
+    config = RecoveryEventConfig(
+        prob=1.0,
+        types=("STACK_COLLAPSE",),
+        min_delta_m=0.02,
+        max_delta_m=0.04,
+    )
+    event = sample_recovery_event(rng, config, task_type="stack", phase=Phase.PLACE)
+    norm = float(np.linalg.norm(event.delta_xy))
+
+    assert event.event_type is RecoveryEventType.STACK_COLLAPSE
+    assert 0.02 <= norm <= 0.04 + 1e-9
+
+
+def test_sample_recovery_event_grasp_miss_and_no_change_have_zero_delta():
+    for event_name in ("GRASP_MISS", "NO_CHANGE"):
+        rng = np.random.default_rng(0)
+        config = RecoveryEventConfig(prob=1.0, types=(event_name,))
+        event = sample_recovery_event(rng, config, task_type="pick_place", phase=Phase.GRASP)
+
+        assert np.allclose(event.delta_xy, np.zeros(2, dtype=np.float32))
+
+
 def test_recovery_event_as_info_uses_downstream_keys():
     event = RecoveryEvent(
         event_type=RecoveryEventType.TARGET_MOVED,

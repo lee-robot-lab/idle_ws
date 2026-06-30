@@ -136,6 +136,9 @@ def _event_uses_delta(event_type: RecoveryEventType) -> bool:
         RecoveryEventType.OBJECT_MOVED_SMALL,
         RecoveryEventType.OBJECT_MOVED_LARGE,
         RecoveryEventType.TARGET_MOVED,
+        RecoveryEventType.DROP_DURING_LIFT,
+        RecoveryEventType.STACK_COLLAPSE,
+        RecoveryEventType.UNRECOVERABLE,
     }
 
 
