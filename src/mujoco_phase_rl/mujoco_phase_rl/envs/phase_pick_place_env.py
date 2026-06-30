@@ -22,14 +22,33 @@ from mujoco_phase_rl.tasks.phase_manager import (
     PhaseManager,
     StepResult,
 )
-from mujoco_phase_rl.tasks.pick_place_task import PickPlaceTask, TaskSample
+from mujoco_phase_rl.tasks.pick_place_task import (
+    BLOCK_HALF_EXTENT,
+    STACK_CENTER_Z_DELTA,
+    STACK_Z_CLEARANCE,
+    PickPlaceTask,
+    TaskSample,
+)
 from mujoco_phase_rl.tasks.reward import FAILURE_STATUSES, compute_phase_reward
-from mujoco_phase_rl.utils.mujoco_loader import load_task_scene, set_freejoint_pose
+from mujoco_phase_rl.utils.mujoco_loader import (
+    load_task_scene,
+    set_freejoint_pose,
+    set_freejoint_pose_by_color,
+)
+from mujoco_phase_rl.utils.name_maps import set_active_object_color
+from mujoco_phase_rl.utils.object_catalog import parse_color_list
 from mujoco_phase_rl.utils.spaces import gym, spaces
 
 
-GRASP_TARGET_Z_DELTA = 0.018
+GRASP_TARGET_Z_DELTA = 0.005
+GRASP_SUCCESS_Z_DELTA_MIN = 0.000
+GRASP_SUCCESS_Z_DELTA_MAX = 0.035
 GRASP_DZ_ACTION_SCALE = 0.20
+PREGRASP_SUCCESS_XY_MAX = 0.040
+PLACE_EE_MIN_Z_MARGIN = 0.005
+PLACE_RELEASE_SETTLE_STEPS = 240
+PLACE_SPEED_SUCCESS_MAX = 0.05
+STACK_PLACE_SPEED_SUCCESS_MAX = 0.15
 
 
 @dataclass
@@ -64,6 +83,10 @@ class PhasePickPlaceEnv(gym.Env):
         max_phase_failures: int = 8,
         show_target_marker: bool = True,
         work_surface_rgba: str = "0.42 0.52 0.53 0.65",
+        object_colors: str | tuple[str, ...] = ("red",),
+        target_colors: str | tuple[str, ...] | None = None,
+        task_mode: str = "basket",
+        stack_target_colors: str | tuple[str, ...] | None = None,
     ) -> None:
         super().__init__()
         self.render_mode = render_mode
@@ -83,15 +106,30 @@ class PhasePickPlaceEnv(gym.Env):
         self.max_phase_failures = max(1, int(max_phase_failures))
         self.show_target_marker = bool(show_target_marker)
         self.work_surface_rgba = str(work_surface_rgba)
+        self.object_colors = parse_color_list(object_colors, default=("red",))
+        self.target_colors = parse_color_list(target_colors, default=self.object_colors)
+        self.task_mode = str(task_mode).strip().lower()
+        if self.task_mode not in {"basket", "stack"}:
+            raise ValueError("task_mode must be one of: basket, stack")
+        self.stack_target_colors = parse_color_list(
+            stack_target_colors,
+            default=self.object_colors,
+        )
         self.scene = load_task_scene(
             robot_xml_path,
             show_target_marker=self.show_target_marker,
             work_surface_rgba=self.work_surface_rgba,
+            object_colors=self.object_colors,
         )
         self.model = self.scene.model
         self.data = self.scene.data
         self.names = self.scene.names
-        self.task = PickPlaceTask()
+        self.task = PickPlaceTask(
+            object_colors=self.object_colors,
+            target_colors=self.target_colors,
+            target_type=self.task_mode,
+            stack_target_colors=self.stack_target_colors,
+        )
         self.phase_manager = PhaseManager()
         self.observer = SnapshotObserver(self.model, self.data, self.names)
         self.pose_provider = make_pose_provider(
@@ -144,6 +182,7 @@ class PhasePickPlaceEnv(gym.Env):
         self.grasp_offset_pos = np.zeros(3, dtype=np.float64)
         self.grasp_object_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
         self.current_task: TaskSample | None = None
+        self.active_object_color = "red"
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         del options
@@ -166,6 +205,7 @@ class PhasePickPlaceEnv(gym.Env):
         self.pose_provider.reset()
 
         self.current_task = self.task.sample(self.rng)
+        self._activate_object_color(self.current_task.object_color)
         self._apply_home_pose()
         self._apply_task_sample(self.current_task)
         mujoco.mj_forward(self.model, self.data)
@@ -382,10 +422,15 @@ class PhasePickPlaceEnv(gym.Env):
         ee_error = float(np.linalg.norm(target_pos - ee_pos))
         pregrasp_xy_error = float(np.linalg.norm(ee_pos[:2] - object_pos[:2]))
         pregrasp_z_delta = float(ee_pos[2] - object_pos[2])
-        phase_success = ee_error <= 0.03 and pregrasp_xy_error <= 0.055 and 0.055 <= pregrasp_z_delta <= 0.145
+        phase_success = (
+            ee_error <= 0.03
+            and pregrasp_xy_error <= PREGRASP_SUCCESS_XY_MAX
+            and 0.055 <= pregrasp_z_delta <= 0.145
+        )
         extra_info["ee_error"] = ee_error
         extra_info["pregrasp_xy_error"] = pregrasp_xy_error
         extra_info["pregrasp_z_delta"] = pregrasp_z_delta
+        extra_info["pregrasp_success_xy_max"] = PREGRASP_SUCCESS_XY_MAX
         if phase_success:
             self.phase_manager.set_phase(Phase.GRASP)
         return "SETTLED" if phase_success else "TARGET_MISS", sim_steps, True, phase_success, extra_info
@@ -395,19 +440,16 @@ class PhasePickPlaceEnv(gym.Env):
         decoded: DecodedAction,
     ) -> tuple[str, int, bool, bool, dict[str, float | int | str | bool]]:
         pose = self._estimate_pose()
-        perceived_object_pos = pose.object_pos.copy()
-        grasp_delta = np.array(
-            [
-                0.35 * decoded.delta_xyz[0],
-                0.35 * decoded.delta_xyz[1],
-                GRASP_DZ_ACTION_SCALE * decoded.delta_xyz[2],
-            ],
-            dtype=np.float64,
-        )
-        target_pos = (
-            perceived_object_pos
-            + np.array([0.0, 0.0, GRASP_TARGET_Z_DELTA], dtype=np.float64)
-            + grasp_delta
+        current_ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
+        actual_object_pos = self.data.xpos[self.names.object_body_id].copy()
+        target_pos = current_ee_pos.copy()
+        target_pos[2] = float(
+            max(
+                actual_object_pos[2]
+                + GRASP_TARGET_Z_DELTA
+                + GRASP_DZ_ACTION_SCALE * decoded.delta_xyz[2],
+                self.feasibility.workspace.z[0] + 0.001,
+            )
         )
         target_yaw = _quat_wxyz_to_yaw(pose.object_quat) + decoded.dyaw
         feasibility = self.feasibility.check_workspace(target_pos)
@@ -419,29 +461,39 @@ class PhasePickPlaceEnv(gym.Env):
                 "failure_reason": feasibility.reason,
             }
 
-        move_status, move_steps, ik_success, extra_info = self._move_ee_to_target(
+        move_status, move_steps, ik_success, extra_info = self._move_ee_to_target_linearly(
             target_pos,
             gripper_target=self._gripper_open_q(),
-            q_speed=0.55,
+            q_speed=0.45,
             settle_steps=50,
             target_yaw=target_yaw,
+            waypoint_count=8,
         )
         if not ik_success:
             return move_status, move_steps, False, False, extra_info
-
-        q_hold = self.data.qpos[self.names.arm_qposadr].copy()
-        self._run_pd_hold(q_hold, self._gripper_closed_q(), 120)
 
         ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
         object_pos = self.data.xpos[self.names.object_body_id].copy()
         xy_error = float(np.linalg.norm(ee_pos[:2] - object_pos[:2]))
         z_delta = float(ee_pos[2] - object_pos[2])
         distance = float(np.linalg.norm(ee_pos - object_pos))
+        aligned_for_latch = bool(
+            xy_error <= 0.040
+            and GRASP_SUCCESS_Z_DELTA_MIN <= z_delta <= GRASP_SUCCESS_Z_DELTA_MAX
+        )
+
+        q_hold = self.data.qpos[self.names.arm_qposadr].copy()
+        gripper_target = (
+            self._gripper_blocked_q() if aligned_for_latch else self._gripper_closed_q()
+        )
+        self._run_pd_hold(q_hold, gripper_target, 120)
+
         finger_q = float(self.data.qpos[self.names.finger_r_qposadr])
-        phase_success = (
-            xy_error <= 0.045
-            and 0.010 <= z_delta <= 0.050
+        closed_on_air = finger_q >= self._gripper_empty_closed_q()
+        phase_success = bool(
+            aligned_for_latch
             and finger_q >= self._gripper_grasp_min_q()
+            and not closed_on_air
         )
 
         extra_info.update(
@@ -450,10 +502,17 @@ class PhasePickPlaceEnv(gym.Env):
                 "grasp_distance": distance,
                 "grasp_xy_error": xy_error,
                 "grasp_z_delta": z_delta,
+                "grasp_target_z_delta": GRASP_TARGET_Z_DELTA,
+                "grasp_success_z_min": GRASP_SUCCESS_Z_DELTA_MIN,
+                "grasp_success_z_max": GRASP_SUCCESS_Z_DELTA_MAX,
+                "grasp_motion": "linear_descent",
                 "finger_q": finger_q,
                 "finger_open_q": self._gripper_open_q(),
                 "finger_grasp_min_q": self._gripper_grasp_min_q(),
+                "finger_blocked_q": self._gripper_blocked_q(),
+                "finger_empty_closed_q": self._gripper_empty_closed_q(),
                 "finger_closed_q": self._gripper_closed_q(),
+                "finger_closed_on_air": closed_on_air,
             }
         )
         if phase_success:
@@ -464,7 +523,9 @@ class PhasePickPlaceEnv(gym.Env):
             self.phase_manager.set_phase(Phase.LIFT)
             return "GRASPED", move_steps + 120, True, True, extra_info
 
-        extra_info["failure_reason"] = "grasp_latch_condition_failed"
+        extra_info["failure_reason"] = (
+            "gripper_closed_on_air" if closed_on_air else "grasp_latch_condition_failed"
+        )
         return "GRASP_FAIL", move_steps + 120, True, False, extra_info
 
     def _execute_lift(
@@ -487,7 +548,7 @@ class PhasePickPlaceEnv(gym.Env):
 
         status, sim_steps, ik_success, extra_info = self._move_ee_to_target(
             target_pos,
-            gripper_target=self._gripper_closed_q(),
+            gripper_target=self._gripper_blocked_q(),
             q_speed=0.65,
             settle_steps=80,
             target_yaw=self._current_ee_yaw(),
@@ -518,9 +579,16 @@ class PhasePickPlaceEnv(gym.Env):
             return "NO_GRASP", 0, True, False, {"failure_reason": "object_not_grasped"}
 
         pose = self._estimate_pose()
+        current_ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
         target_object_pos = pose.target_pos.copy()
-        target_object_pos[2] = 0.14
-        target_ee_pos = target_object_pos - self.grasp_offset_pos + decoded.delta_xyz
+        target_ee_pos = np.array(
+            [
+                float(target_object_pos[0] - self.grasp_offset_pos[0] + decoded.delta_xyz[0]),
+                float(target_object_pos[1] - self.grasp_offset_pos[1] + decoded.delta_xyz[1]),
+                float(current_ee_pos[2]),
+            ],
+            dtype=np.float64,
+        )
         target_yaw = pose.target_yaw + decoded.dyaw
         feasibility = self.feasibility.check_workspace(target_ee_pos)
         if not feasibility.feasible:
@@ -533,7 +601,7 @@ class PhasePickPlaceEnv(gym.Env):
 
         status, sim_steps, ik_success, extra_info = self._move_ee_to_target(
             target_ee_pos,
-            gripper_target=self._gripper_closed_q(),
+            gripper_target=self._gripper_blocked_q(),
             q_speed=0.65,
             settle_steps=80,
             target_yaw=target_yaw,
@@ -544,12 +612,21 @@ class PhasePickPlaceEnv(gym.Env):
         self._update_grasped_object_pose()
 
         object_pos = self.data.xpos[self.names.object_body_id].copy()
-        object_xy_error = float(np.linalg.norm(object_pos[:2] - self.current_task.target_pos[:2]))
+        desired_place_pos = self._placed_object_pos()
+        object_xy_error = float(np.linalg.norm(object_pos[:2] - desired_place_pos[:2]))
         ee_error = float(np.linalg.norm(target_ee_pos - self.data.site_xpos[self.names.ee_site_id]))
         phase_success = self.object_grasped and object_xy_error <= 0.055 and object_pos[2] >= 0.075
         extra_info["ee_error"] = ee_error
         extra_info["object_xy_error"] = object_xy_error
         extra_info["object_z"] = float(object_pos[2])
+        extra_info["target_type"] = self.current_task.target_type
+        if self.current_task.target_type == "stack":
+            target_block_pos = self._target_block_pos()
+            if target_block_pos is not None:
+                extra_info["stack_xy_error"] = object_xy_error
+                extra_info["stack_target_z"] = float(self._stack_place_pos()[2])
+                extra_info["stack_object_z"] = float(object_pos[2])
+                extra_info["stack_z_error"] = abs(float(object_pos[2] - self._stack_place_pos()[2]))
         if phase_success:
             self.phase_manager.set_phase(Phase.PLACE)
         return "AT_PLACE" if phase_success else "PLACE_APPROACH_MISS", sim_steps, True, phase_success, extra_info
@@ -564,39 +641,106 @@ class PhasePickPlaceEnv(gym.Env):
         if not self.object_grasped:
             return "NO_GRASP", 0, True, False, {"failure_reason": "object_not_grasped"}
 
-        q_hold = self.data.qpos[self.names.arm_qposadr].copy()
-        self._run_pd_hold(q_hold, self._gripper_open_q(), 120)
         placed_pos = self._placed_object_pos()
+        target_ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
+        target_ee_pos[2] = max(
+            float(placed_pos[2] - self.grasp_offset_pos[2]),
+            float(self.feasibility.workspace.z[0] + PLACE_EE_MIN_Z_MARGIN),
+        )
+        feasibility = self.feasibility.check_workspace(target_ee_pos)
+        if not feasibility.feasible:
+            return "WORKSPACE_FAIL", 0, False, False, {
+                "target_x": float(target_ee_pos[0]),
+                "target_y": float(target_ee_pos[1]),
+                "target_z": float(target_ee_pos[2]),
+                "failure_reason": feasibility.reason,
+            }
+
+        lower_status, lower_steps, ik_success, lower_info = self._move_ee_to_target_linearly(
+            target_ee_pos,
+            gripper_target=self._gripper_blocked_q(),
+            q_speed=0.45,
+            settle_steps=50,
+            target_yaw=self._current_ee_yaw(),
+            post_step=self._update_grasped_object_pose,
+            waypoint_count=8,
+        )
+        if not ik_success:
+            return lower_status, lower_steps, False, False, lower_info
+
+        q_hold = self.data.qpos[self.names.arm_qposadr].copy()
         self.object_grasped = False
-        set_freejoint_pose(self.data, self.names, placed_pos, self.grasp_object_quat)
-        self.data.qvel[self.names.object_dofadr:self.names.object_dofadr + 6] = 0.0
-        mujoco.mj_forward(self.model, self.data)
-        self._run_pd_hold(q_hold, self._gripper_open_q(), 80)
+        self._run_pd_hold(q_hold, self._gripper_open_q(), PLACE_RELEASE_SETTLE_STEPS)
 
         object_pos = self.data.xpos[self.names.object_body_id].copy()
         object_speed = float(np.linalg.norm(self.data.cvel[self.names.object_body_id, :3]))
-        object_xy_error = float(np.linalg.norm(object_pos[:2] - self.current_task.target_pos[:2]))
+        desired_place_pos = self._placed_object_pos()
+        object_xy_error = float(np.linalg.norm(object_pos[:2] - desired_place_pos[:2]))
         object_in_target = self._object_in_target()
         finger_q = float(self.data.qpos[self.names.finger_r_qposadr])
-        phase_success = object_in_target and object_speed <= 0.05
+        speed_success_max = (
+            STACK_PLACE_SPEED_SUCCESS_MAX
+            if self.current_task.target_type == "stack"
+            else PLACE_SPEED_SUCCESS_MAX
+        )
+        phase_success = object_in_target and object_speed <= speed_success_max
         extra_info: dict[str, float | int | str | bool] = {
             "object_xy_error": object_xy_error,
             "object_z": float(object_pos[2]),
             "object_speed": object_speed,
+            "object_speed_success_max": speed_success_max,
             "object_in_target": object_in_target,
             "finger_q": finger_q,
             "finger_open_q": self._gripper_open_q(),
             "finger_closed_q": self._gripper_closed_q(),
+            "place_release_settle_steps": PLACE_RELEASE_SETTLE_STEPS,
+            "place_teleported": False,
+            "target_type": self.current_task.target_type,
         }
+        if self.current_task.target_type == "stack":
+            target_block_pos = self._target_block_pos()
+            if target_block_pos is not None:
+                stack_place_pos = self._stack_place_pos()
+                extra_info.update(
+                    {
+                        "stack_xy_error": float(np.linalg.norm(object_pos[:2] - target_block_pos[:2])),
+                        "stack_z_error": abs(float(object_pos[2] - stack_place_pos[2])),
+                        "stack_target_z": float(stack_place_pos[2]),
+                        "stack_object_z": float(object_pos[2]),
+                    }
+                )
+        extra_info.update(lower_info)
         if phase_success:
             self.phase_manager.set_phase(Phase.RETREAT)
-        return "PLACED" if phase_success else "PLACE_FAIL", 200, True, phase_success, extra_info
+        return "PLACED" if phase_success else "PLACE_FAIL", lower_steps + PLACE_RELEASE_SETTLE_STEPS, True, phase_success, extra_info
 
     def _execute_home(
         self,
         decoded: DecodedAction,
     ) -> tuple[str, int, bool, bool, dict[str, float | int | str | bool]]:
         del decoded
+        sim_steps = 0
+        current_ee_pos = self.data.site_xpos[self.names.ee_site_id].copy()
+        prehome_z = min(
+            max(float(current_ee_pos[2] + 0.10), 0.16),
+            self.feasibility.workspace.z[1] - 0.02,
+        )
+        if current_ee_pos[2] < prehome_z - 0.01:
+            prehome_pos = current_ee_pos.copy()
+            prehome_pos[2] = prehome_z
+            status, lift_steps, ik_success, prehome_info = self._move_ee_to_target_linearly(
+                prehome_pos,
+                gripper_target=self._gripper_open_q(),
+                q_speed=0.55,
+                settle_steps=40,
+                target_yaw=self._current_ee_yaw(),
+                waypoint_count=8,
+            )
+            sim_steps += lift_steps
+            if not ik_success:
+                prehome_info["prehome_target_z"] = float(prehome_z)
+                return status, sim_steps, False, False, prehome_info
+
         q_start = self.data.qpos[self.names.arm_qposadr].copy()
         trajectory = make_joint_space_trajectory(
             q_start,
@@ -604,7 +748,7 @@ class PhasePickPlaceEnv(gym.Env):
             control_hz=1.0 / float(self.model.opt.timestep),
             q_speed=0.75,
         )
-        sim_steps = self.trajectory_executor.execute(
+        sim_steps += self.trajectory_executor.execute(
             trajectory,
             gripper_target=self._gripper_open_q(),
             settle_steps=120,
@@ -616,6 +760,7 @@ class PhasePickPlaceEnv(gym.Env):
         extra_info: dict[str, float | int | str | bool] = {
             "q_error": q_error,
             "object_in_target": object_in_target,
+            "prehome_target_z": float(prehome_z),
         }
         if phase_success:
             self.phase_manager.set_phase(Phase.DONE)
@@ -649,7 +794,7 @@ class PhasePickPlaceEnv(gym.Env):
                 "recovery_from_phase": current_phase.name,
             }
 
-        gripper_target = self._gripper_closed_q() if self.object_grasped else self._gripper_open_q()
+        gripper_target = self._gripper_blocked_q() if self.object_grasped else self._gripper_open_q()
         status, sim_steps, ik_success, extra_info = self._move_ee_to_target(
             target_pos,
             gripper_target=gripper_target,
@@ -706,6 +851,51 @@ class PhasePickPlaceEnv(gym.Env):
         )
         return "SETTLED", sim_steps, True, extra_info
 
+    def _move_ee_to_target_linearly(
+        self,
+        target_pos: np.ndarray,
+        gripper_target: float,
+        q_speed: float,
+        settle_steps: int,
+        target_yaw: float = 0.0,
+        post_step=None,
+        waypoint_count: int = 8,
+    ) -> tuple[str, int, bool, dict[str, float | int | str | bool]]:
+        start_pos = self.data.site_xpos[self.names.ee_site_id].copy()
+        target_pos = np.asarray(target_pos, dtype=np.float64)
+        waypoint_count = max(1, int(waypoint_count))
+        waypoints = np.linspace(start_pos, target_pos, waypoint_count + 1, dtype=np.float64)[1:]
+        total_steps = 0
+        last_status = "SETTLED"
+        last_info: dict[str, float | int | str | bool] = {}
+
+        for index, waypoint in enumerate(waypoints):
+            final_waypoint = index == len(waypoints) - 1
+            status, steps, ik_success, info = self._move_ee_to_target(
+                waypoint,
+                gripper_target=gripper_target,
+                q_speed=q_speed,
+                settle_steps=settle_steps if final_waypoint else 0,
+                target_yaw=target_yaw,
+                post_step=post_step,
+            )
+            total_steps += steps
+            last_status = status
+            last_info = dict(info)
+            if not ik_success:
+                last_info["linear_waypoint_index"] = int(index + 1)
+                last_info["linear_waypoints"] = int(len(waypoints))
+                last_info["linear_target_x"] = float(target_pos[0])
+                last_info["linear_target_y"] = float(target_pos[1])
+                last_info["linear_target_z"] = float(target_pos[2])
+                return status, total_steps, False, last_info
+
+        last_info["linear_waypoints"] = int(len(waypoints))
+        last_info["linear_target_x"] = float(target_pos[0])
+        last_info["linear_target_y"] = float(target_pos[1])
+        last_info["linear_target_z"] = float(target_pos[2])
+        return last_status, total_steps, True, last_info
+
     def _current_ee_yaw(self) -> float:
         rotation = self.data.site_xmat[self.names.ee_site_id].reshape(3, 3)
         return float(np.arctan2(rotation[1, 0], rotation[0, 0]))
@@ -716,7 +906,7 @@ class PhasePickPlaceEnv(gym.Env):
             gripper_target = self._gripper_open_q()
         elif decoded.command == Command.GRASP or decoded.gripper_close:
             target_arm_q = self.data.qpos[self.names.arm_qposadr].copy()
-            gripper_target = self._gripper_closed_q()
+            gripper_target = self._gripper_blocked_q()
         elif decoded.command == Command.PLACE:
             target_arm_q = self.data.qpos[self.names.arm_qposadr].copy()
             gripper_target = self._gripper_open_q()
@@ -778,10 +968,34 @@ class PhasePickPlaceEnv(gym.Env):
         self.data.qvel[self.names.finger_l_dofadr] = 0.0
 
     def _apply_task_sample(self, sample: TaskSample) -> None:
+        if sample.object_poses:
+            for color, pos in sample.object_poses.items():
+                if color not in self.names.object_qposadr_by_color:
+                    continue
+                quat = (
+                    sample.object_quats.get(color, sample.object_quat)
+                    if sample.object_quats
+                    else sample.object_quat
+                )
+                set_freejoint_pose_by_color(self.data, self.names, color, pos, quat)
+                body_id = self.names.object_body_ids_by_color[color]
+                mass = (
+                    sample.object_masses.get(color, sample.object_mass)
+                    if sample.object_masses
+                    else sample.object_mass
+                )
+                if self.model.body_mass[body_id] > 0.0:
+                    self.model.body_mass[body_id] = float(mass)
+            return
+
         set_freejoint_pose(self.data, self.names, sample.object_pos, sample.object_quat)
         body_mass = self.model.body_mass[self.names.object_body_id]
         if body_mass > 0.0:
             self.model.body_mass[self.names.object_body_id] = sample.object_mass
+
+    def _activate_object_color(self, color: str) -> None:
+        set_active_object_color(self.names, color)
+        self.active_object_color = color
 
     def _update_grasped_object_pose(self) -> None:
         if not self.object_grasped:
@@ -794,6 +1008,8 @@ class PhasePickPlaceEnv(gym.Env):
     def _placed_object_pos(self) -> np.ndarray:
         if self.current_task is None:
             return self.data.xpos[self.names.object_body_id].copy()
+        if self.current_task.target_type == "stack":
+            return self._stack_place_pos()
         pos = self.current_task.target_pos.copy()
         pos[2] = 0.023
         return pos
@@ -802,8 +1018,40 @@ class PhasePickPlaceEnv(gym.Env):
         if self.current_task is None:
             return False
         object_pos = self.data.xpos[self.names.object_body_id]
+        if self.current_task.target_type == "stack":
+            target_block_pos = self._target_block_pos()
+            if target_block_pos is None:
+                return False
+            xy_error = float(np.linalg.norm(object_pos[:2] - target_block_pos[:2]))
+            z_delta = float(object_pos[2] - target_block_pos[2])
+            expected_delta = STACK_CENTER_Z_DELTA + STACK_Z_CLEARANCE
+            return bool(
+                xy_error <= 0.045
+                and abs(z_delta - expected_delta) <= 0.025
+                and object_pos[2] > target_block_pos[2] + BLOCK_HALF_EXTENT
+            )
         xy_error = np.linalg.norm(object_pos[:2] - self.current_task.target_pos[:2])
         return bool(xy_error <= 0.06 and 0.0 <= object_pos[2] <= 0.08)
+
+    def _target_block_pos(self) -> np.ndarray | None:
+        if self.current_task is None or self.current_task.target_object_color is None:
+            return None
+        body_id = self.names.object_body_ids_by_color.get(self.current_task.target_object_color)
+        if body_id is None:
+            return None
+        return self.data.xpos[body_id].copy()
+
+    def _stack_place_pos(self) -> np.ndarray:
+        target_block_pos = self._target_block_pos()
+        if target_block_pos is None:
+            return self.current_task.target_pos.copy()
+        pos = target_block_pos.copy()
+        pos[2] = (
+            float(target_block_pos[2])
+            + STACK_CENTER_Z_DELTA
+            + STACK_Z_CLEARANCE
+        )
+        return pos
 
     def _gripper_open_q(self) -> float:
         return float(self.names.joint_ranges[-1, 0])
@@ -815,6 +1063,16 @@ class PhasePickPlaceEnv(gym.Env):
         open_q = self._gripper_open_q()
         closed_q = self._gripper_closed_q()
         return float(open_q + 0.45 * (closed_q - open_q))
+
+    def _gripper_blocked_q(self) -> float:
+        open_q = self._gripper_open_q()
+        closed_q = self._gripper_closed_q()
+        return float(open_q + 0.62 * (closed_q - open_q))
+
+    def _gripper_empty_closed_q(self) -> float:
+        open_q = self._gripper_open_q()
+        closed_q = self._gripper_closed_q()
+        return float(open_q + 0.90 * (closed_q - open_q))
 
     def _observe(self) -> dict[str, np.ndarray]:
         if self.current_task is None:
@@ -828,6 +1086,7 @@ class PhasePickPlaceEnv(gym.Env):
             prev_reward=self.prev_reward,
             object_grasped=self.object_grasped,
             contact_probability=1.0 if self.object_grasped else 0.0,
+            task_id=0 if self.current_task is None else self.current_task.object_color_id,
         )
         pose_estimate = self._estimate_pose()
         image_embedding = self._image_embedding()
@@ -910,6 +1169,16 @@ class PhasePickPlaceEnv(gym.Env):
                 else self.phase_manager.attempt_count
             ),
             "max_phase_failures": int(self.max_phase_failures),
+            "target_color": self.active_object_color,
+            "target_color_id": int(self.current_task.object_color_id) if self.current_task else 0,
+            "task_mode": self.task_mode,
+            "target_type": self.current_task.target_type if self.current_task else self.task_mode,
+            "stack_target_color": self.current_task.target_object_color if self.current_task else None,
+            "stack_target_color_id": (
+                int(self.current_task.target_object_color_id) if self.current_task else -1
+            ),
+            "object_colors": list(self.object_colors),
+            "stack_target_colors": list(self.stack_target_colors),
         }
         planner_fail_reason = self._planner_fail_reason(
             valid_command=valid_command,

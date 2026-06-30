@@ -11,6 +11,7 @@ from torch import nn
 from torch.utils.data import Dataset
 
 from mujoco_phase_rl.tasks.phase_manager import PHASE_COUNT, Phase
+from mujoco_phase_rl.utils.object_catalog import color_id, color_one_hot
 
 
 PHASE_NAMES = tuple(phase.name for phase in Phase)
@@ -65,6 +66,11 @@ class VisionLabelDataset(Dataset):
         image = self._load_image(record)
         return {
             "image": image,
+            "target_color_id": torch.tensor(self._target_color_id(record), dtype=torch.long),
+            "target_color_onehot": torch.tensor(
+                color_one_hot(self._target_color(record), size=8),
+                dtype=torch.float32,
+            ),
             "phase": torch.tensor(int(record["phase_id"]), dtype=torch.long),
             "object_xy": torch.tensor(
                 self._normalized_pixel(record["object"]["pixel"]),
@@ -142,10 +148,23 @@ class VisionLabelDataset(Dataset):
         v = float(pixel["v"]) / max(float(self.source_height - 1), 1.0)
         return [float(np.clip(u, 0.0, 1.0)), float(np.clip(v, 0.0, 1.0))]
 
+    def _target_color(self, record: dict[str, Any]) -> str:
+        task = record.get("task", {})
+        return str(task.get("target_color", record.get("object", {}).get("color", "red")))
+
+    def _target_color_id(self, record: dict[str, Any]) -> int:
+        task = record.get("task", {})
+        if "target_color_id" in task:
+            return int(task["target_color_id"])
+        if "color_id" in record.get("object", {}):
+            return int(record["object"]["color_id"])
+        return color_id(self._target_color(record))
+
 
 class SmallVisionEstimator(nn.Module):
-    def __init__(self, phase_count: int = PHASE_COUNT) -> None:
+    def __init__(self, phase_count: int = PHASE_COUNT, task_dim: int = 8) -> None:
         super().__init__()
+        self.task_dim = max(0, int(task_dim))
         self.encoder = nn.Sequential(
             nn.Conv2d(3, 16, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
@@ -159,7 +178,7 @@ class SmallVisionEstimator(nn.Module):
             nn.Flatten(),
         )
         self.trunk = nn.Sequential(
-            nn.Linear(96 * 6 * 10, 256),
+            nn.Linear(96 * 6 * 10 + self.task_dim, 256),
             nn.ReLU(inplace=True),
             nn.Linear(256, 128),
             nn.ReLU(inplace=True),
@@ -171,8 +190,32 @@ class SmallVisionEstimator(nn.Module):
         self.grasped_head = nn.Linear(128, 1)
         self.in_target_head = nn.Linear(128, 1)
 
-    def forward(self, image: torch.Tensor) -> dict[str, torch.Tensor]:
-        features = self.trunk(self.encoder(image))
+    def forward(
+        self,
+        image: torch.Tensor,
+        target_color_onehot: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        encoded = self.encoder(image)
+        if self.task_dim > 0:
+            if target_color_onehot is None:
+                target_color_onehot = torch.zeros(
+                    (image.shape[0], self.task_dim),
+                    dtype=encoded.dtype,
+                    device=encoded.device,
+                )
+                target_color_onehot[:, 0] = 1.0
+            else:
+                target_color_onehot = target_color_onehot.to(device=encoded.device, dtype=encoded.dtype)
+                target_color_onehot = target_color_onehot[:, : self.task_dim]
+                if target_color_onehot.shape[1] < self.task_dim:
+                    pad = torch.zeros(
+                        (target_color_onehot.shape[0], self.task_dim - target_color_onehot.shape[1]),
+                        dtype=encoded.dtype,
+                        device=encoded.device,
+                    )
+                    target_color_onehot = torch.cat([target_color_onehot, pad], dim=1)
+            encoded = torch.cat([encoded, target_color_onehot], dim=1)
+        features = self.trunk(encoded)
         return {
             "phase_logits": self.phase_head(features),
             "object_xy": self.object_xy_head(features),
@@ -188,7 +231,8 @@ def load_vision_checkpoint(
     device: str | torch.device = "cpu",
 ) -> tuple[SmallVisionEstimator, dict[str, Any]]:
     checkpoint = torch.load(model_path, map_location=device)
-    model = SmallVisionEstimator().to(device)
+    task_dim = int(checkpoint.get("task_dim", _infer_task_dim_from_state_dict(checkpoint["model_state_dict"])))
+    model = SmallVisionEstimator(task_dim=task_dim).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model, checkpoint
@@ -214,9 +258,11 @@ def predict_image_file(
     source_width: int,
     source_height: int,
     device: str | torch.device = "cpu",
+    target_color: str = "red",
 ) -> dict[str, Any]:
     image = preprocess_image_file(image_path, image_width, image_height).to(device)
-    outputs = model(image)
+    task = torch.from_numpy(color_one_hot(target_color, size=8)).unsqueeze(0).to(device)
+    outputs = model(image, task)
     return prediction_from_outputs(outputs, source_width=source_width, source_height=source_height)
 
 
@@ -339,6 +385,13 @@ def move_batch_to_device(
     return {key: value.to(device) for key, value in batch.items()}
 
 
+def model_forward(
+    model: SmallVisionEstimator,
+    batch: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    return model(batch["image"], batch.get("target_color_onehot"))
+
+
 def _masked_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     weights = mask.reshape(-1, 1)
     denom = torch.clamp(weights.sum(), min=1.0)
@@ -372,6 +425,15 @@ def _denormalized_pixel(
         "u_norm": x,
         "v_norm": y,
     }
+
+
+def _infer_task_dim_from_state_dict(state_dict: dict[str, torch.Tensor]) -> int:
+    weight = state_dict.get("trunk.0.weight")
+    if weight is None:
+        return 8
+    input_dim = int(weight.shape[1])
+    base_dim = 96 * 6 * 10
+    return max(0, input_dim - base_dim)
 
 
 def _jitter_factor(strength: float) -> float:

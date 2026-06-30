@@ -2,7 +2,7 @@
 # tests/test_color_net.py
 # 설명: ColorNet forward shape, 경계 크롭, assign 유일성 단위 테스트.
 # 사용법:
-#   cd /home/su/idle_ws/src/ml
+#   cd ~/idle_ws/src/ml
 #   PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_color_net.py -v
 # ================================================================
 import sys

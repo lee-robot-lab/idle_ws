@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "vision_checkpoints": {
+    "stage1": "package://ml/checkpoints/stage1_v2/best.pt",
+    "color_net": "package://ml/checkpoints/color_net_v2/best.pt"
+  },
+  "routes": {
+    "pick_place:basket": {
+      "task_mode": "basket",
+      "policy_model": "outputs/rgb_multicolor_v1/ppo_policy/final_model.zip",
+      "description": "Pick one RGB block and place it into the basket.",
+      "required_intent_fields": ["object"],
+      "bridge_args": {
+        "target_color": "<object_color>"
+      }
+    },
+    "stack:block": {
+      "task_mode": "stack",
+      "policy_model": "outputs/stack_ppo_v1_staged_motion_1m/final_model.zip",
+      "description": "Pick one RGB block and place it on another RGB block.",
+      "required_intent_fields": ["object", "target"],
+      "bridge_args": {
+        "target_color": "<object_color>",
+        "stack_target_color": "<target_color>"
+      }
+    }
+  }
+}

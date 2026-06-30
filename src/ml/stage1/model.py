@@ -36,10 +36,11 @@ class SlotEncoder(nn.Module):
     """이미지 → N개 object slot (present, xy, yaw_vec, sem_feat)."""
 
     def __init__(self, num_queries=6, dec_layers=3, d_model=256,
-                 dino_dim=384, input_h=288, input_w=416):
+                 dino_dim=384, input_h=288, input_w=416,
+                 backbone_weights='IMAGENET1K_V1'):
         super().__init__()
         # ── backbone ──────────────────────────────────────────────
-        bb = resnet18(weights='IMAGENET1K_V1')
+        bb = resnet18(weights=backbone_weights)
         self.backbone = nn.Sequential(*list(bb.children())[:-2])  # → (B,512,h,w)
 
         feat_h = input_h // 32   # 288//32 = 9

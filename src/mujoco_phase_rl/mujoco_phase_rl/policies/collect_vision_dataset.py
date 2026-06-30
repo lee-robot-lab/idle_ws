@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 from mujoco_phase_rl.envs.phase_pick_place_env import PhasePickPlaceEnv
 from mujoco_phase_rl.policies.scripted_rollout import command_action
 from mujoco_phase_rl.tasks.phase_manager import Command
+from mujoco_phase_rl.utils.object_catalog import parse_color_list
 
 
 SCRIPTED_SEQUENCE = [
@@ -36,6 +37,10 @@ def collect_dataset(
     save_debug_overlay: bool = False,
     show_target_marker: bool = False,
     work_surface_rgba: str = "0.42 0.52 0.53 0.65",
+    object_colors: str | tuple[str, ...] = ("red",),
+    target_colors: str | tuple[str, ...] | None = None,
+    task_mode: str = "basket",
+    stack_target_colors: str | tuple[str, ...] | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
     output_path = Path(output_dir)
@@ -49,6 +54,10 @@ def collect_dataset(
         max_episode_steps=32,
         show_target_marker=show_target_marker,
         work_surface_rgba=work_surface_rgba,
+        object_colors=object_colors,
+        target_colors=target_colors,
+        task_mode=task_mode,
+        stack_target_colors=stack_target_colors,
     )
     renderer = mujoco.Renderer(env.model, height=int(height), width=int(width))
     camera_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
@@ -154,6 +163,15 @@ def collect_dataset(
     metadata = _metadata(env, camera, camera_id, width, height, seed, samples, mode)
     metadata["show_target_marker"] = bool(show_target_marker)
     metadata["work_surface_rgba"] = work_surface_rgba
+    metadata["object_colors"] = list(parse_color_list(object_colors, default=("red",)))
+    metadata["target_colors"] = list(parse_color_list(target_colors, default=parse_color_list(object_colors, default=("red",))))
+    metadata["task_mode"] = str(task_mode)
+    metadata["stack_target_colors"] = list(
+        parse_color_list(
+            stack_target_colors,
+            default=parse_color_list(object_colors, default=("red",)),
+        )
+    )
     metadata["episodes_used"] = episode
     metadata["records"] = len(records)
     metadata_path = output_path / "metadata.json"
@@ -242,6 +260,8 @@ def _label_record(
 ) -> dict[str, Any]:
     object_pos = env.data.xpos[env.names.object_body_id].copy()
     object_quat = env.data.xquat[env.names.object_body_id].copy()
+    object_color = env.active_object_color
+    object_color_id = int(env.current_task.object_color_id) if env.current_task is not None else 0
     target_pos = (
         env.current_task.target_pos.copy()
         if env.current_task is not None
@@ -258,6 +278,7 @@ def _label_record(
         height,
         half_extents=np.array([0.02, 0.02, 0.02], dtype=np.float64),
     )
+    all_objects = _all_object_labels(env, camera_id, width, height)
     return {
         "sample_index": int(sample_idx),
         "episode": int(episode),
@@ -273,9 +294,23 @@ def _label_record(
         "phase_success": bool(info.get("phase_success", False)),
         "phase_failure": bool(info.get("phase_failure", False)),
         "reward": reward,
+        "task": {
+            "target_color": object_color,
+            "target_color_id": object_color_id,
+            "object_colors": list(env.object_colors),
+            "task_mode": env.task_mode,
+            "target_type": env.current_task.target_type if env.current_task is not None else env.task_mode,
+            "stack_target_color": (
+                env.current_task.target_object_color if env.current_task is not None else None
+            ),
+            "stack_target_color_id": (
+                int(env.current_task.target_object_color_id) if env.current_task is not None else -1
+            ),
+        },
         "object": {
-            "name": "block_red",
-            "color": "red",
+            "name": f"block_{object_color}",
+            "color": object_color,
+            "color_id": object_color_id,
             "pos": _list(object_pos),
             "quat": _list(object_quat),
             "pixel": _project_point(env.model, env.data, camera_id, width, height, object_pos),
@@ -283,8 +318,15 @@ def _label_record(
             "grasped": bool(env.object_grasped),
             "in_target": bool(info.get("object_in_target", False)),
         },
+        "objects": all_objects,
         "target": {
-            "name": "basket",
+            "name": (
+                "basket"
+                if env.current_task is None or env.current_task.target_type == "basket"
+                else f"block_{env.current_task.target_object_color}"
+            ),
+            "type": env.current_task.target_type if env.current_task is not None else env.task_mode,
+            "color": None if env.current_task is None else env.current_task.target_object_color,
             "pos": _list(target_pos),
             "pixel": _project_point(env.model, env.data, camera_id, width, height, target_pos),
         },
@@ -324,7 +366,7 @@ def _metadata(
     fovy = float(env.model.cam_fovy[camera_id])
     fy = 0.5 * float(height) / math.tan(math.radians(fovy) * 0.5)
     return {
-        "format": "mujoco_phase_rl_vision_dataset_v1",
+        "format": "mujoco_phase_rl_vision_dataset_v2",
         "camera": camera,
         "camera_fovy_deg": fovy,
         "camera_pos": _list(env.data.cam_xpos[camera_id]),
@@ -359,12 +401,46 @@ def _format_record(record: dict[str, Any]) -> str:
         f"sample={record['sample_index']} phase={record['phase']} "
         f"event={record['event']} command={record.get('executed_command')} "
         f"status={record.get('executor_status')} success={record['phase_success']} "
+        f"target_color={record.get('task', {}).get('target_color', obj.get('color', 'red'))} "
         f"object_pos=({obj['pos'][0]:.3f},{obj['pos'][1]:.3f},{obj['pos'][2]:.3f}) "
         f"object_px=({obj_px.get('u', -1.0):.1f},{obj_px.get('v', -1.0):.1f}) "
         f"target_px=({target_px.get('u', -1.0):.1f},{target_px.get('v', -1.0):.1f}) "
         f"grasped={obj['grasped']} in_target={obj['in_target']} "
         f"planner_fail={planner['fail_class'] or '-'} attempt={planner['attempt_count']}"
     )
+
+
+def _all_object_labels(
+    env: PhasePickPlaceEnv,
+    camera_id: int,
+    width: int,
+    height: int,
+) -> dict[str, Any]:
+    labels: dict[str, Any] = {}
+    for color in env.object_colors:
+        body_id = env.names.object_body_ids_by_color.get(color)
+        if body_id is None:
+            continue
+        pos = env.data.xpos[body_id].copy()
+        quat = env.data.xquat[body_id].copy()
+        labels[color] = {
+            "name": f"block_{color}",
+            "color": color,
+            "pos": _list(pos),
+            "quat": _list(quat),
+            "pixel": _project_point(env.model, env.data, camera_id, width, height, pos),
+            "bbox": _project_body_bbox(
+                env.model,
+                env.data,
+                body_id,
+                camera_id,
+                width,
+                height,
+                half_extents=np.array([0.02, 0.02, 0.02], dtype=np.float64),
+            ),
+            "is_target": bool(color == env.active_object_color),
+        }
+    return labels
 
 
 def _project_body_bbox(
@@ -445,6 +521,13 @@ def _save_debug_overlay(rgb: np.ndarray, record: dict[str, Any], path: Path) -> 
     draw = ImageDraw.Draw(image)
     object_label = record["object"]
     target_label = record["target"]
+    for color, label in record.get("objects", {}).items():
+        fill = {
+            "red": (255, 0, 0),
+            "green": (0, 220, 0),
+            "blue": (0, 120, 255),
+        }.get(color, (255, 255, 0))
+        _draw_projected_point(draw, label.get("pixel"), fill=fill, radius=3)
     _draw_projected_point(draw, object_label.get("pixel"), fill=(255, 0, 0), radius=4)
     _draw_projected_point(draw, target_label.get("pixel"), fill=(0, 120, 255), radius=5)
     bbox = object_label.get("bbox")
@@ -457,7 +540,7 @@ def _save_debug_overlay(rgb: np.ndarray, record: dict[str, Any], path: Path) -> 
     text_x = 8
     text_y = 8
     lines = [
-        f"{record['phase']} command={record.get('executed_command')}",
+        f"{record['phase']} target={object_label.get('color', 'red')} command={record.get('executed_command')}",
         "obj=({:.3f}, {:.3f}, {:.3f})".format(*object_label["pos"]),
         f"grasped={object_label['grasped']} in_target={object_label['in_target']}",
     ]
@@ -497,6 +580,10 @@ def main() -> None:
     parser.add_argument("--debug-overlay", action="store_true")
     parser.add_argument("--show-target-marker", action="store_true")
     parser.add_argument("--work-surface-rgba", default="0.42 0.52 0.53 0.65")
+    parser.add_argument("--object-colors", default="red")
+    parser.add_argument("--target-colors", default=None)
+    parser.add_argument("--task-mode", choices=["basket", "stack"], default="basket")
+    parser.add_argument("--stack-target-colors", default=None)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -512,6 +599,10 @@ def main() -> None:
         save_debug_overlay=args.debug_overlay,
         show_target_marker=args.show_target_marker,
         work_surface_rgba=args.work_surface_rgba,
+        object_colors=args.object_colors,
+        target_colors=args.target_colors,
+        task_mode=args.task_mode,
+        stack_target_colors=args.stack_target_colors,
         verbose=args.verbose,
     )
 

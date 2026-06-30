@@ -18,6 +18,15 @@ from mujoco_phase_rl.utils.name_maps import (
     TASK_OBJECT_JOINT,
     resolve_name_map,
 )
+from mujoco_phase_rl.utils.object_catalog import (
+    OBJECT_COLORS,
+    block_body_name,
+    block_geom_name,
+    block_joint_name,
+    normalize_color,
+    parse_color_list,
+    rgba_string,
+)
 
 
 @dataclass
@@ -52,12 +61,14 @@ def load_task_scene(
     robot_xml_path: str | Path | None = None,
     show_target_marker: bool = True,
     work_surface_rgba: str = "0.42 0.52 0.53 0.65",
+    object_colors: str | tuple[str, ...] = ("red",),
 ) -> LoadedMujocoScene:
     path = Path(robot_xml_path) if robot_xml_path is not None else default_robot_xml_path()
     xml = build_task_scene_xml(
         path,
         show_target_marker=show_target_marker,
         work_surface_rgba=work_surface_rgba,
+        object_colors=object_colors,
     )
     model = mujoco.MjModel.from_xml_string(xml)
     data = mujoco.MjData(model)
@@ -70,6 +81,7 @@ def build_task_scene_xml(
     robot_xml_path: str | Path,
     show_target_marker: bool = True,
     work_surface_rgba: str = "0.42 0.52 0.53 0.65",
+    object_colors: str | tuple[str, ...] = ("red",),
 ) -> str:
     path = Path(robot_xml_path).resolve()
     tree = ET.parse(path)
@@ -85,8 +97,12 @@ def build_task_scene_xml(
     if worldbody is None:
         raise ValueError("robot.xml is missing <worldbody>")
 
-    _remove_named_bodies(root, {"block_green", "block_blue"})
-    _prepare_task_block(root, worldbody)
+    enabled_colors = parse_color_list(object_colors, default=("red",))
+    _remove_named_bodies(
+        root,
+        {block_body_name(color) for color in OBJECT_COLORS if color not in enabled_colors},
+    )
+    _prepare_task_blocks(root, worldbody, enabled_colors)
     _prepare_basket_target(root, show_target_marker=show_target_marker)
     _prepare_gripper_sites(root)
 
@@ -140,19 +156,47 @@ def _remove_named_bodies(root: ET.Element, names: set[str]) -> None:
                 parent.remove(child)
 
 
-def _prepare_task_block(root: ET.Element, worldbody: ET.Element) -> None:
-    block = _find_named(root, "body", TASK_OBJECT_BODY)
+def set_freejoint_pose_by_color(
+    data: mujoco.MjData,
+    names: NameMap,
+    color: str,
+    pos: np.ndarray,
+    quat: np.ndarray,
+) -> None:
+    normalized = normalize_color(color)
+    qposadr = names.object_qposadr_by_color[normalized]
+    dofadr = names.object_dofadr_by_color[normalized]
+    data.qpos[qposadr:qposadr + 3] = np.asarray(pos, dtype=np.float64)
+    data.qpos[qposadr + 3:qposadr + 7] = np.asarray(quat, dtype=np.float64)
+    data.qvel[dofadr:dofadr + 6] = 0.0
+
+
+def _prepare_task_blocks(root: ET.Element, worldbody: ET.Element, colors: tuple[str, ...]) -> None:
+    for color in colors:
+        _prepare_task_block(root, worldbody, color)
+
+
+def _prepare_task_block(root: ET.Element, worldbody: ET.Element, color: str = "red") -> None:
+    body_name = block_body_name(color)
+    joint_name = block_joint_name(color)
+    geom_name = block_geom_name(color)
+    default_pos = {
+        "red": "0.0 0.40 0.023",
+        "green": "-0.10 0.43 0.023",
+        "blue": "0.12 0.43 0.023",
+    }.get(color, "0.0 0.40 0.023")
+    block = _find_named(root, "body", body_name)
     if block is None:
-        block = ET.SubElement(worldbody, "body", {"name": TASK_OBJECT_BODY, "pos": "0.0 0.40 0.023"})
-        ET.SubElement(block, "freejoint", {"name": TASK_OBJECT_JOINT})
+        block = ET.SubElement(worldbody, "body", {"name": body_name, "pos": default_pos})
+        ET.SubElement(block, "freejoint", {"name": joint_name})
         ET.SubElement(
             block,
             "geom",
             {
-                "name": "block_red_geom",
+                "name": geom_name,
                 "type": "box",
                 "size": "0.02 0.02 0.02",
-                "rgba": "0.9 0.2 0.2 1",
+                "rgba": rgba_string(color),
                 "mass": "0.1",
                 "contype": "1",
                 "conaffinity": "1",
@@ -160,20 +204,21 @@ def _prepare_task_block(root: ET.Element, worldbody: ET.Element) -> None:
         )
         return
 
-    block.set("pos", "0.0 0.40 0.023")
+    block.set("pos", default_pos)
     freejoint = block.find("freejoint")
     if freejoint is None:
         freejoint = block.find("joint[@type='free']")
     if freejoint is None:
         freejoint = ET.Element("freejoint")
         block.insert(0, freejoint)
-    freejoint.set("name", TASK_OBJECT_JOINT)
+    freejoint.set("name", joint_name)
 
     geom = block.find("geom")
     if geom is not None:
-        geom.set("name", "block_red_geom")
+        geom.set("name", geom_name)
         geom.set("type", "box")
         geom.set("size", "0.02 0.02 0.02")
+        geom.set("rgba", rgba_string(color))
         geom.set("mass", "0.1")
 
 

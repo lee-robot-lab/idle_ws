@@ -110,10 +110,13 @@ def _add_pregrasp_components(components: dict[str, float], info: dict) -> None:
 def _add_grasp_components(components: dict[str, float], info: dict) -> None:
     xy_error = _finite(info.get("grasp_xy_error"))
     if xy_error is not None:
-        components["grasp_alignment"] = 0.25 * _closeness(xy_error, 0.06)
+        components["grasp_alignment"] = 0.30 * _closeness(xy_error, 0.05)
     z_delta = _finite(info.get("grasp_z_delta"))
     if z_delta is not None:
-        components["grasp_height"] = 0.15 * _closeness(abs(z_delta - 0.025), 0.035)
+        target_z_delta = _finite(info.get("grasp_target_z_delta"))
+        if target_z_delta is None:
+            target_z_delta = 0.010
+        components["grasp_height"] = 0.20 * _closeness(abs(z_delta - target_z_delta), 0.025)
     finger_q = _finite(info.get("finger_q"))
     finger_open_q = _finite(info.get("finger_open_q"))
     finger_grasp_min_q = _finite(info.get("finger_grasp_min_q"))
@@ -142,6 +145,8 @@ def _add_move_to_place_components(components: dict[str, float], info: dict) -> N
     object_z = _finite(info.get("object_z"))
     if object_z is not None and object_z >= 0.075:
         components["object_carried"] = 0.10
+    if _is_stack(info):
+        _add_stack_move_to_place_components(components, info)
 
 
 def _add_place_components(components: dict[str, float], info: dict) -> None:
@@ -150,6 +155,28 @@ def _add_place_components(components: dict[str, float], info: dict) -> None:
     object_speed = _finite(info.get("object_speed"))
     if object_speed is not None:
         components["object_stable"] = 0.20 * _closeness(object_speed, 0.10)
+    if _is_stack(info):
+        _add_stack_place_components(components, info)
+
+
+def _add_stack_move_to_place_components(components: dict[str, float], info: dict) -> None:
+    stack_xy_error = _finite(info.get("stack_xy_error", info.get("object_xy_error")))
+    if stack_xy_error is not None:
+        components["stack_xy_accuracy"] = 0.25 * _closeness(stack_xy_error, 0.070)
+    stack_z_error = _finite(info.get("stack_z_error"))
+    if stack_z_error is not None:
+        components["stack_height_preview"] = 0.10 * _closeness(stack_z_error, 0.060)
+
+
+def _add_stack_place_components(components: dict[str, float], info: dict) -> None:
+    stack_xy_error = _finite(info.get("stack_xy_error"))
+    if stack_xy_error is not None:
+        components["stack_xy_accuracy"] = 0.25 * _closeness(stack_xy_error, 0.055)
+    stack_z_error = _finite(info.get("stack_z_error"))
+    if stack_z_error is not None:
+        components["stack_height_accuracy"] = 0.30 * _closeness(stack_z_error, 0.030)
+    if bool(info.get("object_in_target", False)):
+        components["stack_on_target"] = 0.40
 
 
 def _add_home_components(components: dict[str, float], info: dict) -> None:
@@ -175,6 +202,10 @@ def _finite(value) -> float | None:
     if not math.isfinite(value):
         return None
     return value
+
+
+def _is_stack(info: dict) -> bool:
+    return str(info.get("target_type", "")).lower() == "stack"
 
 
 def _total(components: dict[str, float]) -> float:

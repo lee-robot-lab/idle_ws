@@ -5,6 +5,14 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from mujoco_phase_rl.utils.object_catalog import (
+    OBJECT_COLORS,
+    block_body_name,
+    block_geom_name,
+    block_joint_name,
+    normalize_color,
+)
+
 
 ARM_JOINT_NAMES = ("j1", "j2", "j3", "j4", "j5", "j6")
 ARM_ACTUATOR_NAMES = tuple(f"{name}_motor" for name in ARM_JOINT_NAMES)
@@ -41,6 +49,11 @@ class NameMap:
     object_joint_id: int
     object_qposadr: int
     object_dofadr: int
+    object_body_ids_by_color: dict[str, int]
+    object_joint_ids_by_color: dict[str, int]
+    object_qposadr_by_color: dict[str, int]
+    object_dofadr_by_color: dict[str, int]
+    object_geom_ids_by_color: dict[str, int]
     basket_body_id: int
     target_body_id: int
     target_geom_id: int
@@ -63,8 +76,34 @@ def resolve_name_map(model: mujoco.MjModel) -> NameMap:
     )
     gripper_actuator_id = _id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, GRIPPER_ACTUATOR_NAME)
 
-    object_joint_id = _id(model, mujoco.mjtObj.mjOBJ_JOINT, TASK_OBJECT_JOINT)
-    object_body_id = _id(model, mujoco.mjtObj.mjOBJ_BODY, TASK_OBJECT_BODY)
+    object_body_ids_by_color: dict[str, int] = {}
+    object_joint_ids_by_color: dict[str, int] = {}
+    object_qposadr_by_color: dict[str, int] = {}
+    object_dofadr_by_color: dict[str, int] = {}
+    object_geom_ids_by_color: dict[str, int] = {}
+    for color in OBJECT_COLORS:
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, block_body_name(color))
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, block_joint_name(color))
+        geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, block_geom_name(color))
+        if body_id >= 0 and joint_id >= 0:
+            object_body_ids_by_color[color] = int(body_id)
+            object_joint_ids_by_color[color] = int(joint_id)
+            object_qposadr_by_color[color] = int(model.jnt_qposadr[joint_id])
+            object_dofadr_by_color[color] = int(model.jnt_dofadr[joint_id])
+            if geom_id >= 0:
+                object_geom_ids_by_color[color] = int(geom_id)
+
+    if "red" in object_joint_ids_by_color:
+        default_color = "red"
+        object_joint_id = object_joint_ids_by_color[default_color]
+        object_body_id = object_body_ids_by_color[default_color]
+    elif object_joint_ids_by_color:
+        default_color = next(iter(object_joint_ids_by_color))
+        object_joint_id = object_joint_ids_by_color[default_color]
+        object_body_id = object_body_ids_by_color[default_color]
+    else:
+        object_joint_id = _id(model, mujoco.mjtObj.mjOBJ_JOINT, TASK_OBJECT_JOINT)
+        object_body_id = _id(model, mujoco.mjtObj.mjOBJ_BODY, TASK_OBJECT_BODY)
     basket_body_id = _id(model, mujoco.mjtObj.mjOBJ_BODY, BASKET_BODY)
     target_geom_id = _id(model, mujoco.mjtObj.mjOBJ_GEOM, TARGET_GEOM)
     target_site_id = _id(model, mujoco.mjtObj.mjOBJ_SITE, TARGET_SITE)
@@ -100,6 +139,11 @@ def resolve_name_map(model: mujoco.MjModel) -> NameMap:
         object_joint_id=object_joint_id,
         object_qposadr=int(model.jnt_qposadr[object_joint_id]),
         object_dofadr=int(model.jnt_dofadr[object_joint_id]),
+        object_body_ids_by_color=object_body_ids_by_color,
+        object_joint_ids_by_color=object_joint_ids_by_color,
+        object_qposadr_by_color=object_qposadr_by_color,
+        object_dofadr_by_color=object_dofadr_by_color,
+        object_geom_ids_by_color=object_geom_ids_by_color,
         basket_body_id=basket_body_id,
         target_body_id=basket_body_id,
         target_geom_id=target_geom_id,
@@ -109,6 +153,16 @@ def resolve_name_map(model: mujoco.MjModel) -> NameMap:
         joint_ranges=joint_ranges,
         actuator_ctrlrange=actuator_ctrlrange,
     )
+
+
+def set_active_object_color(names: NameMap, color: str) -> None:
+    normalized = normalize_color(color)
+    if normalized not in names.object_body_ids_by_color:
+        raise KeyError(f"MuJoCo task object for color {normalized!r} is not available")
+    names.object_body_id = names.object_body_ids_by_color[normalized]
+    names.object_joint_id = names.object_joint_ids_by_color[normalized]
+    names.object_qposadr = names.object_qposadr_by_color[normalized]
+    names.object_dofadr = names.object_dofadr_by_color[normalized]
 
 
 def _id(model: mujoco.MjModel, objtype: mujoco.mjtObj, name: str) -> int:

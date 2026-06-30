@@ -13,6 +13,7 @@ from mujoco_phase_rl.perception.vision_estimator import (
     PHASE_NAMES,
     VisionLabelDataset,
     load_vision_checkpoint,
+    model_forward,
     move_batch_to_device,
     predict_image_file,
     vision_loss,
@@ -47,7 +48,7 @@ def evaluate_vision_estimator(
     with torch.no_grad():
         for batch in loader:
             batch = move_batch_to_device(batch, device)
-            outputs = model(batch["image"])
+            outputs = model_forward(model, batch)
             _loss, loss_components = vision_loss(outputs, batch)
             metric_components = vision_metrics(
                 outputs,
@@ -197,6 +198,7 @@ def _predict_record(
         source_width=source_width,
         source_height=source_height,
         device=device,
+        target_color=str(record.get("task", {}).get("target_color", record.get("object", {}).get("color", "red"))),
     )
     return {
         "image": str(image_path),
@@ -207,6 +209,7 @@ def _predict_record(
             "ee_pixel": record["robot"]["ee_pixel"],
             "object_grasped": bool(record["object"]["grasped"]),
             "object_in_target": bool(record["object"]["in_target"]),
+            "target_color": str(record.get("task", {}).get("target_color", record.get("object", {}).get("color", "red"))),
         },
         "prediction": prediction,
     }
@@ -216,7 +219,8 @@ def _format_prediction(index: int, item: dict[str, Any]) -> str:
     pred = item["prediction"]
     gt = item["gt"]
     return (
-        f"sample={index} gt_phase={gt['phase']} pred_phase={pred['phase']} "
+        f"sample={index} color={gt.get('target_color', 'red')} "
+        f"gt_phase={gt['phase']} pred_phase={pred['phase']} "
         f"conf={pred['phase_confidence']:.3f} "
         f"obj_px=({pred['object_pixel']['u']:.1f},{pred['object_pixel']['v']:.1f}) "
         f"target_px=({pred['target_pixel']['u']:.1f},{pred['target_pixel']['v']:.1f}) "

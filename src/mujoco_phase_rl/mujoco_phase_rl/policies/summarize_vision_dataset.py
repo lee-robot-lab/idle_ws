@@ -27,6 +27,10 @@ def summarize_vision_dataset(dataset_dir: str | Path) -> dict[str, Any]:
     command_counts = Counter(str(record.get("executed_command")) for record in records)
     status_counts = Counter(str(record.get("executor_status")) for record in records)
     event_counts = Counter(record.get("event", "") for record in records)
+    target_color_counts = Counter(
+        str(record.get("task", {}).get("target_color", record.get("object", {}).get("color", "red")))
+        for record in records
+    )
     result = {
         "dataset_dir": str(dataset_path),
         "records": len(records),
@@ -35,6 +39,9 @@ def summarize_vision_dataset(dataset_dir: str | Path) -> dict[str, Any]:
         "event_counts": dict(sorted(event_counts.items())),
         "command_counts": dict(sorted(command_counts.items())),
         "executor_status_counts": dict(sorted(status_counts.items())),
+        "target_color_counts": dict(sorted(target_color_counts.items())),
+        "object_colors": metadata.get("object_colors", ["red"]),
+        "target_colors": metadata.get("target_colors", ["red"]),
         "object_visible_rate": _visible_rate(records, "object"),
         "target_visible_rate": _visible_rate(records, "target"),
         "ee_visible_rate": _robot_visible_rate(records, "ee_pixel"),
@@ -97,6 +104,8 @@ def main() -> None:
     print(f"phase_counts={summary['phase_counts']}")
     print(f"command_counts={summary['command_counts']}")
     print(f"executor_status_counts={summary['executor_status_counts']}")
+    print(f"target_color_counts={summary['target_color_counts']}")
+    print(f"object_colors={summary['object_colors']} target_colors={summary['target_colors']}")
     print(f"object_pixel_bounds={summary['object_pixel_bounds']}")
     print(f"target_pixel_bounds={summary['target_pixel_bounds']}")
     print(f"ee_pixel_bounds={summary['ee_pixel_bounds']}")

@@ -6,7 +6,6 @@
 # 키: Space=저장  d=직전삭제  q=종료
 # ================================================================
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -14,17 +13,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ml_paths import data_root
+
 # detect_live 공유 (color ratio, quality check, outer-pct centroid, NMS 포함)
-_dl = importlib.util.spec_from_file_location(
-    "detect_live",
-    Path(__file__).parent.parent / "detect_live.py",
+from detect_live import (
+    H as H_live,
+    SCENE_TARGET_COLORS,
+    detect,
+    object_size_px,
 )
-_mod = importlib.util.module_from_spec(_dl)
-_dl.loader.exec_module(_mod)
-detect              = _mod.detect
-object_size_px      = _mod.object_size_px
-H_live              = _mod.H
-SCENE_TARGET_COLORS = _mod.SCENE_TARGET_COLORS   # ("red","green","blue","basket")
 
 # ── ROI ──────────────────────────────────────────────────────
 X0, X1 = 90, 1120
@@ -94,7 +91,7 @@ def next_scene_id(out_dir: Path) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out",    default=Path("/home/su/idle_ws/data/scenes"), type=Path)
+    ap.add_argument("--out",    default=data_root() / "scenes", type=Path)
     ap.add_argument("--device", default=1, type=int)
     ap.add_argument("--w",      default=1280, type=int)
     ap.add_argument("--h",      default=720,  type=int)

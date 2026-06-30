@@ -4,6 +4,7 @@ import argparse
 import math
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -11,10 +12,13 @@ import numpy as np
 from mujoco_phase_rl.bridges.real_phase_diagnostics import (
     BridgeConfig,
     DEFAULT_TARGET_POS,
+    DEFAULT_TARGET_RADIUS,
+    DEFAULT_TARGET_MEMORY_JUMP_TOLERANCE,
     FusedState,
     RealPhaseDiagnosticsNode,
     _age,
     _effective_action_array,
+    _effective_gripper_command,
     _fmt_age_seconds,
     _fmt_float,
     _fmt_vec,
@@ -64,6 +68,7 @@ class ActionBridgeConfig:
     straight_line_lift: bool
     straight_line_place: bool
     auto_open_on_start: bool
+    log_file: str | None
 
 
 @dataclass
@@ -103,7 +108,16 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
         self.confirmed_phase_set_s = 0.0
         self.return_home_after_failure = False
         self.placed_by_command = False
+        self.log_file_handle = None
         super().__init__(rclpy_module, config.diagnostics)
+        if config.log_file:
+            log_path = Path(config.log_file).expanduser()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.log_file_handle = log_path.open("a", encoding="utf-8")
+            self._write_action_log(
+                "[log] real_action_bridge started "
+                f"stamp={time.strftime('%Y-%m-%d %H:%M:%S')} mode={'ARMED' if config.armed else 'DRY'}\n"
+            )
 
         from msgs.msg import EETarget
         from std_msgs.msg import String
@@ -208,26 +222,44 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
         else:
             action_note = f"inflight: {self.inflight.command.name}/{self.inflight_stage}"
 
-        print(
-            self._format_action_log(
-                fused=fused,
-                policy=policy,
-                policy_note=policy_note,
-                target=target,
-                action_note=action_note,
-                safety_ok=safety_ok,
-            ),
-            flush=True,
+        log_text = self._format_action_log(
+            fused=fused,
+            policy=policy,
+            policy_note=policy_note,
+            target=target,
+            action_note=action_note,
+            safety_ok=safety_ok,
         )
+        print(log_text, flush=True)
+        self._write_action_log(log_text + "\n")
         self.printed_once = True
         if self.config.once:
             self.stop_requested = True
+
+    def _write_action_log(self, text: str) -> None:
+        if self.log_file_handle is None:
+            return
+        self.log_file_handle.write(text)
+        self.log_file_handle.flush()
+
+    def close(self) -> None:
+        if self.log_file_handle is not None:
+            self.log_file_handle.close()
+            self.log_file_handle = None
 
     def _tick_inflight(self, fused: FusedState) -> None:
         if self.inflight is None:
             return
         now = time.monotonic()
         if self.inflight_stage == "WAIT_GRIPPER":
+            if self._stamp_fresh(self.last_gripper_state_stamp_s):
+                gripper_state_id = self._gripper_state_id()
+                if gripper_state_id == 3:  # GripperState.GRASPED
+                    self._finish_transaction(True, "gripper_state_grasped")
+                    return
+                if gripper_state_id == 5:  # GripperState.FAIL
+                    self._finish_transaction(False, "gripper_state_failed")
+                    return
             if now - self.inflight_started_s > self.action_config.gripper_timeout_s:
                 self._finish_transaction(False, "gripper_timeout")
             return
@@ -391,6 +423,8 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
             return False, f"command {command.name} blocked by hard gate"
         if command in {Command.LIFT, Command.MOVE_TO_PLACE, Command.PLACE} and not fused.object_grasped:
             return False, f"command {command.name} blocked: no fresh grasp evidence"
+        if command in {Command.MOVE_TO_PLACE, Command.PLACE} and not fused.target_available:
+            return False, f"command {command.name} blocked: missing target pose"
         if command not in {Command.HOME, Command.RECOVERY} and fused.object_pos is None:
             return False, "missing object pose"
         if fused.ee_pos is None and command not in {Command.HOME}:
@@ -847,7 +881,10 @@ class RealActionBridgeNode(RealPhaseDiagnosticsNode):
                 (
                     f"  state  obj={_fmt_vec(fused.object_pos)} "
                     f"src={fused.object_pose_source}/{_fmt_age_seconds(fused.object_pose_age_s)} "
-                    f"ee={_fmt_vec(fused.ee_pos)} target={_fmt_vec(fused.target_pos)}"
+                    f"ee={_fmt_vec(fused.ee_pos)} target={_fmt_vec(fused.target_pos)} "
+                    f"mode={self.config.task_mode} target_label="
+                    f"{self.config.stack_target_color if self.config.task_mode == 'stack' else self.config.basket_color} "
+                    f"target_src={fused.target_pose_source}"
                 ),
                 (
                     f"  flags  home={int(fused.robot_home)} grasp={int(fused.object_grasped)} "
@@ -926,10 +963,16 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
     parser.add_argument("--drop-topic", default="/gripper/drop_detected")
     parser.add_argument("--target-color", default="red")
     parser.add_argument("--basket-color", default="basket")
+    parser.add_argument("--task-mode", choices=["basket", "stack"], default="basket")
+    parser.add_argument(
+        "--stack-target-color",
+        default="blue",
+        help="Target block color when --task-mode stack.",
+    )
     parser.add_argument("--target-x", type=float, default=float(DEFAULT_TARGET_POS[0]))
     parser.add_argument("--target-y", type=float, default=float(DEFAULT_TARGET_POS[1]))
     parser.add_argument("--target-z", type=float, default=float(DEFAULT_TARGET_POS[2]))
-    parser.add_argument("--target-radius", type=float, default=0.06)
+    parser.add_argument("--target-radius", type=float, default=DEFAULT_TARGET_RADIUS)
     parser.add_argument(
         "--home-tolerance",
         type=float,
@@ -941,6 +984,15 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
         type=float,
         default=8.0,
         help="Seconds to keep the last reliable object pose during arm/gripper occlusion.",
+    )
+    parser.add_argument(
+        "--target-memory-jump-tolerance",
+        type=float,
+        default=DEFAULT_TARGET_MEMORY_JUMP_TOLERANCE,
+        help=(
+            "Max target XY jump accepted during late task phases before keeping the "
+            "previous target memory. Set 0 to disable jump rejection."
+        ),
     )
     parser.add_argument(
         "--phase-hold-timeout",
@@ -1070,6 +1122,11 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
     parser.add_argument("--no-straight-line-lift", action="store_true")
     parser.add_argument("--no-straight-line-place", action="store_true")
     parser.add_argument("--no-auto-open-on-start", action="store_true")
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Append action bridge logs to this file in addition to terminal output.",
+    )
 
     args, ros_args = parser.parse_known_args(argv)
     pregrasp_z = _float_arg(args.pregrasp_z, args.pregrasp_z_delta, 0.23)
@@ -1092,10 +1149,13 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
         publish_sim_command=False,
         target_color=args.target_color,
         basket_color=args.basket_color,
+        task_mode=str(args.task_mode),
+        stack_target_color=str(args.stack_target_color),
         target_pos=np.array([args.target_x, args.target_y, args.target_z], dtype=np.float32),
         target_radius=float(args.target_radius),
         home_tolerance=max(0.01, float(args.home_tolerance)),
         object_memory_timeout_s=max(0.0, float(args.object_memory_timeout)),
+        target_memory_jump_tolerance=max(0.0, float(args.target_memory_jump_tolerance)),
         phase_hold_timeout_s=max(0.0, float(args.phase_hold_timeout)),
         log_period_s=float(args.log_period),
         stale_timeout_s=float(args.stale_timeout),
@@ -1144,6 +1204,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
             straight_line_lift=not bool(args.no_straight_line_lift),
             straight_line_place=not bool(args.no_straight_line_place),
             auto_open_on_start=not bool(args.no_auto_open_on_start),
+            log_file=args.log_file,
         ),
         ros_args,
     )
@@ -1161,6 +1222,7 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        bridge.close()
         bridge.node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

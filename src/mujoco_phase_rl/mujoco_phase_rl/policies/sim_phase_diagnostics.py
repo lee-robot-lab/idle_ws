@@ -38,8 +38,9 @@ class VisionRuntime:
         self.image_width = int(self.checkpoint["image_width"])
         self.image_height = int(self.checkpoint["image_height"])
 
-    def predict(self, rgb: np.ndarray) -> dict[str, Any]:
+    def predict(self, rgb: np.ndarray, target_color: str = "red") -> dict[str, Any]:
         from mujoco_phase_rl.perception.vision_estimator import prediction_from_outputs
+        from mujoco_phase_rl.utils.object_catalog import color_one_hot
 
         image = Image.fromarray(rgb).convert("RGB")
         image = image.resize((self.image_width, self.image_height), resample=Image.BILINEAR)
@@ -51,8 +52,9 @@ class VisionRuntime:
             .contiguous()
             .to(self.device)
         )
+        task = self.torch.from_numpy(color_one_hot(target_color, size=8)).unsqueeze(0).to(self.device)
         with self.torch.no_grad():
-            outputs = self.model(tensor)
+            outputs = self.model(tensor, task)
         return prediction_from_outputs(
             outputs,
             source_width=int(rgb.shape[1]),
@@ -60,7 +62,7 @@ class VisionRuntime:
         )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Compare MuJoCo GT phase/coords, rendered camera vision prediction, "
@@ -77,6 +79,12 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=360)
     parser.add_argument("--camera", default="task_camera")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--target-color", default="red")
+    parser.add_argument("--object-colors", default="red")
+    parser.add_argument("--target-colors", default=None)
+    parser.add_argument("--task-mode", choices=["basket", "stack"], default="basket")
+    parser.add_argument("--stack-target-color", default=None)
+    parser.add_argument("--stack-target-colors", default=None)
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--no-command-mask", action="store_true")
     parser.add_argument("--pose-source", choices=["gt", "noisy_gt"], default="gt")
@@ -88,9 +96,15 @@ def main() -> None:
     parser.add_argument("--viewer-skip", type=int, default=8)
     parser.add_argument("--viewer-slowdown", type=float, default=1.0)
     parser.add_argument("--viewer-pause-s", type=float, default=0.4)
+    parser.add_argument(
+        "--viewer-done-hold-s",
+        type=float,
+        default=2.0,
+        help="Seconds to keep the MuJoCo viewer on the terminal DONE/FAILURE/TIMEOUT state.",
+    )
     parser.add_argument("--log-style", choices=["pretty", "compact"], default="pretty")
     parser.add_argument("--json", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.mode == "policy" and not args.policy_model:
         raise SystemExit("--mode policy requires --policy-model")
@@ -108,6 +122,10 @@ def main() -> None:
         pose_noise_std=args.pose_noise_std,
         target_noise_std=args.target_noise_std,
         pose_dropout_prob=args.pose_dropout_prob,
+        object_colors=args.object_colors,
+        target_colors=args.target_color or args.target_colors,
+        task_mode=args.task_mode,
+        stack_target_colors=args.stack_target_color or args.stack_target_colors,
     )
     renderer = mujoco.Renderer(env.model, height=int(args.height), width=int(args.width))
     camera_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, args.camera)
@@ -127,6 +145,9 @@ def main() -> None:
             _sync_viewer_once(viewer)
             print(
                 f"episode={episode} reset phase={info['phase']} "
+                f"task_mode={info.get('task_mode', '-') } "
+                f"target_color={info.get('target_color', '-') } "
+                f"stack_target_color={info.get('stack_target_color', '-') } "
                 f"object_pos={_fmt_vec(env.data.xpos[env.names.object_body_id])} "
                 f"target_pos={_fmt_vec(_target_pos(env))}"
             )
@@ -134,7 +155,8 @@ def main() -> None:
                 renderer.update_scene(env.data, camera=args.camera)
                 rgb = renderer.render()
                 gt = _ground_truth_record(env, camera_id, int(args.width), int(args.height))
-                vision_pred = vision.predict(rgb) if vision is not None else None
+                target_color = info.get("target_color", args.target_color)
+                vision_pred = vision.predict(rgb, target_color=target_color) if vision is not None else None
                 policy_action = _predict_policy_action(policy, obs, args.deterministic)
                 policy_intent = (
                     _action_intent(env, policy_action)
@@ -176,6 +198,7 @@ def main() -> None:
                     print(_format_result(result, args.log_style))
                 _pause_viewer(viewer, args.viewer_pause_s)
                 if terminated or truncated:
+                    _pause_viewer(viewer, args.viewer_done_hold_s)
                     break
     finally:
         env.set_post_mj_step_callback(None)
@@ -334,6 +357,11 @@ def _ground_truth_record(
     gripper_pos = env.data.site_xpos[env.names.gripper_center_site_id].copy()
     return {
         "phase": env.phase_manager.phase.name,
+        "task_mode": env.task_mode,
+        "target_color": env.active_object_color,
+        "stack_target_color": (
+            env.current_task.target_object_color if env.current_task is not None else None
+        ),
         "object_pos": _list(object_pos),
         "target_pos": _list(target_pos),
         "ee_pos": _list(ee_pos),
@@ -378,6 +406,8 @@ def _step_result_record(
         "finger_q",
         "object_z",
         "object_xy_error",
+        "object_speed",
+        "object_speed_success_max",
         "q_error",
         "failure_reason",
     ):
@@ -388,7 +418,7 @@ def _step_result_record(
 
 def _target_pos(env: PhasePickPlaceEnv) -> np.ndarray:
     if env.current_task is not None:
-        return env.current_task.target_pos.copy()
+        return env._placed_object_pos()
     return env.data.site_xpos[env.names.target_site_id].copy()
 
 
@@ -444,6 +474,11 @@ def _format_state_pretty(record: dict[str, Any]) -> str:
     ee_object_dz = float(ee_pos[2] - object_pos[2])
     lines = [
         f"\n[step {record['step']:02d}] {gt['phase']} | source={record['action_source']}",
+        (
+            f"  task:   mode={gt.get('task_mode', '-')} "
+            f"object_color={gt.get('target_color', '-')} "
+            f"stack_target={gt.get('stack_target_color', '-')}"
+        ),
         f"  vision: {_vision_phase_text(vision)}",
         f"  policy: {_policy_text(policy)}",
         f"  pose:   obj={_fmt_vec(gt['object_pos'])} ee={_fmt_vec(gt['ee_pos'])} "
@@ -470,6 +505,8 @@ def _format_result_pretty(result: dict[str, Any]) -> str:
         ("finger", "finger_q", "{:.3f}"),
         ("obj_z", "object_z", "{:.3f}"),
         ("obj_xy", "object_xy_error", "{:.3f}"),
+        ("obj_v", "object_speed", "{:.3f}"),
+        ("obj_v_max", "object_speed_success_max", "{:.3f}"),
         ("q_err", "q_error", "{:.3f}"),
     ):
         if key in result:
@@ -538,6 +575,8 @@ def _format_state_line(record: dict[str, Any]) -> str:
         )
     return (
         f"  state step={record['step']} gt_phase={gt['phase']} {vision_text} "
+        f"mode={gt.get('task_mode', '-')} object_color={gt.get('target_color', '-')} "
+        f"stack_target={gt.get('stack_target_color', '-')} "
         f"obj={_fmt_vec(gt['object_pos'])} obj_px={_fmt_px(gt['object_pixel'])} "
         f"ee={_fmt_vec(gt['ee_pos'])} ee_px={_fmt_px(gt['ee_pixel'])} "
         f"grasped={gt['object_grasped']} in_target={gt['object_in_target']} "

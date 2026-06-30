@@ -5,22 +5,16 @@
 # ================================================================
 import argparse
 import sys
-import importlib.util
 import numpy as np
 import cv2
 
-_spec = importlib.util.spec_from_file_location(
-    "color_segmentation",
-    "/home/su/idle_ws/src/ml/labeling/color_segmentation.py",
+from labeling.color_segmentation import (
+    HSV_PRESETS,
+    SCENE_TARGET_COLORS,
+    make_color_mask,
+    mask_color_stats,
+    passes_color_quality,
 )
-_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-
-HSV_PRESETS         = _mod.HSV_PRESETS
-SCENE_TARGET_COLORS = _mod.SCENE_TARGET_COLORS
-make_color_mask     = _mod.make_color_mask
-passes_color_quality = _mod.passes_color_quality
-mask_color_stats    = _mod.mask_color_stats
 
 OUTER_PCT = {
     "green":  10,

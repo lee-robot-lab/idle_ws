@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Subset
 from mujoco_phase_rl.perception.vision_estimator import (
     SmallVisionEstimator,
     VisionLabelDataset,
+    model_forward,
     move_batch_to_device,
     vision_loss,
     vision_metrics,
@@ -67,8 +68,15 @@ def train_vision_estimator(
     ) if len(val_dataset) > 0 else None
 
     torch_device = torch.device(device if device != "auto" else _auto_device())
-    model = SmallVisionEstimator().to(torch_device)
+    model = SmallVisionEstimator(task_dim=8).to(torch_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(learning_rate))
+    print(
+        f"training_config dataset={train_base_dataset.dataset_dir} output_dir={output_dir} "
+        f"records={len(eval_base_dataset)} train_records={len(train_dataset)} "
+        f"val_records={len(val_dataset)} epochs={int(epochs)} "
+        f"batch_size={max(1, int(batch_size))} image_size={int(image_width)}x{int(image_height)} "
+        f"device={torch_device} learning_rate={float(learning_rate)} augment={bool(augment)}"
+    )
 
     history: list[dict] = []
     for epoch in range(int(epochs)):
@@ -113,6 +121,8 @@ def train_vision_estimator(
         "dataset_dir": str(eval_base_dataset.dataset_dir),
         "dataset_metadata": eval_base_dataset.metadata,
         "records": len(eval_base_dataset),
+        "task_dim": int(model.task_dim),
+        "target_colors": eval_base_dataset.metadata.get("target_colors", ["red"]),
         "epochs": int(epochs),
         "augment": bool(augment),
         "augmentation": {
@@ -179,7 +189,7 @@ def _run_epoch(
         if training:
             optimizer.zero_grad(set_to_none=True)
         with torch.set_grad_enabled(training):
-            outputs = model(batch["image"])
+            outputs = model_forward(model, batch)
             loss, loss_components = vision_loss(outputs, batch)
             if training:
                 loss.backward()

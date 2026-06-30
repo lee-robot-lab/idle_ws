@@ -18,6 +18,11 @@ state / image estimate / history
 
 실제 로봇 연결은 두 단계로 분리한다. `real_phase_diagnostics`는 real/sim ROS topic을 읽어서 phase와 PPO action intent만 출력한다. `real_action_bridge`는 같은 판단 결과를 `/ee_target`, `/gripper/open`, `/gripper/close`, `/go_home`으로 변환하지만 기본값은 dry-run이고, `--armed`를 준 경우에만 실제 명령을 publish한다.
 
+자연어/STT와 stage1/colorNet 비전을 PPO에 연결하는 task routing 구조는
+[`TASK_ROUTING.ko.md`](TASK_ROUTING.ko.md)에 정리되어 있다.
+실제 vision estimator/fusion 구조는
+[`VISION_ESTIMATOR_ARCHITECTURE.ko.md`](VISION_ESTIMATOR_ARCHITECTURE.ko.md)에 정리되어 있다.
+
 ## 구성요소
 
 | 영역 | 파일/모듈 | 역할 |
@@ -36,6 +41,7 @@ state / image estimate / history
 | Real diagnostics | `bridges/real_phase_diagnostics.py` | 실제/sim sensor topic 기반 phase/action intent 출력 |
 | Real sensor check | `bridges/real_sensor_check.py` | USB RGB vision, motor, gripper, plan topic/service 상태 점검 |
 | Real action bridge | `bridges/real_action_bridge.py` | dry-run 기본, `--armed`에서 실제 `/ee_target`/gripper/go_home 명령 |
+| Task routing | `TASK_ROUTING.ko.md`, `config/policy_routes.json` | STT semantic plan을 PPO task/model/색상 인자로 변환하는 기준 |
 | Policy CLI | `policies/*.py` | dataset 수집, 학습, 평가, rollout, diagnostic |
 
 ## 실행 스크립트
@@ -59,6 +65,7 @@ state / image estimate / history
 | `train_vision_estimator` | supervised vision estimator 학습 |
 | `evaluate_vision_estimator` | vision estimator 평가 및 overlay 생성 |
 | `predict_vision_image` | 저장된 RGB 이미지 1장에 vision estimator 적용 |
+| `train_multicolor_pipeline` | RGB 다중 블럭 dataset/vision/PPO 파이프라인 실행 |
 | `camera_smoke` | MuJoCo task camera render smoke test |
 
 ## 전체 흐름
@@ -402,6 +409,88 @@ ros2 run mujoco_phase_rl train_vision_estimator \
   --noise-std 0.02 \
   --blur-prob 0.10
 ```
+
+## RGB multi-object pipeline
+
+목표:
+
+- red/green/blue 블럭을 같은 MuJoCo camera image에 배치
+- `target_color` 조건으로 원하는 색 블럭의 pose/pixel 예측
+- PPO는 색을 직접 인식하지 않고 선택된 object pose와 target pose 기준으로 phase/action 결정
+- 실제 로봇은 `real_action_bridge --target-color red|green|blue`로 같은 구조 사용
+
+전체 smoke pipeline:
+
+```bash
+ros2 run mujoco_phase_rl train_multicolor_pipeline \
+  --output-root outputs/rgb_multicolor_smoke \
+  --object-colors red,green,blue \
+  --target-colors red,green,blue \
+  --samples 3000 \
+  --vision-epochs 20 \
+  --ppo-timesteps 20000 \
+  --n-envs 4 \
+  --device cpu \
+  --augment
+```
+
+본 학습 권장 시작값:
+
+```bash
+ros2 run mujoco_phase_rl train_multicolor_pipeline \
+  --output-root outputs/rgb_multicolor_v1 \
+  --object-colors red,green,blue \
+  --target-colors red,green,blue \
+  --samples 12000 \
+  --vision-epochs 40 \
+  --ppo-timesteps 100000 \
+  --n-envs 8 \
+  --device cpu \
+  --augment
+```
+
+명령만 확인:
+
+```bash
+ros2 run mujoco_phase_rl train_multicolor_pipeline \
+  --output-root outputs/rgb_multicolor_v1 \
+  --dry-run --json
+```
+
+분리 실행:
+
+```bash
+ros2 run mujoco_phase_rl collect_vision_dataset \
+  --output-dir outputs/rgb_multicolor_v1/vision_dataset \
+  --samples 12000 \
+  --width 640 \
+  --height 360 \
+  --object-colors red,green,blue \
+  --target-colors red,green,blue
+
+ros2 run mujoco_phase_rl train_vision_estimator \
+  --dataset outputs/rgb_multicolor_v1/vision_dataset \
+  --output-dir outputs/rgb_multicolor_v1/vision_estimator \
+  --epochs 40 \
+  --batch-size 64 \
+  --image-width 160 \
+  --image-height 90 \
+  --device cpu \
+  --augment
+
+ros2 run mujoco_phase_rl train_ppo \
+  --output-dir outputs/rgb_multicolor_v1/ppo_policy \
+  --total-timesteps 100000 \
+  --n-envs 8 \
+  --object-colors red,green,blue \
+  --target-colors red,green,blue \
+  --pose-source noisy_gt \
+  --pose-noise-std 0.015 \
+  --target-noise-std 0.005 \
+  --pose-dropout-prob 0.10
+```
+
+멀티컬러 v1에서 PPO 입력은 선택된 object pose 기준이다. 색 선택은 vision/adapter가 담당한다. 그래서 기존 red 단일 PPO 구조를 크게 흔들지 않고 RGB target object 선택으로 확장한다.
 
 ## Deterministic / Stochastic
 

@@ -21,6 +21,7 @@ class SnapshotState:
     prev_reward: float
     object_grasped: bool
     contact_probability: float
+    task_id: int = 0
 
 
 class SnapshotObserver:
@@ -96,7 +97,7 @@ class SnapshotObserver:
         embeddings = np.concatenate(
             [
                 image_embedding,
-                language_task_embedding(0, 8),
+                language_task_embedding(state.task_id, 8),
                 np.array([state.contact_probability], dtype=np.float32),
             ]
         ).astype(np.float32)

@@ -17,6 +17,7 @@ def predict_one_image(
     image_path: str | Path,
     output_overlay: str | Path | None = None,
     device: str = "cpu",
+    target_color: str = "red",
 ) -> dict:
     model, checkpoint = load_vision_checkpoint(model_path, device=device)
     image_width = int(checkpoint["image_width"])
@@ -31,12 +32,14 @@ def predict_one_image(
         source_width=source_width,
         source_height=source_height,
         device=device,
+        target_color=target_color,
     )
     result = {
         "model_path": str(model_path),
         "image_path": str(image_path),
         "image_width": source_width,
         "image_height": source_height,
+        "target_color": target_color,
         "prediction": prediction,
     }
     if output_overlay:
@@ -78,6 +81,7 @@ def _format_result(result: dict) -> str:
     pred = result["prediction"]
     return (
         f"image={result['image_path']} phase={pred['phase']} "
+        f"target_color={result.get('target_color', 'red')} "
         f"phase_conf={pred['phase_confidence']:.3f} "
         f"object_px=({pred['object_pixel']['u']:.1f},{pred['object_pixel']['v']:.1f}) "
         f"target_px=({pred['target_pixel']['u']:.1f},{pred['target_pixel']['v']:.1f}) "
@@ -93,6 +97,7 @@ def main() -> None:
     parser.add_argument("--image", required=True)
     parser.add_argument("--output-overlay", default=None)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--target-color", default="red")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -101,6 +106,7 @@ def main() -> None:
         image_path=args.image,
         output_overlay=args.output_overlay,
         device=args.device,
+        target_color=args.target_color,
     )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

@@ -118,6 +118,10 @@ def main() -> None:
     parser.add_argument("--target-noise-std", type=float, default=0.0)
     parser.add_argument("--pose-dropout-prob", type=float, default=0.0)
     parser.add_argument("--max-phase-failures", type=int, default=8)
+    parser.add_argument("--object-colors", default="red")
+    parser.add_argument("--target-colors", default=None)
+    parser.add_argument("--task-mode", choices=["basket", "stack"], default="basket")
+    parser.add_argument("--stack-target-colors", default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -138,6 +142,10 @@ def main() -> None:
             "target_noise_std": args.target_noise_std,
             "pose_dropout_prob": args.pose_dropout_prob,
             "max_phase_failures": args.max_phase_failures,
+            "object_colors": args.object_colors,
+            "target_colors": args.target_colors,
+            "task_mode": args.task_mode,
+            "stack_target_colors": args.stack_target_colors,
         },
     )
 

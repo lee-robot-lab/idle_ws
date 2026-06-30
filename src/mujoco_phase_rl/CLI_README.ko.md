@@ -20,6 +20,124 @@ RL policy:
 
 까지를 목표로 한다.
 
+자연어 명령, `stage1_v2 + color_net_v2` 비전, PPO 모델 선택을 묶는 구조는
+`TASK_ROUTING.ko.md`와 `config/policy_routes.json`에 정리되어 있다.
+
+최종 실행 순서만 빠르게 볼 때는 `FINAL_CLI_README.ko.md`를 사용한다.
+
+## STT/비전/PPO 라우팅 dry-run
+
+자연어 파싱 결과를 기준으로 어떤 PPO 모델과 bridge 인자가 선택되는지 확인한다.
+
+```bash
+ros2 run mujoco_phase_rl route_task_intent \
+  --text "빨간 블록을 바구니에 넣어줘" \
+  --parser rule
+```
+
+stack 예:
+
+```bash
+ros2 run mujoco_phase_rl route_task_intent \
+  --text "빨간 블록을 파란 블록 위에 올려줘" \
+  --parser rule
+```
+
+출력은 `semantic`, `route`, `vision`, `bridge` 네 부분으로 나뉜다.
+
+```text
+semantic: STT/Qwen이 만든 action/object/target
+route   : 선택된 PPO task family와 model path
+vision  : stage1/colorNet checkpoint path
+bridge  : real_action_bridge에 넘길 핵심 인자
+```
+
+실제 카메라와 stage1/colorNet checkpoint까지 함께 확인:
+
+```bash
+ros2 run mujoco_phase_rl vision_intent_handoff \
+  --text "빨간 블록을 바구니에 넣어줘" \
+  --parser rule \
+  --camera \
+  --camera-device /dev/video2 \
+  --camera-width 1280 \
+  --camera-height 720 \
+  --device cpu
+```
+
+연속 갱신:
+
+```bash
+ros2 run mujoco_phase_rl vision_intent_handoff \
+  --text "빨간 블록을 파란 블록 위에 올려줘" \
+  --parser rule \
+  --camera \
+  --camera-device /dev/video2 \
+  --camera-width 1280 \
+  --camera-height 720 \
+  --device cpu \
+  --loop \
+  --rate-hz 5
+```
+
+## 자연어 기반 실행형 통합 CLI
+
+자연어를 바로 route해서 시뮬에서 PPO policy를 실행한다. `outputs/final/*.zip`이 아직 없으면 현재 학습 폴더의 최신 checkpoint를 자동으로 사용한다.
+
+```bash
+ros2 run mujoco_phase_rl sim_intent_runner \
+  --text "빨간 블록을 파란 블록 위에 올려줘" \
+  --parser rule \
+  --episodes 3 \
+  --steps 16 \
+  --device cpu \
+  --viewer
+```
+
+바구니 pick/place:
+
+```bash
+ros2 run mujoco_phase_rl sim_intent_runner \
+  --text "초록 블록을 바구니에 넣어줘" \
+  --parser rule \
+  --episodes 3 \
+  --steps 16 \
+  --device cpu \
+  --viewer
+```
+
+실제 카메라 stage1/colorNet을 bridge 내부에서 직접 실행하고, 기존 `real_action_bridge` 안전 로직으로 넘긴다. 기본은 dry-run이다.
+
+```bash
+ros2 run mujoco_phase_rl real_intent_action_bridge \
+  --text "빨간 블록을 파란 블록 위에 올려줘" \
+  --parser rule \
+  --camera-device /dev/video2 \
+  --camera-width 1280 \
+  --camera-height 720 \
+  --direct-vision-rate 5 \
+  --device cpu \
+  --phase-prior-weight 0.8 \
+  --object-memory-timeout 8.0 \
+  --phase-hold-timeout 8.0 \
+  --home-tolerance 0.25 \
+  --target-reached-tolerance 0.12 \
+  --yaw-mode fixed \
+  --fixed-yaw-deg 0 \
+  --pregrasp-z 0.23 \
+  --grasp-z 0.12 \
+  --carry-z 0.23 \
+  --place-z 0.19 \
+  --place-xy-mode current \
+  --prehome-z 0.30 \
+  --home-mode service \
+  --min-command-period 5.0 \
+  --command-timeout 12.0 \
+  --log-period 0.5
+```
+
+실제 명령 publish는 같은 명령 끝에 `--armed`를 추가했을 때만 켜진다.
+
 ## 전체 구조 요약
 
 이 프로젝트의 현재 목표는 로봇팔 저수준 제어기를 RL로 대체하는 것이 아니다. RL은
@@ -808,7 +926,7 @@ ros2 run phy gripper_node
 상태 확인:
 
 ```bash
-ros2 service list | grep -E 'gripper|go_home|release_to_home'
+ros2 service list | grep -E 'gripper|go_home'
 ros2 topic echo --once /motor_state_array
 ros2 topic echo --once /plan/status
 ```
@@ -836,7 +954,7 @@ ros2 run mujoco_phase_rl real_action_bridge \
   --place-z 0.19 \
   --place-xy-mode current \
   --prehome-z 0.30 \
-  --home-mode timeout \
+  --home-mode service \
   --min-command-period 5.0 \
   --command-timeout 12.0 \
   --log-period 0.5
@@ -966,9 +1084,24 @@ ros2 run mujoco_phase_rl real_action_bridge \
   --place-z 0.19 \
   --place-xy-mode current \
   --prehome-z 0.30 \
-  --home-mode timeout \
+  --home-mode service \
   --min-command-period 5.0 \
   --command-timeout 12.0 \
   --log-period 0.5 \
   --armed
 ```
+
+
+
+시뮬
+
+  ros2 run mujoco_phase_rl sim_phase_diagnostics \
+    --vision-model outputs/final/vision_estimator.pt \
+    --policy-model outputs/final/phase_policy.zip \
+    --mode policy \
+    --episodes 3 \
+    --steps 16 \
+    --device cpu \
+    --deterministic \
+    --log-style pretty \
+    --viewer

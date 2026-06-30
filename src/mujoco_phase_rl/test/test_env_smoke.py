@@ -503,7 +503,7 @@ def test_scripted_gripper_closes_for_grasp_and_opens_for_place():
         _obs, _reward, _terminated, _truncated, info = env.step(command_action(command, params))
         assert info["phase_success"] is True
     assert env.data.qpos[env.names.finger_r_qposadr] >= finger_grasp_min
-    assert 0.010 <= float(info["grasp_z_delta"]) <= 0.050
+    assert 0.000 <= float(info["grasp_z_delta"]) <= 0.035
 
     for command, params in (
         (Command.LIFT, {"lift_height": 0.085}),

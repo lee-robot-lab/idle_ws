@@ -24,6 +24,20 @@ from mujoco_phase_rl.tasks.phase_manager import (
 FINGER_CLOSED_Q = 0.0447
 GRIPPER_MOTOR_CLOSED_Q = 0.80
 DEFAULT_TARGET_POS = np.array([0.0, 0.62, 0.009], dtype=np.float32)
+DEFAULT_TARGET_RADIUS = 0.08
+GRASPED_OBJECT_EE_Z_OFFSET = 0.12
+DEFAULT_TARGET_MEMORY_JUMP_TOLERANCE = 0.10
+LATE_TARGET_VISION_ALPHA = 0.20
+GRASPED_OBJECT_VISION_ALPHA = 0.20
+GRASPED_OBJECT_VISION_JUMP_TOLERANCE = 0.12
+LIFTED_OBJECT_Z_THRESHOLD = 0.055
+LIFTED_EE_Z_THRESHOLD = 0.19
+PLACE_PHASE_RADIUS_MIN = 0.08
+PLACE_PHASE_RADIUS_SCALE = 1.5
+PLACE_RETREAT_EE_Z_THRESHOLD = 0.18
+PLACE_RETREAT_GRIPPER_OPENING_MIN = 0.55
+PLACE_RETREAT_RADIUS_MIN = 0.14
+PLACE_RETREAT_RADIUS_SCALE = 2.0
 
 
 @dataclass
@@ -42,10 +56,13 @@ class BridgeConfig:
     publish_sim_command: bool
     target_color: str
     basket_color: str
+    task_mode: str
+    stack_target_color: str
     target_pos: np.ndarray
     target_radius: float
     home_tolerance: float
     object_memory_timeout_s: float
+    target_memory_jump_tolerance: float
     phase_hold_timeout_s: float
     log_period_s: float
     stale_timeout_s: float
@@ -86,6 +103,8 @@ class FusedState:
     object_in_target: bool
     dropped: bool
     robot_home: bool
+    target_available: bool = True
+    target_pose_source: str = "configured"
 
 
 class VisionRuntime:
@@ -102,8 +121,9 @@ class VisionRuntime:
         self.image_width = int(self.checkpoint["image_width"])
         self.image_height = int(self.checkpoint["image_height"])
 
-    def predict(self, rgb: np.ndarray) -> dict[str, Any]:
+    def predict(self, rgb: np.ndarray, target_color: str = "red") -> dict[str, Any]:
         from mujoco_phase_rl.perception.vision_estimator import prediction_from_outputs
+        from mujoco_phase_rl.utils.object_catalog import color_one_hot
 
         image = self.Image.fromarray(rgb).convert("RGB")
         image = image.resize((self.image_width, self.image_height), resample=self.Image.BILINEAR)
@@ -115,8 +135,9 @@ class VisionRuntime:
             .contiguous()
             .to(self.device)
         )
+        task = self.torch.from_numpy(color_one_hot(target_color, size=8)).unsqueeze(0).to(self.device)
         with self.torch.no_grad():
-            outputs = self.model(tensor)
+            outputs = self.model(tensor, task)
         return prediction_from_outputs(
             outputs,
             source_width=int(rgb.shape[1]),
@@ -159,6 +180,9 @@ class RealPhaseDiagnosticsNode:
         self.last_object_pos: np.ndarray | None = None
         self.last_object_yaw = 0.0
         self.last_object_seen_s: float | None = None
+        self.last_target_pos: np.ndarray | None = None
+        self.last_target_seen_s: float | None = None
+        self.last_target_key: str | None = None
         self.grasp_object_offset: np.ndarray | None = None
         self.object_in_target_latched = False
         self.motor_q: dict[int, float] = {}
@@ -245,7 +269,7 @@ class RealPhaseDiagnosticsNode:
         self.last_image_stamp_s = self._received_s(msg)
         if self.vision is not None:
             try:
-                self.last_vision = self.vision.predict(rgb)
+                self.last_vision = self.vision.predict(rgb, target_color=self.config.target_color)
                 self.last_vision_error = None
             except Exception as exc:
                 self.last_vision_error = f"vision inference failed: {exc}"
@@ -308,9 +332,14 @@ class RealPhaseDiagnosticsNode:
             self.stop_requested = True
 
     def _build_fused_state(self) -> FusedState:
-        target_box = self._select_box(self.config.basket_color, allow_basket=True)
+        if self.config.task_mode == "stack":
+            target_key = self.config.stack_target_color
+            target_box = self._select_box(self.config.stack_target_color, allow_basket=False)
+        else:
+            target_key = self.config.basket_color
+            target_box = self._select_box(self.config.basket_color, allow_basket=True)
         object_box = self._select_box(self.config.target_color, allow_basket=False)
-        target_pos = target_box.pos if target_box is not None else self.config.target_pos.copy()
+        target_pos, target_available, target_pose_source = self._resolve_target_pose(target_box, target_key)
 
         q = self._joint_vector()
         qd = self._joint_velocity_vector()
@@ -324,10 +353,15 @@ class RealPhaseDiagnosticsNode:
             object_grasped=object_grasped,
             dropped=dropped,
         )
-        raw_object_in_target = _object_in_target(object_pos, target_pos, self.config.target_radius)
+        raw_object_in_target = (
+            target_available
+            and _object_in_target(object_pos, target_pos, self.config.target_radius)
+        )
         object_in_target = self._update_object_in_target_latch(
             object_pos=object_pos,
             target_pos=target_pos,
+            ee_pos=ee_pos,
+            gripper_opening=gripper_opening,
             object_grasped=object_grasped,
             dropped=dropped,
             raw_object_in_target=raw_object_in_target,
@@ -369,6 +403,8 @@ class RealPhaseDiagnosticsNode:
             object_in_target=object_in_target,
             dropped=dropped,
             robot_home=robot_home,
+            target_available=target_available,
+            target_pose_source=target_pose_source,
         )
 
     def _update_object_in_target_latch(
@@ -376,6 +412,8 @@ class RealPhaseDiagnosticsNode:
         *,
         object_pos: np.ndarray | None,
         target_pos: np.ndarray,
+        ee_pos: np.ndarray | None,
+        gripper_opening: float,
         object_grasped: bool,
         dropped: bool,
         raw_object_in_target: bool,
@@ -386,12 +424,44 @@ class RealPhaseDiagnosticsNode:
         if raw_object_in_target:
             self.object_in_target_latched = True
             return True
+        if self.object_in_target_latched and self.prev_phase in {Phase.PLACE, Phase.RETREAT, Phase.DONE}:
+            return True
+        if self.prev_phase == Phase.PLACE and self._place_retreat_likely(
+            object_pos=object_pos,
+            target_pos=target_pos,
+            ee_pos=ee_pos,
+            gripper_opening=gripper_opening,
+        ):
+            self.object_in_target_latched = True
+            return True
         if object_pos is not None:
             xy_error = float(np.linalg.norm(object_pos[:2] - target_pos[:2]))
             clear_radius = max(float(self.config.target_radius) * 1.8, float(self.config.target_radius) + 0.04)
             if xy_error > clear_radius:
                 self.object_in_target_latched = False
         return bool(self.object_in_target_latched)
+
+    def _place_retreat_likely(
+        self,
+        *,
+        object_pos: np.ndarray | None,
+        target_pos: np.ndarray,
+        ee_pos: np.ndarray | None,
+        gripper_opening: float,
+    ) -> bool:
+        if ee_pos is None:
+            return False
+        if float(gripper_opening) < PLACE_RETREAT_GRIPPER_OPENING_MIN:
+            return False
+        if float(ee_pos[2]) < PLACE_RETREAT_EE_Z_THRESHOLD:
+            return False
+        if object_pos is None:
+            return True
+        retreat_radius = max(
+            float(self.config.target_radius) * PLACE_RETREAT_RADIUS_SCALE,
+            PLACE_RETREAT_RADIUS_MIN,
+        )
+        return bool(np.linalg.norm(object_pos[:2] - target_pos[:2]) <= retreat_radius)
 
     def _resolve_object_pose(
         self,
@@ -409,6 +479,25 @@ class RealPhaseDiagnosticsNode:
             pos = object_box.pos.astype(np.float32).copy()
             yaw = float(object_box.yaw_rad)
             stamp_s = float(object_box.stamp_s)
+            if object_grasped and ee_pos is not None:
+                # Direct stage1/colorNet gives reliable XY/yaw but no object height.
+                # While grasped, infer carried-object z from FK so LIFT/MOVE_TO_PLACE
+                # phase logic does not stay pinned to the table-height vision z.
+                pos[2] = max(float(pos[2]), float(ee_pos[2]) - GRASPED_OBJECT_EE_Z_OFFSET)
+                if self.grasp_object_offset is None and self.last_object_pos is not None:
+                    self.grasp_object_offset = self.last_object_pos - ee_pos
+                if self.grasp_object_offset is not None:
+                    fk_pos = (ee_pos + self.grasp_object_offset).astype(np.float32)
+                    vision_jump = float(np.linalg.norm(pos[:2] - fk_pos[:2]))
+                    if vision_jump > GRASPED_OBJECT_VISION_JUMP_TOLERANCE:
+                        self.last_object_pos = fk_pos.copy()
+                        self.last_object_yaw = yaw
+                        self.last_object_seen_s = stamp_s
+                        return fk_pos, yaw, "grasp_fk_reject_vision", max(0.0, now - stamp_s)
+                    pos = (
+                        (1.0 - GRASPED_OBJECT_VISION_ALPHA) * fk_pos
+                        + GRASPED_OBJECT_VISION_ALPHA * pos
+                    ).astype(np.float32)
             self.last_object_pos = pos.copy()
             self.last_object_yaw = yaw
             self.last_object_seen_s = stamp_s
@@ -453,6 +542,45 @@ class RealPhaseDiagnosticsNode:
 
         self.grasp_object_offset = None
         return None, 0.0, "missing", None
+
+    def _resolve_target_pose(self, target_box: BoxPose | None, target_key: str) -> tuple[np.ndarray, bool, str]:
+        now = time.monotonic()
+        memory_age = (
+            None
+            if self.last_target_seen_s is None
+            else max(0.0, now - float(self.last_target_seen_s))
+        )
+        memory_recent = bool(
+            self.last_target_pos is not None
+            and self.last_target_key == target_key
+            and memory_age is not None
+            and memory_age <= float(self.config.object_memory_timeout_s)
+        )
+
+        if target_box is not None:
+            pos = target_box.pos.astype(np.float32).copy()
+            late_phase = self.prev_phase in {Phase.MOVE_TO_PLACE, Phase.PLACE}
+            jump_tolerance = float(self.config.target_memory_jump_tolerance)
+            if memory_recent and late_phase and jump_tolerance > 0.0:
+                xy_jump = float(np.linalg.norm(pos[:2] - self.last_target_pos[:2]))
+                if xy_jump > jump_tolerance:
+                    return self.last_target_pos.astype(np.float32).copy(), True, "vision_memory_reject_jump"
+                pos = (
+                    (1.0 - LATE_TARGET_VISION_ALPHA) * self.last_target_pos
+                    + LATE_TARGET_VISION_ALPHA * pos
+                ).astype(np.float32)
+            self.last_target_pos = pos.copy()
+            self.last_target_seen_s = float(target_box.stamp_s)
+            self.last_target_key = target_key
+            return pos, True, "vision_smooth" if memory_recent and late_phase else "vision"
+
+        if memory_recent:
+            return self.last_target_pos.astype(np.float32).copy(), True, "vision_memory"
+
+        if self.config.task_mode != "stack":
+            return self.config.target_pos.copy(), True, "configured"
+
+        return self.config.target_pos.copy(), False, "missing"
 
     def _apply_phase_hysteresis(self, fused: FusedState) -> FusedState:
         if self.prev_phase is None or fused.phase == self.prev_phase:
@@ -624,6 +752,27 @@ class RealPhaseDiagnosticsNode:
             return Phase.DONE, 0.95, "object in target, released, and robot near home"
         if object_in_target and not object_grasped:
             return Phase.RETREAT, 0.90, "object in target and gripper released"
+        if (
+            self.prev_phase == Phase.PLACE
+            and not object_grasped
+            and self._place_retreat_likely(
+                object_pos=object_pos,
+                target_pos=target_pos,
+                ee_pos=ee_pos,
+                gripper_opening=gripper_opening,
+            )
+        ):
+            ee_z = -math.inf if ee_pos is None else float(ee_pos[2])
+            object_target_xy = (
+                math.inf
+                if object_pos is None
+                else float(np.linalg.norm(object_pos[:2] - target_pos[:2]))
+            )
+            return (
+                Phase.RETREAT,
+                0.80,
+                f"place released and ee retreated ee_z={ee_z:.3f} obj_xy={object_target_xy:.3f}",
+            )
         if object_pos is None:
             return Phase.OBSERVE_OBJECT, 0.35, "no target object pose"
         ee_object_xy = math.inf
@@ -633,11 +782,29 @@ class RealPhaseDiagnosticsNode:
             ee_object_z = float(ee_pos[2] - object_pos[2])
         object_target_xy = float(np.linalg.norm(object_pos[:2] - target_pos[:2]))
         if object_grasped:
-            if object_target_xy <= self.config.target_radius * 1.3:
-                return Phase.PLACE, 0.85, "grasped object is near target"
-            if float(object_pos[2]) > 0.08:
-                return Phase.MOVE_TO_PLACE, 0.85, "object is lifted and grasped"
-            return Phase.LIFT, 0.80, "object is grasped but not lifted"
+            place_radius = max(
+                float(self.config.target_radius) * PLACE_PHASE_RADIUS_SCALE,
+                PLACE_PHASE_RADIUS_MIN,
+            )
+            if object_target_xy <= place_radius:
+                return (
+                    Phase.PLACE,
+                    0.85,
+                    f"grasped object is near target xy={object_target_xy:.3f}<={place_radius:.3f}",
+                )
+            object_z = float(object_pos[2])
+            ee_z = -math.inf if ee_pos is None else float(ee_pos[2])
+            if object_z >= LIFTED_OBJECT_Z_THRESHOLD or ee_z >= LIFTED_EE_Z_THRESHOLD:
+                return (
+                    Phase.MOVE_TO_PLACE,
+                    0.85,
+                    f"object is lifted/grasped obj_z={object_z:.3f} ee_z={ee_z:.3f}",
+                )
+            return (
+                Phase.LIFT,
+                0.80,
+                f"object is grasped but not lifted obj_z={object_z:.3f} ee_z={ee_z:.3f}",
+            )
         if ee_object_xy <= 0.04 and 0.00 <= ee_object_z <= 0.09:
             return Phase.GRASP, 0.80, "ee is over object and gripper is open"
         return Phase.OBSERVE_OBJECT, 0.75, "object visible and not grasped"
@@ -656,6 +823,8 @@ class RealPhaseDiagnosticsNode:
             return None, "missing FK/ee pose"
         if fused.object_pos is None:
             return None, "missing object pose"
+        if not fused.target_available:
+            return None, "missing target pose"
         obs = self._build_policy_obs(fused)
         action, _state = self.policy.predict(obs, deterministic=self.config.deterministic)
         action = np.asarray(action, dtype=np.float32).reshape(14)
@@ -832,7 +1001,10 @@ class RealPhaseDiagnosticsNode:
             "gripper": _age(now, self.last_gripper_stamp_s),
         }
         object_box = self._select_box(self.config.target_color, allow_basket=False)
-        target_box = self._select_box(self.config.basket_color, allow_basket=True)
+        if self.config.task_mode == "stack":
+            target_box = self._select_box(self.config.stack_target_color, allow_basket=False)
+        else:
+            target_box = self._select_box(self.config.basket_color, allow_basket=True)
         vision_line = "disabled"
         if self.last_vision is not None:
             vision_line = (
@@ -877,11 +1049,24 @@ class RealPhaseDiagnosticsNode:
             % (fused.phase.name, fused.confidence, fused.reason),
             "  age:    image=%s boxes=%s motor=%s gripper=%s"
             % (ages["image"], ages["boxes"], ages["motor"], ages["gripper"]),
+            "  task:   mode=%s object=%s target=%s"
+            % (
+                self.config.task_mode,
+                self.config.target_color,
+                self.config.stack_target_color
+                if self.config.task_mode == "stack"
+                else self.config.basket_color,
+            ),
             "  vision: %s" % vision_line,
             "  boxes:  object=%s target=%s in_target=%s"
             % (_fmt_box(object_box), _fmt_box(target_box), fused.object_in_target),
-            "  object: source=%s age=%s fused=%s"
-            % (fused.object_pose_source, _fmt_age_seconds(fused.object_pose_age_s), _fmt_vec(fused.object_pos)),
+            "  object: source=%s age=%s fused=%s target_source=%s"
+            % (
+                fused.object_pose_source,
+                _fmt_age_seconds(fused.object_pose_age_s),
+                _fmt_vec(fused.object_pos),
+                fused.target_pose_source,
+            ),
             "  robot:  q=%s ee=%s home=%s gripper_open=%.2f grip_state=%s grasped=%s drop=%s"
             % (
                 _fmt_q(fused.q),
@@ -932,7 +1117,10 @@ class RealPhaseDiagnosticsNode:
                 f"  why   {fused.reason}",
                 (
                     f"  state obj={_fmt_vec(fused.object_pos)} src={fused.object_pose_source}"
-                    f"/{_fmt_age_seconds(fused.object_pose_age_s)} ee={_fmt_vec(fused.ee_pos)}"
+                    f"/{_fmt_age_seconds(fused.object_pose_age_s)} ee={_fmt_vec(fused.ee_pos)} "
+                    f"mode={self.config.task_mode} target="
+                    f"{self.config.stack_target_color if self.config.task_mode == 'stack' else self.config.basket_color} "
+                    f"target_src={fused.target_pose_source}"
                 ),
                 (
                     f"  flags home={int(fused.robot_home)} grasp={int(fused.object_grasped)} "
@@ -1181,10 +1369,16 @@ def _parse_args(argv: list[str] | None = None) -> tuple[BridgeConfig, list[str]]
     parser.add_argument("--publish-sim-command", action="store_true")
     parser.add_argument("--target-color", default="red")
     parser.add_argument("--basket-color", default="basket")
+    parser.add_argument("--task-mode", choices=["basket", "stack"], default="basket")
+    parser.add_argument(
+        "--stack-target-color",
+        default="blue",
+        help="Target block color when --task-mode stack.",
+    )
     parser.add_argument("--target-x", type=float, default=float(DEFAULT_TARGET_POS[0]))
     parser.add_argument("--target-y", type=float, default=float(DEFAULT_TARGET_POS[1]))
     parser.add_argument("--target-z", type=float, default=float(DEFAULT_TARGET_POS[2]))
-    parser.add_argument("--target-radius", type=float, default=0.06)
+    parser.add_argument("--target-radius", type=float, default=DEFAULT_TARGET_RADIUS)
     parser.add_argument(
         "--home-tolerance",
         type=float,
@@ -1196,6 +1390,15 @@ def _parse_args(argv: list[str] | None = None) -> tuple[BridgeConfig, list[str]]
         type=float,
         default=8.0,
         help="Seconds to keep the last reliable object pose during arm/gripper occlusion.",
+    )
+    parser.add_argument(
+        "--target-memory-jump-tolerance",
+        type=float,
+        default=DEFAULT_TARGET_MEMORY_JUMP_TOLERANCE,
+        help=(
+            "Max target XY jump accepted during late task phases before keeping the "
+            "previous target memory. Set 0 to disable jump rejection."
+        ),
     )
     parser.add_argument(
         "--phase-hold-timeout",
@@ -1244,10 +1447,13 @@ def _parse_args(argv: list[str] | None = None) -> tuple[BridgeConfig, list[str]]
         publish_sim_command=bool(args.publish_sim_command),
         target_color=args.target_color,
         basket_color=args.basket_color,
+        task_mode=str(args.task_mode),
+        stack_target_color=str(args.stack_target_color),
         target_pos=np.array([args.target_x, args.target_y, args.target_z], dtype=np.float32),
         target_radius=float(args.target_radius),
         home_tolerance=max(0.01, float(args.home_tolerance)),
         object_memory_timeout_s=max(0.0, float(args.object_memory_timeout)),
+        target_memory_jump_tolerance=max(0.0, float(args.target_memory_jump_tolerance)),
         phase_hold_timeout_s=max(0.0, float(args.phase_hold_timeout)),
         log_period_s=float(args.log_period),
         stale_timeout_s=float(args.stale_timeout),

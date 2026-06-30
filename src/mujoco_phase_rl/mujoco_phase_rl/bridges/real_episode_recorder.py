@@ -12,6 +12,8 @@ import numpy as np
 from mujoco_phase_rl.bridges.real_phase_diagnostics import (
     BridgeConfig,
     DEFAULT_TARGET_POS,
+    DEFAULT_TARGET_RADIUS,
+    DEFAULT_TARGET_MEMORY_JUMP_TOLERANCE,
     RealPhaseDiagnosticsNode,
     _age,
 )
@@ -305,12 +307,19 @@ def _parse_args(argv: list[str] | None = None) -> tuple[RecorderConfig, list[str
     parser.add_argument("--drop-topic", default="/gripper/drop_detected")
     parser.add_argument("--target-color", default="red")
     parser.add_argument("--basket-color", default="basket")
+    parser.add_argument("--task-mode", choices=["basket", "stack"], default="basket")
+    parser.add_argument(
+        "--stack-target-color",
+        default="blue",
+        help="Target block color when --task-mode stack.",
+    )
     parser.add_argument("--target-x", type=float, default=float(DEFAULT_TARGET_POS[0]))
     parser.add_argument("--target-y", type=float, default=float(DEFAULT_TARGET_POS[1]))
     parser.add_argument("--target-z", type=float, default=float(DEFAULT_TARGET_POS[2]))
-    parser.add_argument("--target-radius", type=float, default=0.06)
+    parser.add_argument("--target-radius", type=float, default=DEFAULT_TARGET_RADIUS)
     parser.add_argument("--home-tolerance", type=float, default=0.25)
     parser.add_argument("--object-memory-timeout", type=float, default=8.0)
+    parser.add_argument("--target-memory-jump-tolerance", type=float, default=DEFAULT_TARGET_MEMORY_JUMP_TOLERANCE)
     parser.add_argument("--phase-hold-timeout", type=float, default=8.0)
     parser.add_argument("--stale-timeout", type=float, default=1.0)
     parser.add_argument("--trust-sim-phase", action="store_true")
@@ -342,10 +351,13 @@ def _parse_args(argv: list[str] | None = None) -> tuple[RecorderConfig, list[str
         publish_sim_command=False,
         target_color=args.target_color,
         basket_color=args.basket_color,
+        task_mode=str(args.task_mode),
+        stack_target_color=str(args.stack_target_color),
         target_pos=np.array([args.target_x, args.target_y, args.target_z], dtype=np.float32),
         target_radius=float(args.target_radius),
         home_tolerance=max(0.01, float(args.home_tolerance)),
         object_memory_timeout_s=max(0.0, float(args.object_memory_timeout)),
+        target_memory_jump_tolerance=max(0.0, float(args.target_memory_jump_tolerance)),
         phase_hold_timeout_s=max(0.0, float(args.phase_hold_timeout)),
         log_period_s=1.0 / sample_hz,
         stale_timeout_s=float(args.stale_timeout),

@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import sys
-sys.path.insert(0, "/home/su/idle_ws/src/ml")
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import argparse
 import math
 from collections import defaultdict
-from pathlib import Path
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from ml_paths import checkpoint_root, data_root
 from stage1.model import SlotEncoder
 from stage2.color_net import ColorNet
 from stage4.constants import RELATIONS
@@ -23,14 +25,15 @@ from stage4.model import RelationScorer
 
 def get_args():
     parser = argparse.ArgumentParser()
-    root = Path(__file__).resolve().parents[3]
-    parser.add_argument("--scenes_dir", default=str(root / "data/scenes"))
-    parser.add_argument("--split_json", default=str(root / "data/split.json"))
-    parser.add_argument("--labels_json", default=str(root / "data/stage4_relations.json"))
-    parser.add_argument("--stage1_ckpt", default=str(root / "checkpoints/stage1/best.pt"))
-    parser.add_argument("--color_net_ckpt", default=str(root / "checkpoints/color_net/best.pt"))
-    parser.add_argument("--dino_cache_dir", default=str(root / "data/dino_cache/dinov2_vits14_reg"))
-    parser.add_argument("--out_dir", default=str(root / "checkpoints/stage4"))
+    data_dir = data_root()
+    ckpt_dir = checkpoint_root()
+    parser.add_argument("--scenes_dir", default=str(data_dir / "scenes"))
+    parser.add_argument("--split_json", default=str(data_dir / "split.json"))
+    parser.add_argument("--labels_json", default=str(data_dir / "stage4_relations.json"))
+    parser.add_argument("--stage1_ckpt", default=str(ckpt_dir / "stage1_v2/best.pt"))
+    parser.add_argument("--color_net_ckpt", default=str(ckpt_dir / "color_net_v2/best.pt"))
+    parser.add_argument("--dino_cache_dir", default=str(data_dir / "dino_cache/dinov2_vits14_reg"))
+    parser.add_argument("--out_dir", default=str(ckpt_dir / "stage4"))
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=8)
@@ -85,7 +88,10 @@ def main():
                             num_workers=args.workers)
 
     encoder = SlotEncoder().to(device).eval()
-    encoder.load_state_dict(torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)["state_dict"])
+    _s1_sd = torch.load(args.stage1_ckpt, map_location="cpu", weights_only=False)["state_dict"]
+    _s1_sd.pop("head_sem.weight", None)
+    _s1_sd.pop("head_sem.bias", None)
+    encoder.load_state_dict(_s1_sd, strict=False)
     encoder.requires_grad_(False)
 
     color_net = ColorNet().to(device).eval()
