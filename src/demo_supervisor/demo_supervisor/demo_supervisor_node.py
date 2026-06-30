@@ -352,8 +352,8 @@ class DemoSupervisorNode(Node):
         """PPO 모드: grounding 결과를 /ppo/task로 발행."""
         msg = String()
         msg.data = json.dumps({
-            "object_pos": [gr.x_pick, gr.y_pick, 0.009],
-            "target_pos": [gr.x_place, gr.y_place, 0.009],
+            "object_pos": [gr.x_pick, gr.y_pick, 0.015],
+            "target_pos": [gr.x_place, gr.y_place, 0.015],
             "object_color": gr.pick_color,
             "task_type": gr.task_type,
         })
