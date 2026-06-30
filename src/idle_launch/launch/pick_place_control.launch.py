@@ -45,12 +45,12 @@ def generate_launch_description() -> LaunchDescription:
     )
     settle_kp_scale_by_motor_arg = DeclareLaunchArgument(
         "settle_kp_scale_by_motor_json",
-        default_value='{"1": 1, "2": 1.2, "4": 1}',
+        default_value='{1: 1, 2: 1.4, 4: 1}',
         description="Per-motor kp scale used only while settling to q_final",
     )
     settle_kd_scale_by_motor_arg = DeclareLaunchArgument(
         "settle_kd_scale_by_motor_json",
-        default_value='{"1": 1, "2": 1.4}',
+        default_value='{1: 1, 2: 1.2}',
         description="Per-motor kd scale used only while settling to q_final",
     )
     settle_gain_ramp_arg = DeclareLaunchArgument(
@@ -70,7 +70,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     settle_velocity_brake_full_vel_arg = DeclareLaunchArgument(
         "settle_velocity_brake_full_vel_rad_s",
-        default_value="0.12",
+        default_value="0.10",
         description="Joint velocity where settle velocity brake reaches full kd scale",
     )
     settle_friction_scale_arg = DeclareLaunchArgument(
@@ -81,16 +81,21 @@ def generate_launch_description() -> LaunchDescription:
     hold_friction_scale_arg = DeclareLaunchArgument(
         "hold_friction_scale",
         default_value="0.0",
-        description="Friction feedforward scale after DONE hold",
+        description="Friction feedforward scale after DONE hold (global)",
+    )
+    hold_friction_scale_by_motor_arg = DeclareLaunchArgument(
+        "hold_friction_scale_by_motor_json",
+        default_value='{"2": 0.3}',
+        description="Per-motor friction scale in hold (overrides global). j2=0.3으로 static error 보정",
     )
     hold_friction_deadband_arg = DeclareLaunchArgument(
         "hold_friction_deadband_rad",
-        default_value="0.002",
+        default_value="0.00",
         description="Error deadband below which friction FF is suppressed in hold",
     )
     hold_kp_scale_by_motor_arg = DeclareLaunchArgument(
         "hold_kp_scale_by_motor_json",
-        default_value="{ 1: 1, 2: 1.4, 4: 1 }",
+        default_value="{ 1: 1, 2: 1.8, 4: 1 }",
         description="Per-motor kp scale used after DONE hold",
     )
     hold_kd_scale_by_motor_arg = DeclareLaunchArgument(
@@ -168,6 +173,7 @@ def generate_launch_description() -> LaunchDescription:
         settle_velocity_brake_full_vel_arg,
         settle_friction_scale_arg,
         hold_friction_scale_arg,
+        hold_friction_scale_by_motor_arg,
         hold_friction_deadband_arg,
         hold_kp_scale_by_motor_arg,
         hold_kd_scale_by_motor_arg,
@@ -244,6 +250,10 @@ def generate_launch_description() -> LaunchDescription:
                 "hold_friction_scale": ParameterValue(
                     LaunchConfiguration("hold_friction_scale"),
                     value_type=float,
+                ),
+                "hold_friction_scale_by_motor_json": ParameterValue(
+                    LaunchConfiguration("hold_friction_scale_by_motor_json"),
+                    value_type=str,
                 ),
                 "hold_friction_deadband_rad": ParameterValue(
                     LaunchConfiguration("hold_friction_deadband_rad"),
