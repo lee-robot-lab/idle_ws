@@ -22,7 +22,7 @@ import torchvision.transforms.functional as TF
 
 from stage1.dataset import CROP_H, CROP_W, CROP_X0, CROP_Y0
 from stage1.model import SlotEncoder
-from stage2.color_net import ColorNet
+from stage2.color_net_v2 import ColorNetV2 as ColorNet
 from stage4.features import normalized_xy_to_world, normalized_xy_yaw_to_world_yaw
 from stage4.grounding import (
     Route,
@@ -83,17 +83,17 @@ def _infer(
     encoder: SlotEncoder,
     color_net: ColorNet,
     device: str,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """이미지 → (xy, yaw, world_xy, slot_to_color)."""
+) -> tuple:
+    """이미지 → (xy, yaw, world_xy, slot_to_color, slots, color_logits, present_mask)."""
     img = _preprocess(frame_bgr, device)
     out = encoder(img)
     present_mask = torch.sigmoid(out["present"].squeeze(-1)) > _PRESENT_THR
-    color_logits = color_net(img, out["xy"])
+    color_logits, _ = color_net(img, out["xy"])   # v2: (color_logits, is_target)
     slot_to_color = color_net.assign(color_logits[0], present_mask[0])
     xy = out["xy"][0]        # (N, 2) crop-normalized
     yaw = out["yaw"][0]      # (N, 2) cos4/sin4
     world_xy = normalized_xy_to_world(xy)  # (N, 2)
-    return xy, yaw, world_xy, slot_to_color
+    return xy, yaw, world_xy, slot_to_color, out["slots"][0], color_logits[0], present_mask[0]
 
 
 def _image_yaw_to_world(xy_norm: torch.Tensor, yaw_cos4sin4: torch.Tensor) -> float:
@@ -164,7 +164,8 @@ def run(
     )
 
     frame_bgr = _capture_frame(camera_device, camera_width, camera_height)
-    xy, yaw, world_xy, slot_to_color = _infer(frame_bgr, encoder, color_net, device)
+    xy, yaw, world_xy, slot_to_color, slots, color_logits, present_mask = \
+        _infer(frame_bgr, encoder, color_net, device)
 
     step = _parse_text_to_step(text or "", parser=parser)
     if not step:
@@ -180,12 +181,8 @@ def run(
         else:
             pick_result = relation_grounding(
                 relation_scorer,
-                slots=encoder(  # re-run? 실제로는 out 재사용
-                    _preprocess(frame_bgr, device)
-                )["slots"][0],
-                color_logits=color_net(
-                    _preprocess(frame_bgr, device), xy.unsqueeze(0)
-                )[0],
+                slots=slots,
+                color_logits=color_logits,
                 world_xy=world_xy,
                 xy=xy,
                 yaw=yaw,
@@ -193,7 +190,7 @@ def run(
                 query_kind_id=torch.zeros(1, dtype=torch.long, device=device),
                 phase_id=torch.zeros(1, dtype=torch.long, device=device),
                 anchor_features=torch.zeros(16, dtype=torch.float32, device=device),
-                valid_mask=valid_candidate_mask(slot_to_color, xy.norm(dim=-1) > 0, query_type="block"),
+                valid_mask=valid_candidate_mask(slot_to_color, present_mask, query_type="block"),
             )
     if pick_result is None:
         print("[orchestrator] pick object 감지 실패", file=sys.stderr)
@@ -210,11 +207,10 @@ def run(
         if place_route.mode == "direct":
             place_result = ground_direct_for_route(step, place_route, xy, yaw, slot_to_color)
         else:  # relation — is_target 필터 미적용 (basket이 is_target=0일 수 있음)
-            valid_mask = valid_candidate_mask(slot_to_color, xy.norm(dim=-1) > 0, query_type=None)
             place_result = relation_grounding(
                 relation_scorer,
-                slots=encoder(_preprocess(frame_bgr, device))["slots"][0],
-                color_logits=color_net(_preprocess(frame_bgr, device), xy.unsqueeze(0))[0],
+                slots=slots,
+                color_logits=color_logits,
                 world_xy=world_xy,
                 xy=xy,
                 yaw=yaw,
@@ -222,7 +218,7 @@ def run(
                 query_kind_id=torch.ones(1, dtype=torch.long, device=device),
                 phase_id=torch.tensor([2], dtype=torch.long, device=device),
                 anchor_features=torch.zeros(16, dtype=torch.float32, device=device),
-                valid_mask=valid_mask,
+                valid_mask=valid_candidate_mask(slot_to_color, present_mask, query_type=None),
             )
     if place_result is None:
         print("[orchestrator] place target 감지 실패", file=sys.stderr)
