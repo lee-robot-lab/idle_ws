@@ -15,15 +15,16 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 _WS        = os.path.join(os.path.dirname(__file__), *(['..'] * 6))
 _PPO       = os.path.join(
     _WS, 'src', 'mujoco_phase_rl', 'outputs',
-    'ppo_stack_followup_fixed_s0', 'checkpoints',
-    'ppo_stack_robust_163840_steps.zip',
+    'ppo_recovery_fixed_s0', 'checkpoints',
+    'ppo_recovery_fixed_s0_98304_steps.zip',
 )
 _CKPT      = os.path.join(_WS, 'checkpoints')
 _STAGE1    = os.path.join(_CKPT, 'stage1_v2', 'best.pt')
@@ -75,6 +76,7 @@ def generate_launch_description():
         DeclareLaunchArgument('slot_color_net_ckpt', default_value=_COLOR_NET),
         DeclareLaunchArgument('stage4_ckpt',        default_value=_STAGE4),
         DeclareLaunchArgument('parser',             default_value='qwen'),
+        DeclareLaunchArgument('armed',              default_value='false'),
 
         # ── 1. IK 계산 ────────────────────────────────────────────────
         Node(
@@ -149,9 +151,29 @@ def generate_launch_description():
                 '--slot-stage1-ckpt',    LaunchConfiguration('slot_stage1_ckpt'),
                 '--slot-diff-ckpt',      LaunchConfiguration('slot_diff_ckpt'),
                 '--slot-color-net-ckpt', LaunchConfiguration('slot_color_net_ckpt'),
-                # --armed 없음 = dry-run. 실제 모터 제어는 별도 ros2 run으로:
-                # ros2 run mujoco_phase_rl real_action_bridge --policy-model <path> --device cuda --armed
             ],
+            condition=IfCondition(PythonExpression(["'", LaunchConfiguration('armed'), "' != 'true'"])),
+        ),
+
+        # ── 4b. PPO real_action_bridge (ARMED) ───────────────────────
+        Node(
+            package='mujoco_phase_rl',
+            executable='real_action_bridge',
+            name='ppo_action_bridge',
+            output='screen',
+            arguments=[
+                '--policy-model',        LaunchConfiguration('policy_model'),
+                '--device',              LaunchConfiguration('device'),
+                '--image-topic',         LaunchConfiguration('camera_topic'),
+                '--target-color',        LaunchConfiguration('target_color'),
+                '--task-mode',           LaunchConfiguration('task_mode'),
+                '--phase-prior-weight',  LaunchConfiguration('phase_prior_weight'),
+                '--slot-stage1-ckpt',    LaunchConfiguration('slot_stage1_ckpt'),
+                '--slot-diff-ckpt',      LaunchConfiguration('slot_diff_ckpt'),
+                '--slot-color-net-ckpt', LaunchConfiguration('slot_color_net_ckpt'),
+                '--armed',
+            ],
+            condition=IfCondition(LaunchConfiguration('armed')),
         ),
 
         # ── 5. STT+Grounding supervisor (PPO 모드) ─────────────────────
