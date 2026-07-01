@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from lib.control_tuning import (
     control_session,
+    control_params_for_motor,
     save_control_tuning,
     set_control_tuning,
 )
@@ -60,6 +61,41 @@ class ControlTuningWorkflowTest(unittest.TestCase):
 
                 with self.assertRaises(ValueError):
                     set_control_tuning([3], {"tx_hz": 180.0})
+        finally:
+            if old_param_root is None:
+                os.environ.pop("IDLE_PARAM_ROOT", None)
+            else:
+                os.environ["IDLE_PARAM_ROOT"] = old_param_root
+            if old_state_path is None:
+                os.environ.pop("IDLE_CONTROL_GATE_STATE", None)
+            else:
+                os.environ["IDLE_CONTROL_GATE_STATE"] = old_state_path
+
+    def test_control_tuning_accepts_adaptive_gain_keys(self):
+        old_param_root = os.environ.get("IDLE_PARAM_ROOT")
+        old_state_path = os.environ.get("IDLE_CONTROL_GATE_STATE")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                param_root = Path(td) / "param"
+                state_file = Path(td) / "control_state.json"
+                os.environ["IDLE_PARAM_ROOT"] = str(param_root)
+                os.environ["IDLE_CONTROL_GATE_STATE"] = str(state_file)
+
+                set_control_tuning(
+                    [2],
+                    {
+                        "gain_mode": 1,
+                        "omega_n_target": 6.0,
+                        "zeta_target": 1.1,
+                        "gain_lpf_alpha": 0.25,
+                    },
+                )
+
+                values = control_params_for_motor(2)
+                self.assertEqual(values["gain_mode"], 1.0)
+                self.assertEqual(values["omega_n_target"], 6.0)
+                self.assertEqual(values["zeta_target"], 1.1)
+                self.assertEqual(values["gain_lpf_alpha"], 0.25)
         finally:
             if old_param_root is None:
                 os.environ.pop("IDLE_PARAM_ROOT", None)

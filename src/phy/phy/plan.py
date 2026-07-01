@@ -387,6 +387,7 @@ class Planner:
         q_waypoints: list[np.ndarray] = []
         current_q = start_q_arr.copy()
 
+        ik_t0 = time.perf_counter()
         for idx, t in enumerate(t_samples):
             phase = float(t / duration)
             alpha = 10.0 * phase**3 - 15.0 * phase**4 + 6.0 * phase**5
@@ -410,6 +411,7 @@ class Planner:
                 dtype=float,
             )
             q_waypoints.append(current_q.copy())
+        ik_total_s = time.perf_counter() - ik_t0
 
         q_array = np.array(q_waypoints)  # (n_samples, n_dof)
         coeffs_per_dof = self._fit_quintic_waypoints(t_samples, q_array)
@@ -421,7 +423,9 @@ class Planner:
             q_goal=q_waypoints[-1].copy(),
         )
         n_check = max(30, n_samples * 2)
+        collision_t0 = time.perf_counter()
         collision, first_idx = self._check_collisions(traj, n_check)
+        collision_total_s = time.perf_counter() - collision_t0
 
         return Plan(
             trajectory=traj,
@@ -438,6 +442,8 @@ class Planner:
                     float(np.linalg.norm(q_array[i] - q_array[i - 1]))
                     for i in range(1, len(q_array))
                 ),
+                "timing_ik_rank_s": ik_total_s,
+                "timing_collision_total_s": collision_total_s,
             },
         )
 

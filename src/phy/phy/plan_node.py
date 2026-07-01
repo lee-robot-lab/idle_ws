@@ -29,6 +29,7 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from msgs.msg import MotorCMD
+from phy.adaptive_gain import AdaptiveGainState, compute_adaptive_gains, lpf_j_eff
 from phy.plan import Plan, PlannerConfig
 from phy.robot_model import RobotModel
 from phy.traj import QuinticPlan, plan_quintic, sample_quintic
@@ -103,6 +104,45 @@ def _settle_velocity_brake_scale(
     return _ramped_scale(max_scale, alpha)
 
 
+def _adaptive_gain_for_motor(
+    *,
+    motor_id: int,
+    tuning: dict,
+    j_eff_by_motor: dict[int, float],
+    adaptive_state: AdaptiveGainState | None,
+) -> tuple[float, float, float | None]:
+    fixed_kp = float(tuning.get("kp", 0.0))
+    fixed_kd = float(tuning.get("kd", 0.0))
+    if int(tuning.get("gain_mode", 0)) != 1:
+        return fixed_kp, fixed_kd, None
+
+    raw_j_eff = j_eff_by_motor.get(int(motor_id))
+    if raw_j_eff is None:
+        return fixed_kp, fixed_kd, None
+
+    if adaptive_state is None:
+        j_eff = float(raw_j_eff)
+    else:
+        alpha = tuning.get("gain_lpf_alpha")
+        j_eff = lpf_j_eff(
+            adaptive_state,
+            motor_id=int(motor_id),
+            raw_j_eff=float(raw_j_eff),
+            alpha=None if alpha is None else float(alpha),
+        )
+    if j_eff is None:
+        return fixed_kp, fixed_kd, None
+
+    gains = compute_adaptive_gains(
+        j_eff,
+        float(tuning.get("omega_n_target", 0.0)),
+        float(tuning.get("zeta_target", 0.0)),
+    )
+    if gains is None:
+        return fixed_kp, fixed_kd, None
+    return float(gains[0]), float(gains[1]), float(j_eff)
+
+
 def _diag_csv_header() -> list[str]:
     return [
         "stamp_s",
@@ -119,6 +159,7 @@ def _diag_csv_header() -> list[str]:
         "qd_err",
         "kp",
         "kd",
+        "j_eff",
         "tau_ff",
         "tau_meas",
         "pd_tau",
@@ -155,6 +196,7 @@ def _diag_csv_rows(
         qd_des = float(cmd["qd_des"])
         kp = float(cmd["kp"])
         kd = float(cmd["kd"])
+        j_eff = float(cmd.get("j_eff", math.nan))
         tau_ff = float(cmd["tau_ff"])
         tau_meas = float(state.tau_measured)
         settle_vel_brake = float(cmd.get("settle_vel_brake", 1.0))
@@ -178,6 +220,7 @@ def _diag_csv_rows(
             f"{qd_err:.9f}",
             f"{kp:.6f}",
             f"{kd:.6f}",
+            "" if not math.isfinite(j_eff) else f"{j_eff:.9f}",
             f"{tau_ff:.9f}",
             f"{tau_meas:.9f}",
             f"{pd_tau:.9f}",
@@ -275,6 +318,9 @@ class PlanNode(Node):
         self._vt_elapsed_s: float = 0.0
         self._vt_last_wall_s: float = float("-inf")
         self._prev_max_err: float = 0.0
+        self._adaptive_gain_state = AdaptiveGainState()
+        self._j_eff_cache_key: tuple[tuple[int, float], ...] | None = None
+        self._j_eff_cache: dict[int, float] = {}
 
         self.traj_stall_timeout_s = float(declare_typed(self, "traj_stall_timeout_s", 10.0))
         self._warp_stall_s: float = 0.0
@@ -513,6 +559,8 @@ class PlanNode(Node):
 
     def on_timer(self) -> None:
         now_s = self._now_s()
+        self._j_eff_cache_key = None
+        self._j_eff_cache = {}
         if not self._state_fresh(now_s):
             return
 
@@ -944,6 +992,11 @@ class PlanNode(Node):
                 q_rnea[m] = float(q_des_vec[i])
                 qd_rnea[m] = float(qd_des_vec[i]) * warp
                 qdd_rnea[m] = float(qdd_des_vec[i]) * warp * warp
+        j_eff_by_motor = (
+            self._j_eff_by_motor(q_rnea)
+            if any(int(tuning.get("gain_mode", 0)) == 1 for tuning in tuning_list)
+            else {}
+        )
 
         tau_iff: dict[int, float] = {}
         if warp > 0.05:
@@ -957,8 +1010,12 @@ class PlanNode(Node):
         end_q = self.active.plan.end_q
         for idx, motor_id in enumerate(self.motor_ids):
             tuning = tuning_list[idx]
-            kp = float(tuning.get("kp", 0.0))
-            kd = float(tuning.get("kd", 0.0))
+            kp, kd, j_eff = _adaptive_gain_for_motor(
+                motor_id=motor_id,
+                tuning=tuning,
+                j_eff_by_motor=j_eff_by_motor,
+                adaptive_state=self._adaptive_gain_state,
+            )
             gscale = float(tuning.get("gravity_scale", 1.0))
             gbias = float(tuning.get("gravity_bias", 0.0))
             iff_scale = float(tuning.get("inertia_ff_scale", 0.0))
@@ -1012,6 +1069,7 @@ class PlanNode(Node):
                 "qd_des": qd_cmd,
                 "kp": kp,
                 "kd": kd,
+                "j_eff": math.nan if j_eff is None else j_eff,
                 "tau_ff": tau_ff,
             }
         return out, max_err
@@ -1019,10 +1077,20 @@ class PlanNode(Node):
     def _hold_cmds(self, tau_g_by_motor: dict[int, float]) -> dict[int, dict[str, float]]:
         out: dict[int, dict[str, float]] = {}
         idle_no_target = self._hold_q is None and not self._settling
+        tuning_by_motor = {motor_id: control_params_for_motor(motor_id) for motor_id in self.motor_ids}
+        j_eff_by_motor = (
+            self._j_eff_by_motor({m: self.state_by_motor[m].q for m in self.motor_ids})
+            if any(int(tuning.get("gain_mode", 0)) == 1 for tuning in tuning_by_motor.values())
+            else {}
+        )
         for motor_id in self.motor_ids:
-            tuning = control_params_for_motor(motor_id)
-            kp = float(tuning.get("kp", 0.0))
-            kd = float(tuning.get("kd", 0.0))
+            tuning = tuning_by_motor[motor_id]
+            kp, kd, j_eff = _adaptive_gain_for_motor(
+                motor_id=motor_id,
+                tuning=tuning,
+                j_eff_by_motor=j_eff_by_motor,
+                adaptive_state=self._adaptive_gain_state,
+            )
             q_des = (
                 self._hold_q[motor_id]
                 if self._hold_q is not None
@@ -1092,9 +1160,30 @@ class PlanNode(Node):
             tau_ff += kd_tau_ff_correction
             out[motor_id] = {
                 "q_des": q_des, "qd_des": qd_des,
-                "kp": kp, "kd": kd, "tau_ff": tau_ff,
+                "kp": kp, "kd": kd,
+                "j_eff": math.nan if j_eff is None else j_eff,
+                "tau_ff": tau_ff,
                 "settle_vel_brake": settle_vel_brake,
             }
+        return out
+
+    def _j_eff_by_motor(self, q_by_motor: dict[int, float]) -> dict[int, float]:
+        cache_key = tuple(
+            (int(motor_id), float(q_by_motor[motor_id])) for motor_id in self.motor_ids
+        )
+        if self._j_eff_cache_key == cache_key:
+            return dict(self._j_eff_cache)
+        try:
+            diag = np.diag(self.robot.mass_matrix(q_by_motor))
+        except Exception as exc:
+            self._warn_throttle(
+                "adaptive_gain_mass_matrix",
+                f"adaptive gain mass matrix failed: {exc}",
+            )
+            return {}
+        out = {m: float(diag[i]) for i, m in enumerate(self.motor_ids)}
+        self._j_eff_cache_key = cache_key
+        self._j_eff_cache = dict(out)
         return out
 
     def _compute_warp(self, max_err: float) -> float:

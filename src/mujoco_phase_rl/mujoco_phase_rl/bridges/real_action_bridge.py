@@ -967,7 +967,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ActionBridgeConfig, list
     parser.add_argument("--armed", action="store_true", help="Actually publish /ee_target and call gripper services.")
     parser.add_argument("--vision-model", default=None)
     parser.add_argument("--policy-model", default=None)
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default="CUDA")
     parser.add_argument("--image-topic", default="/image_raw")
     parser.add_argument("--boxes-topic", default="/idle_vision/box_poses")
     parser.add_argument("--motor-state-topic", default="/motor_state_array")

@@ -415,6 +415,19 @@ class RealPhaseDiagnosticsNode:
             except Exception:
                 pass
 
+            # 자동 노출/화이트밸런스가 프레임마다 색상을 흔들어 SlotEncoder/ColorNet
+            # 색상 분류를 뒤집을 수 있음(2026-07-01 green/blue 오인식 진단).
+            # idle_vision usb_cam 런치 기본값과 동일하게 고정.
+            try:
+                subprocess.run(
+                    ["v4l2-ctl", f"-d{dev_path}",
+                     "--set-ctrl=white_balance_automatic=0,white_balance_temperature=4000,"
+                     "auto_exposure=1,exposure_time_absolute=100"],
+                    capture_output=True, timeout=3,
+                )
+            except Exception:
+                pass
+
             for attempt in range(5):
                 c = cv2.VideoCapture(dev)
                 if not c.isOpened():
@@ -482,7 +495,6 @@ class RealPhaseDiagnosticsNode:
         import termios
         import tty
         import tempfile
-        import subprocess
         from scipy.io.wavfile import write as wav_write
 
         try:
@@ -500,7 +512,10 @@ class RealPhaseDiagnosticsNode:
             self.logger.warning(f"STT thread: /dev/tty 열기 실패 — 키 입력 불가 ({exc})")
             return
 
-        _stt_script = Path.home() / "idle_ws" / "src" / "stt" / "stt.py"
+        _stt_dir = Path.home() / "idle_ws" / "src" / "stt"
+        if str(_stt_dir) not in sys.path:
+            sys.path.insert(0, str(_stt_dir))
+        import stt as stt_module
 
         WHISPER_INITIAL_PROMPT = (
             "로봇팔에게 내리는 한국어 음성 명령입니다. "
@@ -517,6 +532,24 @@ class RealPhaseDiagnosticsNode:
         except Exception as exc:
             self.logger.warning(f"STT thread disabled (WhisperModel): {exc}")
             return
+
+        # Qwen 4bit 파서를 launch 시점(이 스레드 시작 시)에 한 번만 로드해 상주시킨다.
+        # subprocess로 매 발화마다 새로 띄우면 모델을 재로딩해 수십 초씩 걸리므로,
+        # 이 프로세스 안에서 인스턴스를 재사용한다. 로드 실패 시 rule 파서로만 동작.
+        qwen_parser = None
+        try:
+            qwen_parser = stt_module.QwenSemanticParser(
+                stt_module.DEFAULT_QWEN_MODEL, use_4bit=True
+            )
+            qwen_parser.load()
+            self.logger.info(
+                f"QwenSemanticParser loaded: model={stt_module.DEFAULT_QWEN_MODEL}"
+            )
+        except Exception as exc:
+            self.logger.warning(
+                f"Qwen parser preload failed — rule 파서로 폴백: {exc}"
+            )
+            qwen_parser = None
 
         original_settings = termios.tcgetattr(_tty_fd)
 
@@ -585,22 +618,17 @@ class RealPhaseDiagnosticsNode:
                         print("[STT] 인식 실패", flush=True)
                         continue
 
-                    # ── 텍스트 → step dict ────────────────────────────
+                    # ── 텍스트 → step dict (qwen 상주 인스턴스, 실패 시 rule 폴백) ──
+                    parser_mode = "hybrid" if qwen_parser is not None else "rule"
                     try:
-                        proc = subprocess.run(
-                            [sys.executable, str(_stt_script), "--text", text, "--parser", "rule"],
-                            capture_output=True, text=True, timeout=30,
-                        )
-                        plan = json.loads(proc.stdout)
+                        plan = stt_module.parse_with_mode(text, parser_mode, qwen_parser)
                         if not plan.get("success") or not plan.get("steps"):
                             print(f"[STT] 파싱 실패: '{text}'", flush=True)
                             continue
                         step = plan["steps"][0]
                     except Exception as exc:
-                        if not proc.stdout.strip():
-                            print("[STT] 명령 파싱 실패 — 예: '빨간 블록을 바구니에 넣어'", flush=True)
-                        else:
-                            self.logger.warning(f"STT parse_text error: {exc}")
+                        self.logger.warning(f"STT parse_text error: {exc}")
+                        print("[STT] 명령 파싱 실패 — 예: '빨간 블록을 바구니에 넣어'", flush=True)
                         continue
 
                     # ── MLPipeline grounding ──────────────────────────
@@ -1641,6 +1669,15 @@ def _load_slot_embedder(config: "BridgeConfig", logger: Any) -> Any:
             color_net_ckpt=config.slot_color_net_ckpt,
             device=config.device,
         )
+        # 첫 embed_bgr() 호출은 cuDNN 커널 탐색/캐싱 때문에 ~300ms까지 걸릴 수 있음
+        # (2번째 호출부터 ~10ms). 이 워밍업 비용을 실제 물체 발견 시점이 아니라
+        # 로드 시점에 미리 태운다. reset()으로 _prev_slots 상태 오염은 제거.
+        try:
+            warmup_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+            embedder.embed_bgr(warmup_frame)
+            embedder.reset()
+        except Exception as exc:
+            logger.warning(f"SlotEmbedder warmup failed (non-fatal): {exc}")
         logger.info(
             "SlotEmbedder loaded: stage1=%s slot_diff=%s color_net=%s"
             % (config.slot_stage1_ckpt, config.slot_diff_ckpt, config.slot_color_net_ckpt)
@@ -1668,11 +1705,23 @@ def _load_policy(model_path: str | None, device: str, logger: Any):
         from stable_baselines3 import PPO
         from mujoco_phase_rl.policies.train_ppo import _make_mixed_policy
 
-        return PPO.load(
+        policy = PPO.load(
             model_path,
             device=device,
             custom_objects={"policy_class": _make_mixed_policy()},
         )
+        # 첫 predict() 호출은 CUDA 커널 워밍업 때문에 ~150ms까지 걸릴 수 있음
+        # (2번째 호출부터 ~1ms). 로봇이 처음 물체를 발견한 실제 시점이 아니라
+        # 로드 시점에 미리 태운다. observation_space로 실제 obs 구조를 그대로 사용.
+        try:
+            dummy_obs = {
+                key: space.sample() * 0.0
+                for key, space in policy.observation_space.spaces.items()
+            }
+            policy.predict(dummy_obs, deterministic=True)
+        except Exception:
+            pass
+        return policy
     except Exception as exc:
         logger.warning(f"policy model disabled: {exc}")
         return None

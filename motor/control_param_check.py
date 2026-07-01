@@ -116,6 +116,25 @@ class _Model:
                             best[cid] = d[cid]
         return best
 
+    def jlink_samples(self) -> dict[int, list[float]]:
+        lo = np.asarray(self.model.lowerPositionLimit, dtype=float)
+        hi = np.asarray(self.model.upperPositionLimit, dtype=float)
+        grids = {}
+        for jn in GRID_JOINTS:
+            cid = next(c for c, n in MOTOR_JOINT.items() if n == jn)
+            qi = self.bind[cid][0]
+            a = max(float(lo[qi]), -math.pi) if math.isfinite(lo[qi]) else -math.pi
+            b = min(float(hi[qi]), math.pi) if math.isfinite(hi[qi]) else math.pi
+            grids[jn] = np.linspace(a, b, GRID_N)
+        samples: dict[int, list[float]] = {cid: [] for cid in MOTOR_JOINT}
+        for v2 in grids[GRID_JOINTS[0]]:
+            for v3 in grids[GRID_JOINTS[1]]:
+                for v4 in grids[GRID_JOINTS[2]]:
+                    d = self.jlink_diag({GRID_JOINTS[0]: v2, GRID_JOINTS[1]: v3, GRID_JOINTS[2]: v4})
+                    for cid in MOTOR_JOINT:
+                        samples[cid].append(d[cid])
+        return samples
+
 
 def _zeta(kp: float, kd: float, j: float) -> float:
     return kd / (2.0 * math.sqrt(kp * j)) if (kp > 0 and j > 0) else float("inf")
@@ -123,6 +142,113 @@ def _zeta(kp: float, kd: float, j: float) -> float:
 
 def _wn_hz(kp: float, j: float) -> float:
     return math.sqrt(kp / j) / (2.0 * math.pi) if (kp > 0 and j > 0) else 0.0
+
+
+def _adaptive_gain_rows(
+    *,
+    j_values: list[float],
+    omega_n_target: float,
+    zeta_target: float,
+    kp_max: float,
+    kd_max: float,
+    qd_noise_rms: float,
+    tau_noise_budget: float,
+) -> list[dict[str, float]]:
+    rows: list[dict[str, float]] = []
+    omega = float(omega_n_target)
+    zeta = float(zeta_target)
+    for j_eff in j_values:
+        j = float(j_eff)
+        if not math.isfinite(j) or j <= 0.0 or omega <= 0.0 or zeta <= 0.0:
+            continue
+        kp = j * omega * omega
+        kd = 2.0 * zeta * j * omega
+        kp_clamped = max(0.0, min(float(kp_max), kp))
+        kd_clamped = max(0.0, min(float(kd_max), kd))
+        rows.append({
+            "j_eff": j,
+            "kp": round(kp, 12),
+            "kd": round(kd, 12),
+            "kp_clamped": round(kp_clamped, 12),
+            "kd_clamped": round(kd_clamped, 12),
+            "zeta_eff": round(_zeta(kp_clamped, kd_clamped, j), 12),
+            "kd_noise_tau": round(kd * float(qd_noise_rms), 12),
+            "tau_noise_budget": float(tau_noise_budget),
+        })
+    return rows
+
+
+def _adaptive_j_values(
+    *,
+    jlink_samples: dict[int, list[float]],
+    cid: int,
+    motor_inertia: float,
+) -> list[float]:
+    del motor_inertia
+    return [float(value) for value in jlink_samples.get(int(cid), [])]
+
+
+def _validate_adaptive_gain_config(
+    *,
+    cid: int,
+    tuning: dict,
+    j_values: list[float],
+    kp_max: float,
+    kd_max: float,
+    qd_noise_rms: float,
+    tau_noise_budget: float,
+    errors: list[str],
+    warns: list[str],
+) -> list[dict[str, float]]:
+    if int(tuning.get("gain_mode", 0)) != 1:
+        return []
+
+    omega = float(tuning.get("omega_n_target", 0.0))
+    zeta = float(tuning.get("zeta_target", 0.0))
+    if omega <= 0.0 or not math.isfinite(omega):
+        errors.append(f"can_id={cid}: adaptive gain omega_n_target missing/invalid ({omega:g})")
+        return []
+    if zeta <= 0.0 or not math.isfinite(zeta):
+        errors.append(f"can_id={cid}: adaptive gain zeta_target missing/invalid ({zeta:g})")
+        return []
+    if zeta < 1.0:
+        errors.append(f"can_id={cid}: adaptive gain zeta_target={zeta:g} < 1.0 — overshoot 방지 규칙 위반")
+
+    rows = _adaptive_gain_rows(
+        j_values=j_values,
+        omega_n_target=omega,
+        zeta_target=zeta,
+        kp_max=kp_max,
+        kd_max=kd_max,
+        qd_noise_rms=qd_noise_rms,
+        tau_noise_budget=tau_noise_budget,
+    )
+    if not rows:
+        errors.append(f"can_id={cid}: adaptive gain J_eff sweep produced no valid samples")
+        return rows
+
+    max_kp = max(row["kp"] for row in rows)
+    max_kd = max(row["kd"] for row in rows)
+    max_noise = max(row["kd_noise_tau"] for row in rows)
+    min_zeta_eff = min(row["zeta_eff"] for row in rows)
+    if max_kp > kp_max:
+        errors.append(f"can_id={cid}: adaptive kp max {max_kp:.2f} > plan_node kp_max {kp_max:g}")
+    if max_kd > kd_max:
+        errors.append(f"can_id={cid}: adaptive kd max {max_kd:.2f} > plan_node kd_max {kd_max:g}")
+    if max_noise > tau_noise_budget:
+        errors.append(
+            f"can_id={cid}: adaptive kd noise torque {max_noise:.3f}Nm > budget {tau_noise_budget:g}Nm"
+        )
+    if min_zeta_eff < 1.0:
+        errors.append(
+            f"can_id={cid}: adaptive clamp lowers effective ζ to {min_zeta_eff:.2f} < 1.0"
+        )
+    if max_kp <= kp_max and max_kd <= kd_max and max_noise <= tau_noise_budget and min_zeta_eff >= 1.0:
+        warns.append(
+            f"can_id={cid}: adaptive gain sweep ok "
+            f"(kp≤{max_kp:.2f}, kd≤{max_kd:.2f}, ζ_eff≥{min_zeta_eff:.2f})"
+        )
+    return rows
 
 
 def main() -> None:
@@ -133,12 +259,15 @@ def main() -> None:
     ap.add_argument("--kd_max", type=float, default=10.0, help="plan_node kd clamp")
     ap.add_argument("--zeta_min", type=float, default=0.30, help="worst-case zeta 경고 임계")
     ap.add_argument("--zeta_high", type=float, default=4.0, help="과감쇠 정보 표시 임계")
+    ap.add_argument("--qd_noise_rms", type=float, default=0.09, help="adaptive kd noise 검증용 qd RMS [rad/s]")
+    ap.add_argument("--tau_noise_budget", type=float, default=0.4, help="adaptive kd noise torque budget [Nm]")
     args = ap.parse_args()
 
     mdl = _Model(_resolve_urdf(args.urdf))
     jl_home = mdl.jlink_diag({})
     jl_reach = mdl.jlink_diag({"j2": -0.6, "j3": 1.0, "j4": 0.5})
     jl_worst = mdl.worst_jlink()
+    jl_samples = mdl.jlink_samples()
 
     errors: list[str] = []
     warns: list[str] = []
@@ -161,22 +290,66 @@ def main() -> None:
         je_h = jl_home[cid] + eq
         je_r = jl_reach[cid] + eq
         je_w = jl_worst[cid] + eq
+        adaptive_rows = []
+        if int(tuning.get("gain_mode", 0)) == 1:
+            flags_prefix = "ADAPT"
+            adaptive_rows = _validate_adaptive_gain_config(
+                cid=cid,
+                tuning=tuning,
+                j_values=_adaptive_j_values(
+                    jlink_samples=jl_samples,
+                    cid=cid,
+                    motor_inertia=eq,
+                ),
+                kp_max=args.kp_max,
+                kd_max=args.kd_max,
+                qd_noise_rms=args.qd_noise_rms,
+                tau_noise_budget=args.tau_noise_budget,
+                errors=errors,
+                warns=warns,
+            )
+            if adaptive_rows:
+                home_rows = _adaptive_gain_rows(
+                    j_values=_adaptive_j_values(
+                        jlink_samples={cid: [jl_home[cid]]},
+                        cid=cid,
+                        motor_inertia=eq,
+                    ),
+                    omega_n_target=float(tuning.get("omega_n_target", 0.0)),
+                    zeta_target=float(tuning.get("zeta_target", 0.0)),
+                    kp_max=args.kp_max,
+                    kd_max=args.kd_max,
+                    qd_noise_rms=args.qd_noise_rms,
+                    tau_noise_budget=args.tau_noise_budget,
+                )
+                if home_rows:
+                    kp = home_rows[0]["kp_clamped"]
+                    kd = home_rows[0]["kd_clamped"]
+        else:
+            flags_prefix = ""
         zh, zr, zw = _zeta(kp, kd, je_h), _zeta(kp, kd, je_r), _zeta(kp, kd, je_w)
 
         flags = []
+        if flags_prefix:
+            flags.append(flags_prefix)
         if kp <= 0 or kd <= 0:
             flags.append("NO-GAIN")
             warns.append(f"can_id={cid}: kp 또는 kd 가 0/미설정 (kp={kp}, kd={kd})")
         ceil = KD_CEIL.get(model, 5.0)
-        if kd > ceil:
+        kd_for_ceil = max((row["kd"] for row in adaptive_rows), default=kd)
+        if kd_for_ceil > ceil:
             flags.append(f"kd>MIT천장({ceil:g})")
-            errors.append(f"can_id={cid}: kd={kd:g} > MIT kd 천장 {ceil:g} — 모터가 인코딩 못 받음")
-        if kp > args.kp_max:
+            errors.append(f"can_id={cid}: kd={kd_for_ceil:g} > MIT kd 천장 {ceil:g} — 모터가 인코딩 못 받음")
+        kp_for_clamp = max((row["kp"] for row in adaptive_rows), default=kp)
+        kd_for_clamp = max((row["kd"] for row in adaptive_rows), default=kd)
+        if kp_for_clamp > args.kp_max:
             flags.append(f"kp>clamp({args.kp_max:g})")
-            errors.append(f"can_id={cid}: kp={kp:g} > plan_node kp_max {args.kp_max:g} — 조용히 깎임")
-        if kd > args.kd_max:
+            if not adaptive_rows:
+                errors.append(f"can_id={cid}: kp={kp:g} > plan_node kp_max {args.kp_max:g} — 조용히 깎임")
+        if kd_for_clamp > args.kd_max:
             flags.append(f"kd>clamp({args.kd_max:g})")
-            errors.append(f"can_id={cid}: kd={kd:g} > plan_node kd_max {args.kd_max:g} — 조용히 깎임")
+            if not adaptive_rows:
+                errors.append(f"can_id={cid}: kd={kd:g} > plan_node kd_max {args.kd_max:g} — 조용히 깎임")
         if math.isfinite(zw) and zw < args.zeta_min:
             flags.append(f"ζ_worst<{args.zeta_min:g}")
             warns.append(f"can_id={cid}: 워스트케이스 ζ={zw:.2f} < {args.zeta_min:g} (펼친 자세 underdamped)")

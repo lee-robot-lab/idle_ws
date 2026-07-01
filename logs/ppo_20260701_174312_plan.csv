@@ -1,0 +1,1 @@
+stamp_s,phase,vt_s,warp,settle_blend,motor_id,q,q_des,err,qd,qd_des,qd_err,kp,kd,j_eff,tau_ff,tau_meas,pd_tau,total_tau,hold_ref_source,q_final,q_final_err,settle_vel_brake

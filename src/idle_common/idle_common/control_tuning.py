@@ -39,6 +39,10 @@ CONTROL_TUNING_KEYS = {
     "a_max",
     "profile_sharpness",
     "goal_mode",
+    "gain_mode",
+    "omega_n_target",
+    "zeta_target",
+    "gain_lpf_alpha",
 }
 
 
@@ -140,6 +144,12 @@ def _validate_tuning_value(key: str, value: Any):
     f = float(value)
     if key in {"kp", "kd", "ki"} and f < 0:
         raise ValueError(f"{key} must be >= 0")
+    if key == "gain_mode" and f not in {0.0, 1.0}:
+        raise ValueError("gain_mode must be 0 or 1")
+    if key in {"omega_n_target", "zeta_target"} and f <= 0.0:
+        raise ValueError(f"{key} must be > 0")
+    if key == "gain_lpf_alpha" and not (0.0 <= f <= 1.0):
+        raise ValueError("gain_lpf_alpha must be between 0 and 1")
 
 
 def set_control_tuning(motor_ids: list[int], updates: dict[str, float]) -> Path:

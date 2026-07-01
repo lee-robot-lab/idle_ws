@@ -1,5 +1,8 @@
 from phy.plan_node import (
     MotorSample,
+    PlanNode,
+    _adaptive_gain_for_motor,
+    _diag_csv_header,
     _diag_csv_rows,
     _friction_ff_for_error,
     _gain_scale_for_motor,
@@ -27,6 +30,119 @@ def test_gain_scale_prefers_per_motor_value():
 def test_gain_scale_clamps_negative_to_zero():
     assert _gain_scale_for_motor(1, -1.0, {}) == 0.0
     assert _gain_scale_for_motor(1, 1.0, {1: -2.0}) == 0.0
+
+
+def test_adaptive_gain_for_motor_returns_fixed_gain_when_gain_mode_disabled():
+    kp, kd, j_eff = _adaptive_gain_for_motor(
+        motor_id=2,
+        tuning={"kp": 20.0, "kd": 3.0, "gain_mode": 0},
+        j_eff_by_motor={2: 0.5},
+        adaptive_state=None,
+    )
+
+    assert (kp, kd, j_eff) == (20.0, 3.0, None)
+
+
+def test_adaptive_gain_for_motor_computes_gain_from_j_eff_when_enabled():
+    kp, kd, j_eff = _adaptive_gain_for_motor(
+        motor_id=2,
+        tuning={
+            "kp": 20.0,
+            "kd": 3.0,
+            "gain_mode": 1,
+            "omega_n_target": 6.0,
+            "zeta_target": 1.25,
+        },
+        j_eff_by_motor={2: 0.5},
+        adaptive_state=None,
+    )
+
+    assert (kp, kd, j_eff) == (18.0, 7.5, 0.5)
+
+
+def test_adaptive_gain_for_motor_falls_back_to_fixed_gain_when_j_eff_missing():
+    kp, kd, j_eff = _adaptive_gain_for_motor(
+        motor_id=2,
+        tuning={
+            "kp": 20.0,
+            "kd": 3.0,
+            "gain_mode": 1,
+            "omega_n_target": 6.0,
+            "zeta_target": 1.25,
+        },
+        j_eff_by_motor={},
+        adaptive_state=None,
+    )
+
+    assert (kp, kd, j_eff) == (20.0, 3.0, None)
+
+
+def test_j_eff_by_motor_reuses_mass_matrix_for_same_tick_q():
+    class FakeRobot:
+        def __init__(self):
+            self.calls = 0
+
+        def mass_matrix(self, q_by_motor):
+            self.calls += 1
+            assert q_by_motor == {1: 0.1, 2: 0.2}
+            return [[0.11, 0.0], [0.0, 0.22]]
+
+    node = object.__new__(PlanNode)
+    node.robot = FakeRobot()
+    node.motor_ids = (1, 2)
+    node._warn_throttle = lambda *args, **kwargs: None
+    node._j_eff_cache_key = None
+    node._j_eff_cache = {}
+
+    first = PlanNode._j_eff_by_motor(node, {1: 0.1, 2: 0.2})
+    second = PlanNode._j_eff_by_motor(node, {1: 0.1, 2: 0.2})
+
+    assert first == {1: 0.11, 2: 0.22}
+    assert second == {1: 0.11, 2: 0.22}
+    assert node.robot.calls == 1
+
+
+def test_hold_cmds_fixed_gain_does_not_query_mass_matrix(monkeypatch):
+    import phy.plan_node as plan_node
+
+    class RobotThatMustNotBeQueried:
+        def mass_matrix(self, q_by_motor):
+            raise AssertionError("fixed gain path must not compute mass_matrix")
+
+    monkeypatch.setattr(
+        plan_node,
+        "control_params_for_motor",
+        lambda motor_id: {
+            "kp": 20.0,
+            "kd": 3.0,
+            "gravity_scale": 1.0,
+            "gravity_bias": 0.0,
+            "friction_ff": 0.0,
+        },
+    )
+
+    node = object.__new__(PlanNode)
+    node.robot = RobotThatMustNotBeQueried()
+    node.motor_ids = (1,)
+    node.state_by_motor = {1: MotorSample(q=0.40, qd=0.0, tau_measured=0.0)}
+    node._hold_q = {1: 0.50}
+    node._settling = False
+    node.hold_kp_scale = 1.0
+    node.hold_kp_scale_by_motor = {}
+    node.hold_kd_scale = 1.0
+    node.hold_kd_scale_by_motor = {}
+    node.hold_qd_lpf_alpha = 0.0
+    node._hold_qd_lpf = {}
+    node._adaptive_gain_state = None
+    node.hold_friction_scale_by_motor = {}
+    node.hold_friction_scale = 0.0
+    node.hold_friction_deadband_rad = 0.0
+
+    out = PlanNode._hold_cmds(node, {1: 0.25})
+
+    assert out[1]["kp"] == 20.0
+    assert out[1]["kd"] == 3.0
+    assert out[1]["j_eff"] != out[1]["j_eff"]
 
 
 def test_ramped_scale_blends_from_one_to_target():
@@ -111,6 +227,7 @@ def test_diag_csv_rows_include_joint_error_and_pd_tau():
         "0.300000000",
         "20.000000",
         "3.000000",
+        "",
         "0.750000000",
         "1.250000000",
         "2.900000000",
@@ -141,6 +258,40 @@ def test_diag_csv_rows_include_latched_hold_reference_context():
     )
 
     assert rows[0][-4:] == ["actual_latch", "0.407000000", "0.005000000", "1.000000"]
+
+
+def test_diag_csv_rows_include_j_eff_when_command_provides_it():
+    rows = _diag_csv_rows(
+        now_s=1.0,
+        phase="trajectory",
+        vt_s=0.5,
+        warp=1.0,
+        settle_blend=0.0,
+        motor_ids=[2],
+        state_by_motor={
+            2: MotorSample(q=0.0, qd=0.0, tau_measured=0.0, last_seen_s=1.0),
+        },
+        cmd_values={
+            2: {
+                "q_des": 0.0,
+                "qd_des": 0.0,
+                "kp": 12.0,
+                "kd": 4.0,
+                "j_eff": 0.333333333,
+                "tau_ff": 0.0,
+            },
+        },
+    )
+
+    assert rows[0][13] == "4.000000"
+    assert rows[0][14] == "0.333333333"
+
+
+def test_diag_csv_header_places_j_eff_after_kd():
+    header = _diag_csv_header()
+
+    kd_idx = header.index("kd")
+    assert header[kd_idx + 1] == "j_eff"
 
 
 def test_select_hold_reference_latches_actual_when_final_error_is_small():
