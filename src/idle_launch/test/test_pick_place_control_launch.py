@@ -28,6 +28,13 @@ def test_pick_place_control_exposes_hold_kd_scale_map():
     assert "value_type=str" in source
 
 
+def test_pick_place_control_defaults_to_real_grasp_hold_gains():
+    source = _launch_source()
+
+    assert 'default_value=\'{"1":0.4,"2":0.5,"3":0.8,"4":0.4,"5":0.3,"6":0.3}\'' in source
+    assert 'default_value=\'{"1":0.2,"2":0.3,"3":0.5,"4":0.2,"5":0.2,"6":0.2}\'' in source
+
+
 def test_pick_place_control_exposes_hold_kp_scale_map():
     source = _launch_source()
     tree = ast.parse(source)
