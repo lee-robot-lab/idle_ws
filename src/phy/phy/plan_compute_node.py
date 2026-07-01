@@ -46,6 +46,16 @@ class _MotorSample:
     last_seen_s: float = float("-inf")
 
 
+def _compute_direct_home_plan(
+    planner: Planner,
+    start_q: np.ndarray,
+    goal_q: np.ndarray,
+    v_max_arr: np.ndarray,
+    a_max_arr: np.ndarray,
+):
+    return planner.plan_to_q(goal_q, start_q, v_max=v_max_arr, a_max=a_max_arr)
+
+
 class PlanComputeNode(Node):
     def __init__(self) -> None:
         super().__init__("plan_compute_node")
@@ -84,9 +94,6 @@ class PlanComputeNode(Node):
             raise ValueError(
                 f"home_q must have {len(self.motor_ids)} values, got {len(self.home_q)}"
             )
-        # j4 fold angle before home return (wrist tuck)
-        self.home_pre_j4 = float(declare_typed(self, "home_pre_j4", math.pi))
-
         self.collision = CollisionChecker(
             self.robot, srdf_path=srdf_path, package_dirs=[sim_share_parent],
         )
@@ -590,18 +597,19 @@ class PlanComputeNode(Node):
         ])
         self._publish_status("PLANNING")
 
-        # Step 1: fold j4 → home_pre_j4 first, keeping other joints fixed
-        J4_IDX = 3
-        q_wrist = start_q.copy()
-        q_wrist[J4_IDX] = self.home_pre_j4
-        q_wrist = self.ik.clip_to_limits(q_wrist)
-
-        leg1 = self.planner.plan_to_q(q_wrist, start_q, v_max=v_max_arr, a_max=a_max_arr)
-        leg2 = self.planner.plan_to_q(goal_q, q_wrist, v_max=v_max_arr, a_max=a_max_arr)
-
         with self._plan_lock:
             self._plan_serial += 1
             serial = self._plan_serial
+
+        plan = _compute_direct_home_plan(
+            self.planner, start_q, goal_q, v_max_arr, a_max_arr
+        )
+        if plan is None or not plan.collision_safe:
+            self._publish_fail_reason("HOME_TRAJECTORY_COLLISION")
+            self._publish_status("FAIL")
+            res.success = False
+            res.message = "home trajectory collision"
+            return res
 
         msg = ComputedPlan()
         msg.serial = int(serial)
@@ -611,40 +619,14 @@ class PlanComputeNode(Node):
         msg.cartesian_path = False
         msg.target_xyz = [0.0, 0.0, 0.0]
         msg.target_yaw = 0.0
-
-        if leg1 is not None and leg2 is not None and leg1.collision_safe and leg2.collision_safe:
-            msg.coeffs = leg1.trajectory.coeffs.flatten().tolist()
-            msg.duration = float(leg1.duration_s)
-            msg.end_q = q_wrist.tolist()
-            msg.has_leg2 = True
-            msg.leg2_coeffs = leg2.trajectory.coeffs.flatten().tolist()
-            msg.leg2_duration = float(leg2.duration_s)
-            msg.leg2_end_q = goal_q.tolist()
-            msg.leg2_target_xyz = [0.0, 0.0, 0.0]
-            msg.leg2_target_yaw = 0.0
-            total_s = leg1.duration_s + leg2.duration_s
-            self.get_logger().info(
-                f"[{serial}] go_home 2-leg: wrist_fold={leg1.duration_s:.2f}s "
-                f"home={leg2.duration_s:.2f}s total={total_s:.2f}s"
-            )
-            res.message = f"homing in {total_s:.2f}s (2-leg)"
-        else:
-            # Fallback: direct single-leg
-            plan = self.planner.plan_to_q(goal_q, start_q, v_max=v_max_arr, a_max=a_max_arr)
-            if plan is None:
-                self._publish_fail_reason("HOME_TRAJECTORY_COLLISION")
-                self._publish_status("FAIL")
-                res.success = False
-                res.message = "home trajectory collision"
-                return res
-            msg.coeffs = plan.trajectory.coeffs.flatten().tolist()
-            msg.duration = float(plan.duration_s)
-            msg.end_q = goal_q.tolist()
-            msg.has_leg2 = False
-            self.get_logger().info(
-                f"[{serial}] go_home direct (wrist-fold skipped): duration={plan.duration_s:.2f}s"
-            )
-            res.message = f"homing in {plan.duration_s:.2f}s"
+        msg.coeffs = plan.trajectory.coeffs.flatten().tolist()
+        msg.duration = float(plan.duration_s)
+        msg.end_q = goal_q.tolist()
+        msg.has_leg2 = False
+        self.get_logger().info(
+            f"[{serial}] go_home direct: duration={plan.duration_s:.2f}s"
+        )
+        res.message = f"homing in {plan.duration_s:.2f}s"
 
         self.plan_pub.publish(msg)
         res.success = True
