@@ -100,7 +100,7 @@ data/dino_cache/
 data/preview/
 
 # 생성 시각화 이미지 (visualize_labels.py 등 출력)
-viz/
+
 
 # 런타임 상태 DB
 data/state_store.db/
