@@ -439,9 +439,9 @@ def sample_plan() -> dict[str, Any]:
 def make_model_input_preview_bgr(image_bgr, input_w: int, input_h: int):
     import cv2
 
-    from stage1.dataset import CROP_X0, CROP_X1, CROP_Y0
+    from stage1.dataset import CROP_X0, CROP_X1, CROP_Y0, CROP_Y1
 
-    crop = image_bgr[CROP_Y0:, CROP_X0:CROP_X1]
+    crop = image_bgr[CROP_Y0:CROP_Y1, CROP_X0:CROP_X1]
     return cv2.resize(crop, (input_w, input_h))
 
 
@@ -452,16 +452,16 @@ def save_camera_crop_debug_images(
 ) -> None:
     import cv2
 
-    from stage1.dataset import CROP_X0, CROP_X1, CROP_Y0
+    from stage1.dataset import CROP_X0, CROP_X1, CROP_Y0, CROP_Y1
 
     if crop_out is not None:
-        crop = image_bgr[CROP_Y0:, CROP_X0:CROP_X1]
+        crop = image_bgr[CROP_Y0:CROP_Y1, CROP_X0:CROP_X1]
         crop_out.parent.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(crop_out), crop):
             raise RuntimeError(f"failed to write camera crop: {crop_out}")
     if crop_region_out is not None:
         vis = image_bgr.copy()
-        cv2.rectangle(vis, (CROP_X0, CROP_Y0), (CROP_X1, vis.shape[0] - 1), (0, 255, 255), 2)
+        cv2.rectangle(vis, (CROP_X0, CROP_Y0), (CROP_X1, CROP_Y1), (0, 255, 255), 2)
         crop_region_out.parent.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(crop_region_out), vis):
             raise RuntimeError(f"failed to write crop region image: {crop_region_out}")
@@ -899,11 +899,13 @@ def parse_voice_command(
 
 
 def ensure_frame_size(frame, width: int, height: int):
-    import cv2
-
     if frame.shape[1] == width and frame.shape[0] == height:
         return frame
-    return cv2.resize(frame, (width, height))
+    raise RuntimeError(
+        f"Camera returned {frame.shape[1]}x{frame.shape[0]}, expected {width}x{height}. "
+        "Fix the camera format instead of resizing, otherwise the calibrated ROI is wrong. "
+        "Check with: v4l2-ctl --device /dev/videoN --list-formats-ext"
+    )
 
 
 def capture_camera_once(
@@ -923,6 +925,7 @@ def capture_camera_once(
     try:
         if not cap.isOpened():
             raise RuntimeError(f"failed to open camera device: {device}")
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         frame = None
@@ -1003,6 +1006,31 @@ def launch_sim(model_xml: Path) -> None:
     )
 
 
+def preview_image_before_publish(
+    image_path: Path,
+    *,
+    opener: str = "xdg-open",
+    wait_for_continue: Callable[[], None] | None = None,
+) -> None:
+    if not image_path.exists():
+        print(f"warning: preview image does not exist: {image_path}", file=sys.stderr)
+        return
+    try:
+        subprocess.Popen(
+            [opener, str(image_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        print(f"warning: failed to open preview image {image_path}: {exc}", file=sys.stderr)
+        return
+    if wait_for_continue is None:
+        wait_for_continue = lambda: input(
+            f"Opened {image_path}. Press Enter to publish pick/place command..."
+        )
+    wait_for_continue()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--text")
@@ -1050,6 +1078,12 @@ def main() -> None:
     parser.add_argument("--payload-json-out", default=str(DEFAULT_PAYLOAD_PATH))
     parser.add_argument("--plan-json-out", default=str(DEFAULT_PLAN_PATH))
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument(
+        "--preview-overlay-before-publish",
+        action="store_true",
+        help="Open overlay image and wait for Enter before publishing the pick/place command.",
+    )
+    parser.add_argument("--preview-opener", default="xdg-open")
     args = parser.parse_args()
     timer = StepTimer()
 
@@ -1145,6 +1179,9 @@ def main() -> None:
     if args.build_sim_xml or args.launch_sim:
         sim_xml = str(build_sim_xml(Path(args.scene_json_out), Path(args.sim_xml_out)))
         timer.mark("build_sim_xml")
+    if args.preview_overlay_before_publish and args.publish:
+        preview_image_before_publish(Path(args.overlay_out), opener=args.preview_opener)
+        timer.mark("preview_overlay")
     if args.publish:
         publish_pickplace_command(payload)
         timer.mark("publish_command")

@@ -16,7 +16,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
-    _default_presets = "/home/su/idle_ws/param/tuned/task_presets.yaml"
+    _default_presets = "/home/parkshinyoung/idle_real_ws/param/tuned/task_presets.yaml"
 
     j1_traj_fraction_arg = DeclareLaunchArgument(
         "j1_traj_fraction",
@@ -45,12 +45,12 @@ def generate_launch_description() -> LaunchDescription:
     )
     settle_kp_scale_by_motor_arg = DeclareLaunchArgument(
         "settle_kp_scale_by_motor_json",
-        default_value='{"1": 1.4, "2": 1.8, "4": 1.4}',
+        default_value='{"1": 1.6, "2": 1.6, "4": 1}',
         description="Per-motor kp scale used only while settling to q_final",
     )
     settle_kd_scale_by_motor_arg = DeclareLaunchArgument(
         "settle_kd_scale_by_motor_json",
-        default_value='{"1": 1.35}',
+        default_value='{"1": 1, "2": 1.2}',
         description="Per-motor kd scale used only while settling to q_final",
     )
     settle_gain_ramp_arg = DeclareLaunchArgument(
@@ -70,32 +70,37 @@ def generate_launch_description() -> LaunchDescription:
     )
     settle_velocity_brake_full_vel_arg = DeclareLaunchArgument(
         "settle_velocity_brake_full_vel_rad_s",
-        default_value="0.12",
+        default_value="0.10",
         description="Joint velocity where settle velocity brake reaches full kd scale",
     )
     settle_friction_scale_arg = DeclareLaunchArgument(
         "settle_friction_scale",
-        default_value="1.0",
+        default_value="0.5",
         description="Friction feedforward scale while settling to q_final",
     )
     hold_friction_scale_arg = DeclareLaunchArgument(
         "hold_friction_scale",
-        default_value="0.4",
-        description="Friction feedforward scale after DONE hold",
+        default_value="0.0",
+        description="Friction feedforward scale after DONE hold (global)",
+    )
+    hold_friction_scale_by_motor_arg = DeclareLaunchArgument(
+        "hold_friction_scale_by_motor_json",
+        default_value='{"2": 0}',
+        description="Per-motor friction scale in hold (overrides global). j2=0.3으로 static error 보정",
     )
     hold_friction_deadband_arg = DeclareLaunchArgument(
         "hold_friction_deadband_rad",
-        default_value="0.002",
+        default_value="0.00",
         description="Error deadband below which friction FF is suppressed in hold",
     )
     hold_kp_scale_by_motor_arg = DeclareLaunchArgument(
         "hold_kp_scale_by_motor_json",
-        default_value="{}",
+        default_value='{"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0}',
         description="Per-motor kp scale used after DONE hold",
     )
     hold_kd_scale_by_motor_arg = DeclareLaunchArgument(
         "hold_kd_scale_by_motor_json",
-        default_value='{"1": 0.85, "2": 0.75, "3": 0.85, "4": 0.7}',
+        default_value='{"1": 0.0, "2": 0.0, "3": 0.0, "4": 0.0, "5": 0.0, "6": 0.0}',
         description="Per-motor kd scale used after DONE hold",
     )
     hold_latch_actual_q_arg = DeclareLaunchArgument(
@@ -110,12 +115,12 @@ def generate_launch_description() -> LaunchDescription:
     )
     kp_max_arg = DeclareLaunchArgument(
         "kp_max",
-        default_value="70.0",
+        default_value="60.0",
         description="Software clamp for outgoing motor kp",
     )
     kd_max_arg = DeclareLaunchArgument(
         "kd_max",
-        default_value="15.0",
+        default_value="10.0",
         description="Software clamp for outgoing motor kd",
     )
     settle_vel_rad_s_arg = DeclareLaunchArgument(
@@ -148,6 +153,21 @@ def generate_launch_description() -> LaunchDescription:
         default_value="100.0",
         description="plan_node joint diagnostic CSV sample rate",
     )
+    task_presets_yaml_path_arg = DeclareLaunchArgument(
+        "task_presets_yaml_path",
+        default_value=_default_presets,
+        description="YAML file with task-specific z/duration presets",
+    )
+    dwell_grasp_s_arg = DeclareLaunchArgument(
+        "dwell_grasp_s",
+        default_value="0.5",
+        description="Seconds to wait at grasp height before closing the gripper",
+    )
+    gripper_grasp_settle_ticks_arg = DeclareLaunchArgument(
+        "gripper_grasp_settle_ticks",
+        default_value="500",
+        description="Gripper control ticks to wait after close before grasp success/failure decision",
+    )
 
     v_max = ParameterValue(LaunchConfiguration("planner_v_max"), value_type=float)
     a_max = ParameterValue(LaunchConfiguration("planner_a_max"), value_type=float)
@@ -168,6 +188,7 @@ def generate_launch_description() -> LaunchDescription:
         settle_velocity_brake_full_vel_arg,
         settle_friction_scale_arg,
         hold_friction_scale_arg,
+        hold_friction_scale_by_motor_arg,
         hold_friction_deadband_arg,
         hold_kp_scale_by_motor_arg,
         hold_kd_scale_by_motor_arg,
@@ -181,6 +202,9 @@ def generate_launch_description() -> LaunchDescription:
         settle_qd_lpf_alpha_arg,
         plan_diag_csv_path_arg,
         plan_diag_hz_arg,
+        task_presets_yaml_path_arg,
+        dwell_grasp_s_arg,
+        gripper_grasp_settle_ticks_arg,
         Node(
             package="phy",
             executable="plan_compute_node",
@@ -245,6 +269,10 @@ def generate_launch_description() -> LaunchDescription:
                     LaunchConfiguration("hold_friction_scale"),
                     value_type=float,
                 ),
+                "hold_friction_scale_by_motor_json": ParameterValue(
+                    LaunchConfiguration("hold_friction_scale_by_motor_json"),
+                    value_type=str,
+                ),
                 "hold_friction_deadband_rad": ParameterValue(
                     LaunchConfiguration("hold_friction_deadband_rad"),
                     value_type=float,
@@ -290,12 +318,24 @@ def generate_launch_description() -> LaunchDescription:
             executable="gripper_node",
             name="gripper_node",
             output="screen",
+            parameters=[{
+                "grasp_settle_ticks": ParameterValue(
+                    LaunchConfiguration("gripper_grasp_settle_ticks"),
+                    value_type=int,
+                ),
+            }],
         ),
         Node(
             package="phy",
             executable="task_fsm_node",
             name="task_fsm_node",
             output="screen",
-            parameters=[{"task_presets_yaml_path": _default_presets}],
+            parameters=[{
+                "task_presets_yaml_path": LaunchConfiguration("task_presets_yaml_path"),
+                "dwell_grasp_s": ParameterValue(
+                    LaunchConfiguration("dwell_grasp_s"),
+                    value_type=float,
+                ),
+            }],
         ),
     ])

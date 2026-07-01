@@ -34,7 +34,6 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from idle_common.ros_params import declare_typed
 from msgs.msg import EETarget, PickPlaceCommand
-from phy.task_validation import is_known_task
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
@@ -69,21 +68,19 @@ class TaskFSMNode(Node):
 
         self._z_pregrasp = float(declare_typed(self, "z_pregrasp", 0.40))
         self._z_grasp = float(declare_typed(self, "z_grasp", 0.12))
-        self._z_place = float(declare_typed(self, "z_place", 0.20))
+        self._z_place = float(declare_typed(self, "z_place", 0.18))
         self._grasp_descend_duration = float(
             declare_typed(self, "grasp_descend_duration_s", 2.0)
         )
         self._place_descend_duration = float(
             declare_typed(self, "place_descend_duration_s", 2.0)
         )
-        self._post_grasp_hold_s = float(declare_typed(self, "post_grasp_hold_s", 0.4))
         # Defaults preserved for reset when task="" or "default"
         self._z_pregrasp_default = self._z_pregrasp
         self._z_grasp_default = self._z_grasp
         self._z_place_default = self._z_place
         self._grasp_descend_duration_default = self._grasp_descend_duration
         self._place_descend_duration_default = self._place_descend_duration
-        self._post_grasp_hold_default = self._post_grasp_hold_s
 
         task_presets_yaml_path = declare_typed(self, "task_presets_yaml_path", "", cast=str)
         self._task_presets: dict = self._load_task_presets(task_presets_yaml_path)
@@ -99,11 +96,11 @@ class TaskFSMNode(Node):
         self._dwell_retract_s = float(declare_typed(self, "dwell_retract_s", 0.0))
         self._dwell_home_s = float(declare_typed(self, "dwell_home_s", 0.0))
 
-        self._motion_timeout_s = float(declare_typed(self, "motion_timeout_s", 15.0))
+        self._motion_timeout_s = float(declare_typed(self, "motion_timeout_s", 30.0))
         self._linear_motion_timeout_s = float(
             declare_typed(self, "linear_motion_timeout_s", 8.0)
         )
-        self._home_timeout_s = float(declare_typed(self, "home_timeout_s", 15.0))
+        self._home_timeout_s = float(declare_typed(self, "home_timeout_s", 30.0))
         self._service_timeout_s = float(declare_typed(self, "service_timeout_s", 2.0))
 
         self._x_min = float(declare_typed(self, "x_min", -1.0))
@@ -126,7 +123,7 @@ class TaskFSMNode(Node):
         self._home_accepted: bool = False
         self._gripper_close_accepted: bool = False
         self._gripper_open_accepted: bool = False
-        self._grasp_success_start_s: float = 0.0
+        self._fault_home_attempted: bool = False
 
         # Pick / place pose (set on command)
         self._pick_x = self._pick_y = self._pick_yaw = 0.0
@@ -171,9 +168,6 @@ class TaskFSMNode(Node):
             return
 
         task = (msg.task or "").strip()
-        if not is_known_task(task, self._task_presets):
-            self.get_logger().error(f"unknown task '{task}' -- rejecting command")
-            return
         self._apply_task_preset(task)
 
         self._pick_x, self._pick_y, self._pick_yaw = msg.x_pick, msg.y_pick, msg.yaw_pick
@@ -237,13 +231,7 @@ class TaskFSMNode(Node):
                 elif self._service_failed_or_timed_out():
                     self._transition(FSMState.FAIL)
             elif self._grasp_success is True:
-                if self._grasp_success_start_s <= 0.0:
-                    self._grasp_success_start_s = self._now_s()
-                    self.get_logger().info(
-                        f"grasp success; holding {self._post_grasp_hold_s:.2f}s before lift"
-                    )
-                elif self._now_s() - self._grasp_success_start_s >= self._post_grasp_hold_s:
-                    self._transition(FSMState.LIFT)
+                self._transition(FSMState.LIFT)
             elif self._grasp_success is False:
                 self.get_logger().error("grasp failed")
                 self._transition(FSMState.FAIL)
@@ -344,7 +332,34 @@ class TaskFSMNode(Node):
                 self._transition(FSMState.FAULT)
 
         elif s == FSMState.FAULT:
-            pass
+            if not self._fault_home_attempted:
+                self._fault_home_attempted = True
+                self._begin_plan_wait()
+                self._home_accepted = False
+                if not self._go_home.service_is_ready():
+                    self.get_logger().error("fault recovery: go_home service not ready")
+                    return
+                self.get_logger().error("FAULT -- attempting one go_home recovery")
+                self._service_future = self._go_home.call_async(Trigger.Request())
+                self._service_start_s = self._now_s()
+                self._service_name = "fault/go_home"
+            elif not self._home_accepted:
+                if self._service_succeeded():
+                    self._home_accepted = True
+                    self._plan_started = True
+                elif self._service_failed_or_timed_out():
+                    self.get_logger().error("fault recovery failed -- staying FAULT")
+                    self._service_future = None
+                    self._service_name = ""
+            elif self._waiting_for_plan and self._plan_status == "DONE":
+                self.get_logger().info("fault recovery home complete -- returning IDLE")
+                self._transition(FSMState.IDLE)
+            elif self._waiting_for_plan and self._plan_status == "FAIL":
+                self.get_logger().error("fault recovery home plan failed -- staying FAULT")
+                self._waiting_for_plan = False
+            elif self._waiting_for_plan and self._plan_elapsed_s() >= self._home_timeout_s:
+                self.get_logger().error("fault recovery home timed out -- staying FAULT")
+                self._waiting_for_plan = False
 
     # ------------------------------------------------------------------
     # Helpers
@@ -365,7 +380,7 @@ class TaskFSMNode(Node):
         self._home_accepted = False
         self._gripper_close_accepted = False
         self._gripper_open_accepted = False
-        self._grasp_success_start_s = 0.0
+        self._fault_home_attempted = False
         self._publish_fsm_status()
 
     def _plan_done(self) -> bool:
@@ -487,7 +502,8 @@ class TaskFSMNode(Node):
 
     def _apply_task_preset(self, task: str) -> None:
         """Apply named task preset; resets to defaults if task is empty or unknown."""
-        if task == "default":
+        if task and task not in self._task_presets:
+            self.get_logger().warn(f"unknown task '{task}', using default preset")
             task = ""
 
         if task:
@@ -511,12 +527,9 @@ class TaskFSMNode(Node):
                 self._place_descend_duration = float(
                     p.get("place_descend_duration_s", self._place_descend_duration_default)
                 )
-                self._post_grasp_hold_s = float(
-                    p.get("post_grasp_hold_s", self._post_grasp_hold_default)
-                )
                 self.get_logger().info(
                     f"preset '{task}': z_pre={self._z_pregrasp} z_gr={self._z_grasp} "
-                    f"z_pl={self._z_place} post_grasp_hold={self._post_grasp_hold_s}"
+                    f"z_pl={self._z_place}"
                 )
 
         if not task:
@@ -525,7 +538,6 @@ class TaskFSMNode(Node):
             self._z_place = self._z_place_default
             self._grasp_descend_duration = self._grasp_descend_duration_default
             self._place_descend_duration = self._place_descend_duration_default
-            self._post_grasp_hold_s = self._post_grasp_hold_default
 
     def _begin_plan_wait(self) -> None:
         self._plan_status = "WAITING"

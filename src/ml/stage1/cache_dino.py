@@ -16,9 +16,9 @@ import torch
 
 # ── 전처리 상수 ──────────────────────────────────────────────────
 CROP_X0, CROP_X1 = 90, 1120
-CROP_Y0          = 5
+CROP_Y0, CROP_Y1 = 5, 720
 CROP_W           = CROP_X1 - CROP_X0   # 1030
-CROP_H           = 720 - CROP_Y0       # 715
+CROP_H           = CROP_Y1 - CROP_Y0   # 715
 
 # DINO 입력 크기: 14의 배수, 비율 ≈ 1030/715 ≈ 1.44
 DINO_W, DINO_H   = 448, 308            # → 32×22 패치 (ViT/14)
@@ -54,7 +54,7 @@ def img_to_dino_patches(img_bgr: np.ndarray, dino, device: str) -> torch.Tensor:
     img_bgr: 1280×720 BGR  →  (PATCH_H, PATCH_W, 384) patch feature map.
     """
     rgb  = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    crop = rgb[CROP_Y0:, CROP_X0:CROP_X1]                       # (715, 1030, 3)
+    crop = rgb[CROP_Y0:CROP_Y1, CROP_X0:CROP_X1]                # (715, 1030, 3)
     inp  = cv2.resize(crop, (DINO_W, DINO_H))                   # (DINO_H, DINO_W, 3)
     t    = torch.from_numpy(inp).float().permute(2, 0, 1) / 255.0
     t    = (t - _MEAN) / _STD

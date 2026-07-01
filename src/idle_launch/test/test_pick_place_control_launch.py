@@ -83,3 +83,56 @@ def test_pick_place_control_exposes_settle_velocity_brake_controls():
     assert "settle_velocity_brake_full_vel_rad_s" in declared_names
     assert "LaunchConfiguration(\"settle_velocity_brake_kd_scale\")" in source
     assert "LaunchConfiguration(\"settle_velocity_brake_full_vel_rad_s\")" in source
+
+
+def test_pick_place_control_exposes_task_presets_yaml_path():
+    source = _launch_source()
+    tree = ast.parse(source)
+
+    declared_names = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "DeclareLaunchArgument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    }
+
+    assert "task_presets_yaml_path" in declared_names
+    assert "LaunchConfiguration(\"task_presets_yaml_path\")" in source
+
+
+def test_pick_place_control_exposes_grasp_dwell():
+    source = _launch_source()
+    tree = ast.parse(source)
+
+    declared_names = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "DeclareLaunchArgument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    }
+
+    assert "dwell_grasp_s" in declared_names
+    assert '"dwell_grasp_s"' in source
+    assert "LaunchConfiguration(\"dwell_grasp_s\")" in source
+
+
+def test_pick_place_control_exposes_gripper_grasp_settle_ticks():
+    source = _launch_source()
+    tree = ast.parse(source)
+
+    declared_names = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "DeclareLaunchArgument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    }
+
+    assert "gripper_grasp_settle_ticks" in declared_names
+    assert '"grasp_settle_ticks"' in source
+    assert "LaunchConfiguration(\"gripper_grasp_settle_ticks\")" in source

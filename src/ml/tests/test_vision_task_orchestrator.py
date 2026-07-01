@@ -25,6 +25,7 @@ from stage4.vision_task_orchestrator import (
     resolve_step_with_queries,
     infer_task_name,
     payload_to_ros_fields,
+    preview_image_before_publish,
     write_payload_json,
     write_scene_json,
 )
@@ -355,27 +356,28 @@ def test_render_model_scene_overlay_writes_coordinate_image(tmp_path):
     assert np.count_nonzero((img[:, :, 2] > 180) & (img[:, :, 1] < 80)) > 20
 
 
-def test_ensure_frame_size_resizes_camera_frame_to_training_resolution():
+def test_ensure_frame_size_rejects_camera_frame_resolution_mismatch():
     import numpy as np
 
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-    resized = ensure_frame_size(frame, 1280, 720)
+    try:
+        ensure_frame_size(frame, 1280, 720)
+    except RuntimeError as exc:
+        assert "Camera returned 640x480" in str(exc)
+        assert "expected 1280x720" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
 
-    assert resized.shape == (720, 1280, 3)
 
-
-def test_ensure_frame_size_matches_collect_resize_without_center_crop():
+def test_ensure_frame_size_accepts_exact_training_resolution():
     import numpy as np
 
-    frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    frame[:, :, 0] = np.arange(480, dtype=np.uint8)[:, None]
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
 
-    resized = ensure_frame_size(frame, 1280, 720)
+    checked = ensure_frame_size(frame, 1280, 720)
 
-    assert resized.shape == (720, 1280, 3)
-    assert resized[0, 0, 0] < 2
-    assert resized[-1, 0, 0] > 220
+    assert checked is frame
 
 
 def test_make_model_input_preview_uses_training_crop_and_size():
@@ -393,7 +395,28 @@ def test_make_model_input_preview_uses_training_crop_and_size():
 
 
 def test_training_crop_constants_match_collected_crop():
-    from stage1.dataset import CROP_H, CROP_W, CROP_X0, CROP_X1, CROP_Y0
+    from stage1.dataset import CROP_H, CROP_W, CROP_X0, CROP_X1, CROP_Y0, CROP_Y1
 
-    assert (CROP_X0, CROP_X1, CROP_Y0) == (90, 1120, 5)
+    assert (CROP_X0, CROP_X1, CROP_Y0, CROP_Y1) == (90, 1120, 5, 720)
     assert (CROP_W, CROP_H) == (1030, 715)
+
+
+def test_preview_image_before_publish_opens_existing_image_and_waits(tmp_path, monkeypatch):
+    image_path = tmp_path / "overlay.jpg"
+    image_path.write_bytes(b"fake jpg")
+    calls = []
+
+    def fake_popen(cmd, stdout, stderr):
+        calls.append((cmd, stdout, stderr))
+
+        class FakeProcess:
+            pass
+
+        return FakeProcess()
+
+    monkeypatch.setattr("stage4.vision_task_orchestrator.subprocess.Popen", fake_popen)
+
+    preview_image_before_publish(image_path, opener="xdg-open", wait_for_continue=lambda: calls.append("waited"))
+
+    assert calls[0][0] == ["xdg-open", str(image_path)]
+    assert calls[1] == "waited"

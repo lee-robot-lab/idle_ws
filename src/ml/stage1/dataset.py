@@ -15,9 +15,9 @@ from torch.utils.data import Dataset
 
 # ── 공유 상수 ─────────────────────────────────────────────────
 CROP_X0, CROP_X1 = 90, 1120
-CROP_Y0          = 5
+CROP_Y0, CROP_Y1 = 5, 720
 CROP_W           = CROP_X1 - CROP_X0   # 1030
-CROP_H           = 720 - CROP_Y0       # 715
+CROP_H           = CROP_Y1 - CROP_Y0   # 715
 COLORS           = ["red", "green", "blue", "basket"]
 
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -58,7 +58,7 @@ class Stage1Dataset(Dataset):
         # ── 이미지 ──────────────────────────────────────────────
         img = cv2.imread(str(self.scenes / f"{sid}.jpg"))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img[CROP_Y0:, CROP_X0:CROP_X1]                    # (715, 1030, 3)
+        img = img[CROP_Y0:CROP_Y1, CROP_X0:CROP_X1]             # (715, 1030, 3)
 
         # 4-way geometric augmentation (0=none,1=H,2=V,3=HV)
         # H-flip: x→1-x, sin→-sin  |  V-flip: y→1-y, sin→-sin  |  HV: x,y→1-x,1-y, sin unchanged

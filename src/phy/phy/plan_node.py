@@ -264,7 +264,7 @@ class PlanNode(Node):
         self.q_max_by_motor = {m: float(_q_hi[i]) for i, m in enumerate(self.motor_ids)}
         self.state_by_motor = {m: MotorSample() for m in self.motor_ids}
         self.active: Optional[_ActiveTrajectory] = None
-        self._hold_q: Optional[dict[int, float]] = {m: 0.0 for m in self.motor_ids}  # 명령용 (actual_q 기반)
+        self._hold_q: Optional[dict[int, float]] = None  # 궤적 완료 후 설정
         self._hold_target_q: Optional[dict[int, float]] = None  # 로그용 (q_final 기반)
         self._last_plan_key: tuple | None = None
 
@@ -339,6 +339,14 @@ class PlanNode(Node):
             self.settle_kd_scale_by_motor = {}
             self.hold_kp_scale_by_motor = {}
             self.hold_kd_scale_by_motor = {}
+        try:
+            self.hold_friction_scale_by_motor = _parse_float_map_json(
+                declare_typed(self, "hold_friction_scale_by_motor_json", "", cast=strip_str),
+                "hold_friction_scale_by_motor_json",
+            )
+        except ValueError as exc:
+            self.get_logger().warn(f"{exc}; hold_friction_scale_by_motor ignored")
+            self.hold_friction_scale_by_motor = {}
 
         self._settling: bool = False
         self._settle_start_s: float = 0.0
@@ -522,6 +530,10 @@ class PlanNode(Node):
                 self._pending_plan = None
         if pending is not None:
             self._commit_plan(pending, now_s)
+
+        # idle: can_bridge의 pre-home이 처리하도록 plan_node는 publish하지 않음
+        if self._hold_q is None and not self._settling and self.active is None:
+            return
 
         if self.active is not None:
             dt_wall = self._now_s() - self._vt_last_wall_s
@@ -1006,6 +1018,7 @@ class PlanNode(Node):
 
     def _hold_cmds(self, tau_g_by_motor: dict[int, float]) -> dict[int, dict[str, float]]:
         out: dict[int, dict[str, float]] = {}
+        idle_no_target = self._hold_q is None and not self._settling
         for motor_id in self.motor_ids:
             tuning = control_params_for_motor(motor_id)
             kp = float(tuning.get("kp", 0.0))
@@ -1063,7 +1076,12 @@ class PlanNode(Node):
             gbias = float(tuning.get("gravity_bias", 0.0))
             friction = abs(float(tuning.get("friction_ff", 0.0)))
             tau_ff = gscale * tau_g_by_motor[motor_id] + gbias
-            friction_scale = self.settle_friction_scale if self._settling else self.hold_friction_scale
+            if idle_no_target:
+                friction_scale = 0.0
+            elif self._settling:
+                friction_scale = self.settle_friction_scale
+            else:
+                friction_scale = self.hold_friction_scale_by_motor.get(int(motor_id), self.hold_friction_scale)
             tau_ff += _friction_ff_for_error(
                 q_err,
                 friction,
