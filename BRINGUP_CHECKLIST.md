@@ -206,3 +206,9 @@ URDF 한계: ① `<mimic>`은 선형만 → 비선형 결합 정확히 못 함. 
 
 - [ ] 리미트는 **두 군데**: URDF `<limit>`(IK·충돌·planner) + can_bridge `kMotorHomeByMotor` q_min/q_max(명령 클램프). **어긋나면 planner는 OK인데 브리지서 잘림** → 둘 다 동일하게.
 - [ ] j3는 재영점 후 **새 프레임 기준**으로 양쪽 재산출.
+
+
+  ros2 launch idle_launch pick_place_control.launch.py \
+    task_presets_yaml_path:=/home/parkshinyoung/idle_real_ws/param/tuned/task_presets.yaml \
+    hold_kp_scale_by_motor_json:='{"1":0.4,"2":0.5,"3":0.8,"4":0.4,"5":0.3,"6":0.3}' \
+    hold_kd_scale_by_motor_json:='{"1":0.2,"2":0.3,"3":0.5,"4":0.2,"5":0.2,"6":0.2}'
