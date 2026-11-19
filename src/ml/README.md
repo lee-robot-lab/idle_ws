@@ -57,7 +57,7 @@ direct grounding (`object: "red_block"` 직접 지정)은 Stage 4 없이 Stage 2
 **학습**: Hungarian 매칭으로 GT ↔ slot 할당, DINO ViT-B/14 teacher distillation.  
 **추론**: `sem` head는 사용하지 않음.
 
-최종 성능 (팀원 ViT-B 기반, ep415): val xy 7.5mm, yaw 0.89°
+최종 성능 (ViT-B 기반, ep415): val xy 7.5mm, yaw 0.89°
 
 ## Stage 2-A — ColorNet
 
@@ -88,8 +88,8 @@ direct grounding (`object: "red_block"` 직접 지정)은 Stage 4 없이 Stage 2
 
 | 경로 | 내용 |
 |---|---|
-| `checkpoints/stage1/best.pt` | 우리 Stage 1 (ViT-S 기반, 7.9mm) |
-| `checkpoints/stage1_vitb14/best.pt` | 팀원 Stage 1 (ViT-B 기반, 7.5mm) |
+| `checkpoints/stage1/best.pt` | Stage 1 (ViT-S 기반, 7.9mm) |
+| `checkpoints/stage1_vitb14/best.pt` | Stage 1 (ViT-B 기반, 7.5mm) |
 | `checkpoints/color_net/best.pt` | ColorNet |
 | `checkpoints/stage4/best.pt` | RelationScorer (stage1_vitb14 기반) |
 
