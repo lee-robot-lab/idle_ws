@@ -1,0 +1,20 @@
+defaults:
+  gravity_bias: 0.0
+  gravity_scale: 1.0
+  kd: 0.0
+  kp: 0.0
+  q_des: 0.0
+  qd_des: 0.0
+  tau_ff: 0.0
+motors:
+  '1': {}
+  '2': {}
+  '3': {}
+  '4': {}
+  '5': {}
+  '6': {}
+  '7': {}
+scan:
+  max_id: 10
+  min_id: 1
+version: 1

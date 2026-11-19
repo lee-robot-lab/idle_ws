@@ -1,0 +1,526 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "semantic_command_schema.json",
+  "title": "Korean Robot Arm Semantic Command",
+  "description": "Whisper/Qwen 언어 파싱 결과와 후속 이미지 임베딩·장면 추론 계층 사이의 데이터 계약",
+  "x-language-aliases": {
+    "박스": "block",
+    "블록": "block",
+    "큐브": "block",
+    "red_box": "red_block",
+    "blue_box": "blue_block",
+    "green_box": "green_block",
+    "note": "입력 표현은 동의어를 허용하지만 Qwen 출력은 red_block/blue_block/green_block만 사용한다."
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "reason",
+    "raw_text",
+    "needs_clarification",
+    "clarification_question",
+    "steps",
+    "parser"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "description": "언어 명령이 실행 계획으로 충분히 파싱되었는지 여부"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "ambiguous_command",
+        "unknown_action",
+        "unknown_object",
+        "unknown_target",
+        "invalid_command"
+      ]
+    },
+    "raw_text": {
+      "type": "string",
+      "description": "Whisper가 인식한 원본 사용자 명령"
+    },
+    "needs_clarification": {
+      "type": "boolean",
+      "description": "실행 전에 사용자 재질문이 필요한지 여부"
+    },
+    "clarification_question": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "사용자에게 물어볼 짧은 한국어 질문"
+    },
+    "steps": {
+      "type": "array",
+      "description": "실행 순서대로 정렬된 의미 명령 목록",
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "parser": {
+      "type": "string",
+      "enum": [
+        "qwen",
+        "rule",
+        "rule_fallback"
+      ]
+    },
+    "llm_error": {
+      "type": "string",
+      "description": "hybrid 모드에서 Qwen 실패 후 규칙 파서로 전환된 원인"
+    }
+  },
+  "$defs": {
+    "objectName": {
+      "type": "string",
+      "enum": [
+        "red_block",
+        "blue_block",
+        "green_block",
+        "basket"
+      ]
+    },
+    "blockName": {
+      "type": "string",
+      "enum": [
+        "red_block",
+        "blue_block",
+        "green_block"
+      ]
+    },
+    "referenceName": {
+      "type": "string",
+      "enum": [
+        "red_block",
+        "blue_block",
+        "green_block",
+        "basket",
+        "robot"
+      ],
+      "description": "공간 관계의 기준점. robot은 reference에서만 허용된다."
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relation",
+        "reference"
+      ],
+      "properties": {
+        "relation": {
+          "type": "string",
+          "enum": [
+            "nearest_to",
+            "farthest_from",
+            "left_of",
+            "right_of",
+            "front_of",
+            "behind",
+            "leftmost",
+            "rightmost"
+          ],
+          "description": "후속 비전/임베딩 계층이 장면 내 후보를 필터링하거나 랭킹할 관계"
+        },
+        "reference": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/referenceName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "관계 계산의 기준 물체. leftmost/rightmost에서는 null이고 나머지 관계에서는 필수다."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "relation": {
+                "enum": [
+                  "leftmost",
+                  "rightmost"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reference": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "reference": {
+                "$ref": "#/$defs/referenceName"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "objectQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "relations"
+      ],
+      "properties": {
+        "type": {
+          "const": "block"
+        },
+        "relations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/relation"
+          },
+          "description": "AND 조건으로 결합할 공간·거리 관계. 이미지 임베딩/장면 그래프에서 실제 object_id로 해소한다."
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "object",
+        "object_query",
+        "target",
+        "target_query",
+        "depends_on"
+      ],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "pick",
+            "place",
+            "pick_place",
+            "stack"
+          ]
+        },
+        "object": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/blockName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "색상으로 직접 특정된 블록. null이면 object_query를 후속 장면 추론으로 해소한다."
+        },
+        "object_query": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/objectQuery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/objectName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "이동·쌓기 목적지. pick에서는 null이다."
+        },
+        "target_query": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/objectQuery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "공간 관계로 지정된 목적지. target과 동시에 사용할 수 없다."
+        },
+        "depends_on": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "이 step 전에 완료되어야 하는 앞선 step의 0-based 인덱스"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "place"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "object": {
+                "type": "null"
+              },
+              "object_query": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "oneOf": [
+              {
+                "properties": {
+                  "object": {
+                    "$ref": "#/$defs/blockName"
+                  },
+                  "object_query": {
+                    "type": "null"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "object": {
+                    "type": "null"
+                  },
+                  "object_query": {
+                    "$ref": "#/$defs/objectQuery"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "target": {
+                  "$ref": "#/$defs/objectName"
+                },
+                "target_query": {
+                  "type": "null"
+                }
+              }
+            },
+            {
+              "properties": {
+                "target": {
+                  "type": "null"
+                },
+                "target_query": {
+                  "$ref": "#/$defs/objectQuery"
+                }
+              }
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "pick"
+                },
+                "target": {
+                  "type": "null"
+                },
+                "target_query": {
+                  "type": "null"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "x-policy-network-handoff": {
+    "inputs": {
+      "rgb_image": {
+        "shape": [
+          3,
+          "H",
+          "W"
+        ],
+        "source": "RealSense D435 RGB",
+        "assumptions": [
+          "카메라 고정",
+          "캘리브레이션 완료"
+        ]
+      },
+      "step": "steps[i] JSON object",
+      "phase": [
+        "DETECT_PICK",
+        "DETECT_PLACE"
+      ]
+    },
+    "phase_gating": {
+      "DETECT_PICK": {
+        "use": [
+          "step.object",
+          "step.object_query"
+        ],
+        "ignore": [
+          "step.target",
+          "step.target_query"
+        ]
+      },
+      "DETECT_PLACE": {
+        "use": [
+          "step.target",
+          "step.target_query"
+        ],
+        "ignore": [
+          "step.object",
+          "step.object_query"
+        ]
+      }
+    },
+    "embedding_vocab": {
+      "color": [
+        "red",
+        "blue",
+        "green",
+        "null"
+      ],
+      "relation": [
+        "left_of",
+        "right_of",
+        "front_of",
+        "behind",
+        "nearest_to",
+        "farthest_from",
+        "leftmost",
+        "rightmost",
+        "null"
+      ],
+      "anchor": [
+        "basket",
+        "red_block",
+        "blue_block",
+        "green_block",
+        "robot",
+        "null"
+      ],
+      "action": [
+        "pick",
+        "place",
+        "pick_place",
+        "stack"
+      ],
+      "phase": [
+        "DETECT_PICK",
+        "DETECT_PLACE"
+      ]
+    },
+    "policy_network_output": {
+      "x": "float, 월드 좌표 X (m)",
+      "y": "float, 월드 좌표 Y (m)",
+      "cos_yaw": "float, cos(4θ)",
+      "sin_yaw": "float, sin(4θ)",
+      "theta_recovery": "θ = atan2(sin_yaw, cos_yaw) / 4"
+    },
+    "tie_break": "공간 관계 조건을 만족하는 후보가 여러 개면 쿼리 anchor에 가장 가까운 블록을 선택한다.",
+    "notes": [
+      "언어 모델은 실제 좌표나 장면에 존재하는 object_id를 생성하지 않는다.",
+      "relations 배열은 AND 조건으로 처리한다.",
+      "nearest_to와 farthest_from은 후보 필터링 후 거리 랭킹에 사용한다.",
+      "leftmost와 rightmost는 reference=null이며 장면 전체 후보의 이미지 x좌표 서열로 결정한다.",
+      "reference=robot은 영상에서 로봇을 탐지하라는 뜻이 아니라 캘리브레이션된 로봇 베이스 기준점과의 거리를 뜻한다.",
+      "front_of와 behind의 기준 프레임은 설계 문서에서 미결 상태이므로 구현 전에 팀 합의가 필요하다.",
+      "RGB 탑다운 영상만 사용하므로 on_top_of와 under 관계는 지원하지 않는다.",
+      "depends_on은 FSM이 복합 명령의 실행 순서를 결정할 때 사용한다.",
+      "FSM은 각 step의 DETECT_PICK/DETECT_PLACE phase에서 Policy Network를 1회 호출한다.",
+      "정사각형 블록의 90도 대칭을 처리하기 위해 yaw는 4배각으로 예측한다."
+    ]
+  },
+  "examples": [
+    {
+      "success": true,
+      "reason": "ok",
+      "raw_text": "빨간 블록을 파란 블록 위에 올려줘",
+      "needs_clarification": false,
+      "clarification_question": null,
+      "steps": [
+        {
+          "action": "stack",
+          "object": "red_block",
+          "object_query": null,
+          "target": "blue_block",
+          "target_query": null,
+          "depends_on": []
+        }
+      ],
+      "parser": "qwen"
+    },
+    {
+      "success": true,
+      "reason": "ok",
+      "raw_text": "바구니 왼쪽에 있으면서 파란 블록과 가장 가까운 블록을 집어줘",
+      "needs_clarification": false,
+      "clarification_question": null,
+      "steps": [
+        {
+          "action": "pick",
+          "object": null,
+          "object_query": {
+            "type": "block",
+            "relations": [
+              {
+                "relation": "left_of",
+                "reference": "basket"
+              },
+              {
+                "relation": "nearest_to",
+                "reference": "blue_block"
+              }
+            ]
+          },
+          "target": null,
+          "target_query": null,
+          "depends_on": []
+        }
+      ],
+      "parser": "qwen"
+    },
+    {
+      "success": true,
+      "reason": "ok",
+      "raw_text": "파란 블록을 집으려면 위에 있는 빨간 블록부터 바구니로 치워줘",
+      "needs_clarification": false,
+      "clarification_question": null,
+      "steps": [
+        {
+          "action": "pick_place",
+          "object": "red_block",
+          "object_query": null,
+          "target": "basket",
+          "target_query": null,
+          "depends_on": []
+        },
+        {
+          "action": "pick",
+          "object": "blue_block",
+          "object_query": null,
+          "target": null,
+          "target_query": null,
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "parser": "qwen"
+    }
+  ]
+}

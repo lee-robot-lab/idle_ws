@@ -1,0 +1,9 @@
+torch
+transformers
+accelerate
+bitsandbytes
+huggingface_hub
+faster-whisper
+sounddevice
+scipy
+pytest

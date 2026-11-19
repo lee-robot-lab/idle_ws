@@ -1,0 +1,109 @@
+# =========================
+# ROS 2 / colcon workspace
+# =========================
+build/
+install/
+log/
+.colcon/
+.colcon_command_history
+.colcon_ignore
+compile_commands.json
+
+
+# ROS bags / logs
+rosbag2_*/
+*.db3
+*.mcap
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build_python/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# =========================
+# C / C++
+# =========================
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.tmp
+*.swp
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.code-workspace
+.understand-anything
+# =========================
+# OS / Misc
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Optional: local configs / secrets (필요시 켜기)
+# =========================
+# *.env
+# .env
+# **/secrets.*
+# **/*token*
+
+# =========================
+# 실험 데이터 / 임시 파일
+# =========================
+plan_diag*.csv
+*_backup.py
+*.bak
+
+# =========================
+# ML / Stage 1
+# =========================
+
+# DINO 오프라인 캐시 (팀원이 cache_dino.py로 직접 생성)
+data/dino_cache/
+
+# 학습 체크포인트 (재현 가능, 공유 시 드라이브)
+
+# 크롭·리사이즈 미리보기 (crop.py 출력)
+data/preview/
+
+# 생성 시각화 이미지 (visualize_labels.py 등 출력)
+
+
+# 런타임 상태 DB
+data/state_store.db/
+
+# RL 학습 출력 / 롤아웃 데이터 (재현 가능, 공유 시 드라이브)
+outputs/
+src/mujoco_phase_rl/outputs/
